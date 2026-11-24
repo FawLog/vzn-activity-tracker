@@ -50,7 +50,7 @@ sudo install -o root -g root -m 0755 deploy/root/stage-vzn-artifacts "${INSTALLE
 sudo "${INSTALLED_STAGER}" "${artifact_root}"
 
 [[ "$(stat --format='%U:%G:%a' "${STAGING_ROOT}")" == "root:root:750" ]]
-[[ "$(tr -d '\r\n' < "${STAGING_ROOT}/source/REVISION")" == "${commit}" ]]
+[[ "$(sudo sed -n '1p' "${STAGING_ROOT}/source/REVISION" | tr -d '\r\n')" == "${commit}" ]]
 [[ "$(stat --format='%U:%G:%a' "${INSTALLED_DEPLOYER}")" == "root:root:755" ]]
 cmp deploy/root/install-vzn-activity-tracker "${INSTALLED_DEPLOYER}"
 

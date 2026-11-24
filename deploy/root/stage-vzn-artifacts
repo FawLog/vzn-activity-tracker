@@ -1,0 +1,94 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+umask 027
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+unset BASH_ENV CDPATH COMPOSE_FILE COMPOSE_PROJECT_NAME DOCKER_CONTEXT DOCKER_HOST ENV PYTHONHOME PYTHONPATH
+
+readonly STAGING_ROOT="/var/lib/vzn-deploy-staging"
+readonly INSTALLED_DEPLOYER="/usr/local/sbin/vzn-deploy"
+readonly INSTALLED_SUDOERS_HELPER="/usr/local/sbin/vzn-manage-sudoers"
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+validate_archive() {
+  local archive="$1"
+  python3 - "${archive}" <<'PY'
+from pathlib import PurePosixPath
+import sys
+import tarfile
+
+archive = sys.argv[1]
+with tarfile.open(archive, mode="r:gz") as bundle:
+    members = bundle.getmembers()
+    if not members:
+        raise SystemExit("archive is empty")
+    for member in members:
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"unsafe archive path: {member.name}")
+        if not (member.isdir() or member.isfile()):
+            raise SystemExit(f"unsupported archive member: {member.name}")
+PY
+}
+
+[[ "${EUID}" -eq 0 ]] || fail "Run this staging helper as root"
+[[ "$#" -eq 1 ]] || fail "Usage: stage-vzn-artifacts /absolute/path/to/artifacts"
+[[ ! -e "${STAGING_ROOT}" ]] || fail "Staging root already exists: ${STAGING_ROOT}"
+
+artifact_root="$(realpath --canonicalize-existing "$1")"
+[[ "${artifact_root}" == /* ]] || fail "Artifact root must resolve to an absolute path"
+[[ "${artifact_root}" != "${STAGING_ROOT}" && "${artifact_root}" != "${STAGING_ROOT}/"* ]] || \
+  fail "Artifact input must be outside the root-owned staging directory"
+for directory in frontend backend deployment; do
+  [[ -d "${artifact_root}/${directory}" ]] || fail "Artifact directory is missing: ${directory}"
+done
+
+mapfile -t frontend_archives < <(find "${artifact_root}/frontend" -maxdepth 1 -type f -name 'vzn-frontend-*.tar.gz' -print)
+mapfile -t backend_archives < <(find "${artifact_root}/backend" -maxdepth 1 -type f -name 'vzn-backend-*.tar.gz' -print)
+mapfile -t backend_manifests < <(find "${artifact_root}/backend" -maxdepth 1 -type f -name 'vzn-backend-*.manifest' -print)
+mapfile -t deployment_archives < <(find "${artifact_root}/deployment" -maxdepth 1 -type f -name 'vzn-deployment-*.tar.gz' -print)
+[[ "${#frontend_archives[@]}" -eq 1 ]] || fail "Expected exactly one frontend archive"
+[[ "${#backend_archives[@]}" -eq 1 ]] || fail "Expected exactly one backend archive"
+[[ "${#backend_manifests[@]}" -eq 1 ]] || fail "Expected exactly one backend manifest"
+[[ "${#deployment_archives[@]}" -eq 1 ]] || fail "Expected exactly one deployment archive"
+
+frontend_archive="${frontend_archives[0]}"
+backend_archive="${backend_archives[0]}"
+backend_manifest="${backend_manifests[0]}"
+deployment_archive="${deployment_archives[0]}"
+for archive in "${frontend_archive}" "${backend_archive}" "${deployment_archive}"; do
+  [[ -f "${archive}.sha256" ]] || fail "Checksum is missing: ${archive}.sha256"
+  (cd "$(dirname "${archive}")" && sha256sum --check "$(basename "${archive}.sha256")")
+done
+validate_archive "${frontend_archive}"
+validate_archive "${deployment_archive}"
+
+commit="$(sed -n 's/^GIT_COMMIT=//p' "${backend_manifest}")"
+[[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || fail "Backend manifest has an invalid commit"
+[[ "$(basename "${frontend_archive}")" == "vzn-frontend-${commit}.tar.gz" ]] || fail "Frontend commit mismatch"
+[[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || fail "Backend commit mismatch"
+[[ "$(basename "${deployment_archive}")" == "vzn-deployment-${commit}.tar.gz" ]] || fail "Deployment commit mismatch"
+
+install -d -o root -g root -m 0750 \
+  "${STAGING_ROOT}" "${STAGING_ROOT}/source" "${STAGING_ROOT}/frontend" "${STAGING_ROOT}/backend"
+tar --extract --gzip --file "${deployment_archive}" --directory "${STAGING_ROOT}/source" \
+  --no-same-owner --no-same-permissions
+install -o root -g root -m 0640 "${frontend_archive}" "${frontend_archive}.sha256" "${STAGING_ROOT}/frontend/"
+install -o root -g root -m 0640 \
+  "${backend_archive}" "${backend_archive}.sha256" "${backend_manifest}" "${STAGING_ROOT}/backend/"
+chown -R root:root "${STAGING_ROOT}"
+chmod -R go-w "${STAGING_ROOT}"
+
+[[ "$(tr -d '\r\n' < "${STAGING_ROOT}/source/REVISION")" == "${commit}" ]] || fail "Deployment source commit mismatch"
+install -o root -g root -m 0755 \
+  "${STAGING_ROOT}/source/deploy/root/install-vzn-activity-tracker" "${INSTALLED_DEPLOYER}"
+install -o root -g root -m 0755 \
+  "${STAGING_ROOT}/source/deploy/root/manage-vzn-sudoers" "${INSTALLED_SUDOERS_HELPER}"
+
+printf 'Staged commit %s. Root-owned deployer: %s\n' "${commit}" "${INSTALLED_DEPLOYER}"
+printf 'Deployer SHA-256: '
+sha256sum "${INSTALLED_DEPLOYER}" | awk '{print $1}'

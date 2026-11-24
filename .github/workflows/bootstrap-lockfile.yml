@@ -1,0 +1,40 @@
+name: Bootstrap frontend lockfile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  lockfile:
+    name: Generate package-lock.json artifact
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse to replace a committed lockfile
+        run: test ! -e frontend/package-lock.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Generate lockfile without lifecycle scripts
+        run: npm install --package-lock-only --ignore-scripts --prefix frontend
+
+      - name: Validate generated lockfile
+        run: node -e 'const lock = require("./frontend/package-lock.json"); if (lock.lockfileVersion !== 3) throw new Error("Expected npm lockfileVersion 3")'
+
+      - name: Upload lockfile for maintainer review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: frontend-package-lock-${{ github.sha }}
+          path: frontend/package-lock.json
+          if-no-files-found: error
+          retention-days: 7

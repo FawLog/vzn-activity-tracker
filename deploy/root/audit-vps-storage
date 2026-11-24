@@ -1,0 +1,31 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
+unset BASH_ENV CDPATH DOCKER_CONTEXT DOCKER_HOST ENV
+
+[[ "${EUID}" -eq 0 ]] || {
+  printf 'ERROR: run this read-only audit as root\n' >&2
+  exit 1
+}
+[[ "$#" -eq 0 ]] || {
+  printf 'ERROR: this audit accepts no arguments\n' >&2
+  exit 1
+}
+
+printf 'FILESYSTEM\n'
+df -hT / /home
+df -B1 /
+df -i /
+
+printf '\nTOP-LEVEL USAGE\n'
+nice -n 19 ionice -c3 du -xhd1 / 2>/dev/null | sort -h
+
+printf '\nDOCKER USAGE\n'
+nice -n 19 ionice -c3 du -xhd1 /var/lib/docker /var/lib/containerd 2>/dev/null | sort -h
+docker system df --verbose
+
+printf '\nFILES LARGER THAN 100 MIB\n'
+nice -n 19 ionice -c3 find / -xdev -type f -size +100M -printf '%s %p\n' 2>/dev/null \
+  | sort -nr \
+  | sed -n '1,100p'

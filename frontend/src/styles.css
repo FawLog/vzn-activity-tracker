@@ -146,7 +146,7 @@ h1, h2, h3, p { margin-top: 0; }
 .icon-button, .utility-button { border: 0; background: transparent; cursor: pointer; }
 .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--radius-sm); color: var(--text-soft); }
 .icon-button:hover { background: var(--surface-raised); color: var(--text); }
-.utility-button { min-height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--text-soft); font-size: 11px; font-weight: 650; }
+.utility-button { min-height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--text-soft); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .utility-button:hover { color: var(--text); }
 
 .main-content { min-width: 0; }
@@ -411,6 +411,7 @@ td strong { color: var(--text); font-weight: 650; }
 }
 
 @media (max-width: 620px) {
+  .topbar .system-state { display: none; }
   .page { padding: 21px 14px 34px; }
   .page-header { flex-direction: column; gap: 15px; padding-bottom: 17px; }
   .page-header__action { width: 100%; }

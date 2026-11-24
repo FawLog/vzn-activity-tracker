@@ -1,0 +1,56 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# This is a deterministic unit test of retry control flow. It does not claim
+# that a public endpoint was reached; browser and production checks remain
+# separate evidence.
+source deploy/root/healthcheck.sh
+
+counter_file="$(mktemp)"
+printf '0\n' > "${counter_file}"
+cleanup() { rm -f -- "${counter_file}"; }
+trap cleanup EXIT
+
+next_attempt() {
+  local attempts
+  attempts="$(<"${counter_file}")"
+  attempts=$((attempts + 1))
+  printf '%s\n' "${attempts}" > "${counter_file}"
+  printf '%s' "${attempts}"
+}
+
+curl() {
+  local attempts
+  attempts="$(next_attempt)"
+  if (( attempts < 3 )); then
+    return 22
+  fi
+  printf '%s' '{"status":"ok","database":"ready","migration_version":2}'
+}
+sleep() { :; }
+wait_for_public_https_health example.test 203.0.113.10 3 1 2 0
+[[ "$(<"${counter_file}")" == 3 ]]
+
+printf '0\n' > "${counter_file}"
+curl() {
+  next_attempt >/dev/null
+  return 22
+}
+if wait_for_public_https_health example.test 203.0.113.10 3 1 2 0; then
+  printf 'Expected exhausted retry budget to fail.\n' >&2
+  exit 1
+fi
+[[ "$(<"${counter_file}")" == 3 ]]
+
+printf '0\n' > "${counter_file}"
+curl() {
+  local attempts
+  attempts="$(next_attempt)"
+  if (( attempts == 1 )); then
+    printf '%s' '{"status":"starting"}'
+  else
+    printf '%s' '{"status":"ok","database":"ready","migration_version":2}'
+  fi
+}
+wait_for_public_https_health example.test 203.0.113.10 2 1 2 0
+[[ "$(<"${counter_file}")" == 2 ]]

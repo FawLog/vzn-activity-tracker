@@ -15,8 +15,13 @@ readonly NGINX_ENABLED="/etc/nginx/sites-enabled/vzn.fawlog.cc"
 readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly HOST_CONFIG="/etc/vzn-activity-tracker/deploy.conf"
 readonly CONTAINER_NAME="vzn-activity-tracker-backend"
+readonly HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
 readonly MINIMUM_RESERVE_BYTES=2147483648
 readonly INSTALL_OVERHEAD_BYTES=268435456
+readonly HTTPS_HEALTH_MAX_ATTEMPTS=15
+readonly HTTPS_CONNECT_TIMEOUT_SECONDS=3
+readonly HTTPS_REQUEST_TIMEOUT_SECONDS=5
+readonly HTTPS_RETRY_DELAY_SECONDS=1
 
 runtime_root=""
 release_id=""
@@ -35,6 +40,15 @@ require_command() {
 
 require_file() {
   [[ -f "$1" ]] || fail "Required file is missing: $1"
+}
+
+load_healthcheck_helper() {
+  require_file "${HEALTHCHECK_HELPER}"
+  [[ ! -L "${HEALTHCHECK_HELPER}" ]] || fail "Health-check helper must not be a symlink"
+  [[ "$(stat --format='%U:%G:%a' "${HEALTHCHECK_HELPER}")" == "root:root:755" ]] || \
+    fail "Health-check helper must be root:root mode 0755"
+  # shellcheck source=/usr/local/lib/vzn-activity-tracker/healthcheck.sh
+  source "${HEALTHCHECK_HELPER}"
 }
 
 validate_root_owned_directory() {
@@ -265,6 +279,7 @@ trap 'exit 143' TERM
 for command_name in curl df docker du find grep install nginx openssl python3 sha256sum ss stat systemctl tar; do
   require_command "${command_name}"
 done
+load_healthcheck_helper
 
 validate_root_owned_directory "${STAGING_ROOT}"
 validate_root_owned_directory "${SOURCE_ROOT}"
@@ -403,9 +418,10 @@ ln -s "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
 nginx -t
 systemctl reload nginx
 
-curl --fail --silent --show-error --resolve "vzn.fawlog.cc:443:${public_ipv4}" \
-  https://vzn.fawlog.cc/api/v1/health
-printf '\n'
+wait_for_public_https_health "vzn.fawlog.cc" "${public_ipv4}" \
+  "${HTTPS_HEALTH_MAX_ATTEMPTS}" "${HTTPS_CONNECT_TIMEOUT_SECONDS}" \
+  "${HTTPS_REQUEST_TIMEOUT_SECONDS}" "${HTTPS_RETRY_DELAY_SECONDS}" || \
+  fail "Public HTTPS health check did not become ready"
 docker compose --project-directory "${APP_ROOT}" ps
 rm -f "${APP_ROOT}/.vzn-installing"
 install_completed=1

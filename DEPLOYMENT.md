@@ -62,11 +62,68 @@ After an explicitly authorized deployment, verify and record:
 
 Do not declare deployment successful unless these checks actually ran.
 
-## Backup and restore
+## Updates, backup, and restore
+
+`vzn-deploy` is intentionally a first-install-only command. It refuses an existing
+application root, so it cannot accidentally recreate production secrets or an
+empty SQLite database over a working installation. Every later version uses the
+separate no-argument root-owned `vzn-update` command staged from the same exact
+CI artifact set.
+
+The updater verifies the same commit identity, SHA-256 files, root-owned
+staging, artifact paths, Docker/Nginx state, existing VZN health and conservative
+disk reserve as the first installer. It never runs a build, changes Nginx,
+touches another Compose project, or asks for an administrator password. It
+keeps the existing `.env` and changes only its non-secret `VZN_IMAGE_TAG` line
+atomically; the session secret and administrator password hash remain byte-for-byte
+unchanged. The SQLite directory is retained in place.
+
+Before loading a new image or changing the frontend link, the updater creates and
+verifies an online SQLite backup. It saves the prior `.env`, Compose file, release
+link and transaction record under `/var/backups/vzn-activity-tracker/`, then uses
+only the VZN Compose project to recreate the backend. If local or public health
+does not recover, it stops only VZN, restores the verified database through the
+SQLite backup API, restores the old image tag, Compose file and frontend link, and
+starts only the previous VZN backend. The prior image is deliberately retained;
+no Docker image, volume or system-wide prune runs.
+
+An uncatchable interruption leaves `/srv/vzn-activity-tracker/.vzn-updating` as a
+root-only evidence marker. The next update refuses to run rather than guessing
+whether a migration completed. Inspect the named root-only transaction and backup,
+restore manually if required, verify health, and remove the marker only after the
+owner has recorded the recovery.
+
+For an existing first-install deployment whose old staging helper does not support
+updates, the owner must first verify the updated helper from the reviewed
+deployment artifact and install that root-owned copy. This is a controlled helper
+upgrade, not an application deployment:
+
+```sh
+# Run only after verifying the SHA-256 of this file in the reviewed deployment artifact.
+sudo install -o root -g root -m 0755 \
+  /absolute/private/path/to/reviewed-source/deploy/root/stage-vzn-artifacts \
+  /usr/local/sbin/vzn-stage-vzn-artifacts
+sudo /usr/local/sbin/vzn-stage-vzn-artifacts --update /absolute/private/path/to/artifacts
+sudo /usr/local/sbin/vzn-update
+```
+
+The owner should capture the pre-update health, VZN container status, RAM/disk and
+the private baseline before this sequence, then repeat the production checklist
+after it. The updater's public HTTPS health check has a bounded retry budget
+(15 attempts, 3-second connect timeout, 5-second request timeout, 1-second delay).
+It accepts only an HTTP-successful `/api/v1/health` JSON response with `status=ok`,
+`database=ready`, and a numeric migration version. A retry is mitigation for a
+transient readiness failure, not a diagnosis of Nginx configuration propagation.
 
 Use the application backup command, which calls SQLite's online backup API and then `PRAGMA integrity_check`. Never copy a live WAL database directly. Keep an encrypted off-host copy; an on-server backup alone is not disaster recovery.
 
-Restore only during an authorized maintenance window. Stop only the VZN backend, preserve the current database, restore a verified backup with the expected ownership/mode, start only VZN, and repeat the health, login, persistence, log, resource, and unrelated-service baseline checks.
+Restore only during an authorized maintenance window. Stop only the VZN backend,
+preserve a fresh verified backup of the current database, then use the application
+command inside a trusted VZN image: `python -m app.backup restore
+/data/backups/<verified-backup>.sqlite3 --database /data/vzn.sqlite3`. This uses
+SQLite's backup API rather than a raw database/WAL copy. Start only VZN and repeat
+the health, login, persistence, log, resource, and unrelated-service baseline
+checks.
 
 ## Rollback
 

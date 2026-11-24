@@ -6,8 +6,12 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 unset BASH_ENV CDPATH COMPOSE_FILE COMPOSE_PROJECT_NAME DOCKER_CONTEXT DOCKER_HOST ENV PYTHONHOME PYTHONPATH
 
 readonly STAGING_ROOT="/var/lib/vzn-deploy-staging"
+readonly UPDATE_STAGING_ROOT="/var/lib/vzn-update-staging"
+readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly INSTALLED_DEPLOYER="/usr/local/sbin/vzn-deploy"
+readonly INSTALLED_UPDATER="/usr/local/sbin/vzn-update"
 readonly INSTALLED_SUDOERS_HELPER="/usr/local/sbin/vzn-manage-sudoers"
+readonly INSTALLED_HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
 
 staging_temp=""
 
@@ -51,15 +55,34 @@ PY
 }
 
 [[ "${EUID}" -eq 0 ]] || fail "Run this staging helper as root"
-[[ "$#" -eq 1 ]] || fail "Usage: stage-vzn-artifacts /absolute/path/to/artifacts"
-[[ ! -e "${STAGING_ROOT}" ]] || fail "Staging root already exists: ${STAGING_ROOT}"
-[[ ! -e "${INSTALLED_DEPLOYER}" ]] || fail "Installed deployer already exists: ${INSTALLED_DEPLOYER}"
-[[ ! -e "${INSTALLED_SUDOERS_HELPER}" ]] || \
-  fail "Installed sudoers helper already exists: ${INSTALLED_SUDOERS_HELPER}"
+case "$#:${1:-}" in
+  1:*) mode="install"; artifact_argument="$1" ;;
+  2:--update) mode="update"; artifact_argument="$2" ;;
+  *) fail "Usage: stage-vzn-artifacts /absolute/path/to/artifacts | stage-vzn-artifacts --update /absolute/path/to/artifacts" ;;
+esac
 
-artifact_root="$(realpath --canonicalize-existing "$1")"
+if [[ "${mode}" == "install" ]]; then
+  staging_root="${STAGING_ROOT}"
+  [[ ! -e "${staging_root}" ]] || fail "Staging root already exists: ${staging_root}"
+  [[ ! -e "${INSTALLED_DEPLOYER}" ]] || fail "Installed deployer already exists: ${INSTALLED_DEPLOYER}"
+  [[ ! -e "${INSTALLED_SUDOERS_HELPER}" ]] || \
+    fail "Installed sudoers helper already exists: ${INSTALLED_SUDOERS_HELPER}"
+  [[ ! -e "${INSTALLED_HEALTHCHECK_HELPER}" ]] || \
+    fail "Installed health-check helper already exists: ${INSTALLED_HEALTHCHECK_HELPER}"
+else
+  staging_root="${UPDATE_STAGING_ROOT}"
+  if [[ -e "${staging_root}" || -L "${staging_root}" ]]; then
+    [[ -d "${staging_root}" && ! -L "${staging_root}" ]] || \
+      fail "Existing update staging root is unsafe: ${staging_root}"
+    [[ "$(stat --format='%U:%G' "${staging_root}")" == "root:root" ]] || \
+      fail "Existing update staging root must be root:root"
+  fi
+fi
+
+artifact_root="$(realpath --canonicalize-existing "${artifact_argument}")"
 [[ "${artifact_root}" == /* ]] || fail "Artifact root must resolve to an absolute path"
-[[ "${artifact_root}" != "${STAGING_ROOT}" && "${artifact_root}" != "${STAGING_ROOT}/"* ]] || \
+[[ "${artifact_root}" != "${STAGING_ROOT}" && "${artifact_root}" != "${STAGING_ROOT}/"* && \
+  "${artifact_root}" != "${UPDATE_STAGING_ROOT}" && "${artifact_root}" != "${UPDATE_STAGING_ROOT}/"* ]] || \
   fail "Artifact input must be outside the root-owned staging directory"
 for directory in frontend backend deployment; do
   [[ -d "${artifact_root}/${directory}" ]] || fail "Artifact directory is missing: ${directory}"
@@ -82,7 +105,7 @@ for archive in "${frontend_archive}" "${backend_archive}" "${deployment_archive}
   [[ -f "${archive}.sha256" ]] || fail "Checksum is missing: ${archive}.sha256"
 done
 
-staging_temp="$(mktemp -d "${STAGING_ROOT}.tmp.XXXXXX")"
+staging_temp="$(mktemp -d "${staging_root}.tmp.XXXXXX")"
 chmod 0750 "${staging_temp}"
 install -d -o root -g root -m 0750 \
   "${staging_temp}/source" "${staging_temp}/frontend" "${staging_temp}/backend" \
@@ -117,13 +140,36 @@ chmod -R go-w "${staging_temp}"
 
 [[ "$(tr -d '\r\n' < "${staging_temp}/source/REVISION")" == "${commit}" ]] || \
   fail "Deployment source commit mismatch"
-mv -T "${staging_temp}" "${STAGING_ROOT}"
+for required_source in \
+  deploy/root/install-vzn-activity-tracker \
+  deploy/root/update-vzn-activity-tracker \
+  deploy/root/manage-vzn-sudoers \
+  deploy/root/healthcheck.sh; do
+  [[ -f "${staging_temp}/source/${required_source}" ]] || fail "Deployment source is missing: ${required_source}"
+done
+if [[ "${mode}" == "update" && -d "${staging_root}" ]]; then
+  install -d -o root -g root -m 0750 "${BACKUP_ROOT}"
+  archived_stage="${BACKUP_ROOT}/staged-update-$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
+  [[ ! -e "${archived_stage}" ]] || fail "Update staging archive target already exists"
+  mv -T "${staging_root}" "${archived_stage}"
+fi
+mv -T "${staging_temp}" "${staging_root}"
 staging_temp=""
+if [[ "${mode}" == "install" ]]; then
+  install -o root -g root -m 0755 \
+    "${staging_root}/source/deploy/root/install-vzn-activity-tracker" "${INSTALLED_DEPLOYER}"
+  install -o root -g root -m 0755 \
+    "${staging_root}/source/deploy/root/manage-vzn-sudoers" "${INSTALLED_SUDOERS_HELPER}"
+  printf 'Staged first-install commit %s. Root-owned deployer: %s\n' "${commit}" "${INSTALLED_DEPLOYER}"
+  printf 'Deployer SHA-256: '
+  sha256sum "${INSTALLED_DEPLOYER}" | awk '{print $1}'
+else
+  install -o root -g root -m 0755 \
+    "${staging_root}/source/deploy/root/update-vzn-activity-tracker" "${INSTALLED_UPDATER}"
+  printf 'Staged update commit %s. Root-owned updater: %s\n' "${commit}" "${INSTALLED_UPDATER}"
+  printf 'Updater SHA-256: '
+  sha256sum "${INSTALLED_UPDATER}" | awk '{print $1}'
+fi
+install -d -o root -g root -m 0755 /usr/local/lib/vzn-activity-tracker
 install -o root -g root -m 0755 \
-  "${STAGING_ROOT}/source/deploy/root/install-vzn-activity-tracker" "${INSTALLED_DEPLOYER}"
-install -o root -g root -m 0755 \
-  "${STAGING_ROOT}/source/deploy/root/manage-vzn-sudoers" "${INSTALLED_SUDOERS_HELPER}"
-
-printf 'Staged commit %s. Root-owned deployer: %s\n' "${commit}" "${INSTALLED_DEPLOYER}"
-printf 'Deployer SHA-256: '
-sha256sum "${INSTALLED_DEPLOYER}" | awk '{print $1}'
+  "${staging_root}/source/deploy/root/healthcheck.sh" "${INSTALLED_HEALTHCHECK_HELPER}"

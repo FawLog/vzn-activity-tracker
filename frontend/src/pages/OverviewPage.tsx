@@ -3,20 +3,22 @@ import { useEffect, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PageHeader, SectionHeader } from "../components/Page";
 import { api } from "../lib/api";
-import { useAuth } from "../lib/auth";
+import { useGroupContext } from "../lib/group-context";
 import { eventLabel, formatDate } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { OverviewData } from "../lib/types";
 
 export function OverviewPage() {
-  const { authenticated } = useAuth();
+  const { selectedGroup, selectedAlliance } = useGroupContext();
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!authenticated) return;
-    api.overview().then(setData).catch((requestError) => setError(requestError.message));
-  }, [authenticated]);
+    if (!selectedGroup) return;
+    api.overview(selectedGroup.id).then(setData).catch((requestError) => setError(requestError.message));
+  }, [selectedGroup]);
+
+  if (!selectedGroup) return <div className="page"><PageHeader title="Operational overview" description="Set up an alliance group before viewing scoped records." /><EmptyState title="No active group" description="Create the first primary alliance to start the evidence record." action={<button className="button button--primary" onClick={() => navigate("/onboarding")}>Start setup</button>} /></div>;
 
   return (
     <div className="page">
@@ -31,24 +33,12 @@ export function OverviewPage() {
           <h2>The intelligence picture starts with verified records</h2>
           <p>Add alliance players and create event records to build a trusted, reviewable history. Missing evidence is never converted to zero.</p>
           <div className="button-row">
-            {authenticated ? (
-              <>
-                <button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={18} />Add player</button>
-                <button className="button button--secondary" onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={18} />Create event</button>
-              </>
-            ) : (
-              <button className="button button--primary" onClick={() => navigate("/login")}>Officer sign-in</button>
-            )}
+            <><button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={18} />Add player</button><button className="button button--secondary" disabled={!selectedAlliance} onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={18} />Create event</button></>
           </div>
         </div>
       </section>
 
-      {!authenticated ? (
-        <section className="privacy-rail">
-          <ShieldCheck size={24} />
-          <div><strong>Private by default</strong><p>Roster records and event details remain unavailable without officer authentication in this foundation release.</p></div>
-        </section>
-      ) : error ? <ErrorState message={error} /> : !data ? <LoadingState /> : (
+      {error ? <ErrorState message={error} /> : !data ? <LoadingState /> : (
         <div className="overview-grid">
           <section className="data-panel">
             <SectionHeader title="Recent events" description="Verified alliance event records, most recent first." action={<button className="button button--quiet" onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={16} />Create event</button>} />

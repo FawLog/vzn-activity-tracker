@@ -27,11 +27,13 @@ Uvicorn accepts forwarded headers because Docker publishes the service only on h
 
 ## Data model
 
-- `players`: current identity keyed by FID.
-- `player_nicknames`: dated nickname history.
-- `player_memberships`: alliance membership intervals.
-- `events`: event type, event date, and draft/published state.
-- `event_participants`: future event-date results with explicit presence status, roster role, raw points, and evidence completeness.
+- `alliance_groups`: independent access and reporting boundary with one transactional primary alliance.
+- `alliances`: primary/additional alliances, status, state metadata, and a separate future WhiteoutStats settings record.
+- `players`: global technical identity keyed by FID; it is never duplicated per alliance.
+- `player_group_profiles`: group-scoped player visibility and an explicitly unconfirmed legacy state.
+- `player_nickname_observations`, `player_membership_observations`, `player_alliance_transitions`, and `player_primary_alliance_history`: evidence-first foundations for future roster synchronisation and transfer review. No automatic transfer classification runs yet.
+- `events`: event type, event date, draft/published state, and nullable legacy / required-for-new `alliance_id` ownership.
+- `event_participants`: preserved foundation results. `event_registrations`, `event_attendance_assessments`, and `event_result_entries` prepare a future separation of registration, attendance, and raw result facts.
 - `audit_log`: attributed mutations.
 - `admin_sessions`, `login_attempts`: security state.
 
@@ -45,7 +47,7 @@ The schema deliberately keeps raw event points event-specific. No cross-event su
 - `lib/auth.tsx`: session bootstrap and authentication state.
 - `lib/router.ts`: minimal History API routing to avoid another runtime dependency.
 
-The public Overview reveals no player records. All roster, event, ranking, and admin routes require the one administrator session until alliance-member authorization is implemented.
+All roster, event, ranking, and admin routes require the one administrator session until alliance-member authorization is implemented. Roster and event reads are group-scoped; global legacy routes are not used, so an ID cannot cross a future group authorization boundary.
 
 ## Operational constraints
 
@@ -57,4 +59,4 @@ The public Overview reveals no player records. All roster, event, ranking, and a
 
 ## Future extension points
 
-Roster editing, event-specific result editors, evidence uploads, OCR review, and Discord OAuth can be added behind new migrations and services. OCR must create review drafts and must never publish directly. Discord role mapping must precede multi-officer editing rights.
+Roster editing, event-specific result editors, evidence uploads, OCR review, WhiteoutStats synchronisation, and Discord OAuth can be added behind new migrations and services. Initial group onboarding explicitly assigns legacy events to its primary alliance; it never invents roster observations or legacy membership. OCR must create review drafts and must never publish directly. Discord role mapping must precede multi-officer editing rights.

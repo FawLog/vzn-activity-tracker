@@ -3,11 +3,13 @@ import { useEffect, useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PageHeader } from "../components/Page";
 import { api } from "../lib/api";
+import { useGroupContext } from "../lib/group-context";
 import { formatDate } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { Player } from "../lib/types";
 
 export function PlayersPage() {
+  const { selectedGroup, selectedAlliance } = useGroupContext();
   const initialQuery = new URLSearchParams(window.location.search).get("q") ?? "";
   const [query, setQuery] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
@@ -19,8 +21,11 @@ export function PlayersPage() {
   useEffect(() => {
     setPlayers(null);
     setError("");
-    api.players(submittedQuery, sort, direction).then((result) => setPlayers(result.items)).catch((requestError) => setError(requestError.message));
-  }, [submittedQuery, sort, direction]);
+    if (!selectedGroup) return;
+    api.players(selectedGroup.id, submittedQuery, sort, direction, selectedAlliance?.id).then((result) => setPlayers(result.items)).catch((requestError) => setError(requestError.message));
+  }, [selectedGroup, selectedAlliance, submittedQuery, sort, direction]);
+
+  if (!selectedGroup) return <div className="page"><EmptyState title="No active group" description="Set up a group before viewing its roster." action={<button className="button button--primary" onClick={() => navigate("/onboarding")}>Start setup</button>} /></div>;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -29,7 +34,7 @@ export function PlayersPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Players" description="FID-based roster records with nickname history." action={<button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={17} />Add player</button>} />
+      <PageHeader title="Players" description={`FID-based roster records in ${selectedAlliance?.name ?? selectedGroup.name}.`} action={<button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={17} />Add player</button>} />
       <div className="toolbar">
         <form className="filter-search" onSubmit={submit}><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search FID or nickname" aria-label="Search players" /></form>
         <label className="select-control"><span>Sort</span><select value={`${sort}:${direction}`} onChange={(event) => { const [nextSort, nextDirection] = event.target.value.split(":"); setSort(nextSort); setDirection(nextDirection); }}><option value="nickname:asc">Nickname A–Z</option><option value="nickname:desc">Nickname Z–A</option><option value="fid:asc">FID ascending</option><option value="created_at:desc">Newest first</option></select></label>

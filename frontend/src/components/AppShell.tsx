@@ -9,9 +9,11 @@ import {
   Users,
   X,
   LayoutDashboard,
+  Layers,
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../lib/auth";
+import { useGroupContext } from "../lib/group-context";
 import { navigate } from "../lib/router";
 import { Brand } from "./Brand";
 
@@ -20,11 +22,13 @@ const navItems = [
   { href: "/players", label: "Players", icon: Users },
   { href: "/events", label: "Events", icon: CalendarDays },
   { href: "/rankings", label: "Rankings", icon: BarChart3 },
+  { href: "/groups", label: "Groups", icon: Layers },
   { href: "/admin", label: "Admin", icon: Settings },
 ];
 
 export function AppShell({ path, children }: { path: string; children: ReactNode }) {
   const { authenticated, logout } = useAuth();
+  const { groups, alliances, selectedGroup, selectedAlliance, selectGroup, selectAlliance } = useGroupContext();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -95,17 +99,13 @@ export function AppShell({ path, children }: { path: string; children: ReactNode
           </button>
           <div className="topbar__mobile-brand"><Brand compact /></div>
           {authenticated ? (
-            <form className="global-search" onSubmit={submitSearch} role="search">
-              <Search size={18} />
-              <input
-                ref={searchRef}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Search players by FID or nickname"
-                aria-label="Search players"
-              />
-              <kbd>/</kbd>
-            </form>
+            <div className="topbar__workspace-tools">
+              {selectedGroup ? <>
+                <label className="context-select"><span>Group</span><select value={selectedGroup.id} onChange={(event) => selectGroup(event.target.value)} aria-label="Current group">{groups.map((group) => <option key={group.id} value={group.id}>{group.name}{group.status === "archived" ? " · archived" : ""}</option>)}</select></label>
+                <label className="context-select"><span>Alliance</span><select value={selectedAlliance?.id ?? ""} onChange={(event) => selectAlliance(event.target.value)} aria-label="Current alliance">{alliances.map((alliance) => <option key={alliance.id} value={alliance.id}>{alliance.name} · {alliance.tag}</option>)}</select></label>
+              </> : <span className="topbar__setup">Set up a group to begin</span>}
+              <form className="global-search" onSubmit={submitSearch} role="search"><Search size={18} /><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search players by FID or nickname" aria-label="Search players" /><kbd>/</kbd></form>
+            </div>
           ) : <div className="topbar__spacer" />}
           <div className="topbar__actions">
             <span className="system-state"><i />System operational</span>

@@ -19,7 +19,7 @@ test("administrator can create foundational records", async ({ page }, testInfo)
   if (!password) throw new Error("E2E_ADMIN_PASSWORD is required for the authenticated flow");
 
   await page.goto("/login");
-  await page.getByLabel("Password").fill(password);
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("authenticated-overview.png"), fullPage: true });

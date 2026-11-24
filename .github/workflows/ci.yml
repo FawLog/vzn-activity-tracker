@@ -54,6 +54,9 @@ jobs:
       - name: Validate deployment helper syntax
         run: bash -n deploy/root/audit-vps-storage deploy/root/install-vzn-activity-tracker deploy/root/manage-vzn-sudoers deploy/root/stage-vzn-artifacts
 
+      - name: Test root-owned artifact staging
+        run: .github/scripts/test-staging-helper
+
       - name: Run backend tests and migration checks
         env:
           PYTHONPATH: backend

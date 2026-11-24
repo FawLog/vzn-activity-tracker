@@ -1,0 +1,60 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+readonly STAGING_ROOT="/var/lib/vzn-deploy-staging"
+readonly INSTALLED_STAGER="/usr/local/sbin/vzn-stage-vzn-artifacts"
+readonly INSTALLED_DEPLOYER="/usr/local/sbin/vzn-deploy"
+readonly INSTALLED_SUDOERS_HELPER="/usr/local/sbin/vzn-manage-sudoers"
+
+fixture_root="$(mktemp -d)"
+cleanup() {
+  sudo rm -rf -- "${STAGING_ROOT}"
+  sudo rm -f -- "${INSTALLED_STAGER}" "${INSTALLED_DEPLOYER}" "${INSTALLED_SUDOERS_HELPER}"
+  rm -rf -- "${fixture_root}"
+}
+trap cleanup EXIT
+
+commit="$(printf 'a%.0s' {1..40})"
+artifact_root="${fixture_root}/artifacts"
+install -d "${artifact_root}/frontend" "${artifact_root}/backend" "${artifact_root}/deployment"
+
+install -d "${fixture_root}/frontend-payload"
+printf '<!doctype html>\n' > "${fixture_root}/frontend-payload/index.html"
+frontend_archive="${artifact_root}/frontend/vzn-frontend-${commit}.tar.gz"
+tar --create --gzip --file "${frontend_archive}" --directory "${fixture_root}/frontend-payload" .
+(cd "$(dirname "${frontend_archive}")" && sha256sum "$(basename "${frontend_archive}")" > \
+  "$(basename "${frontend_archive}.sha256")")
+
+install -d "${fixture_root}/backend-payload"
+printf 'image fixture\n' > "${fixture_root}/backend-payload/image.txt"
+backend_archive="${artifact_root}/backend/vzn-backend-${commit}.tar.gz"
+tar --create --gzip --file "${backend_archive}" --directory "${fixture_root}/backend-payload" .
+(cd "$(dirname "${backend_archive}")" && sha256sum "$(basename "${backend_archive}")" > \
+  "$(basename "${backend_archive}.sha256")")
+printf 'VZN_IMAGE_TAG=ci-%s\nGIT_COMMIT=%s\n' "${commit}" "${commit}" > \
+  "${artifact_root}/backend/vzn-backend-${commit}.manifest"
+
+deployment_payload="${fixture_root}/deployment-payload"
+install -d "${deployment_payload}/deploy/root"
+printf '%s\n' "${commit}" > "${deployment_payload}/REVISION"
+install -m 0755 deploy/root/install-vzn-activity-tracker \
+  "${deployment_payload}/deploy/root/install-vzn-activity-tracker"
+install -m 0755 deploy/root/manage-vzn-sudoers \
+  "${deployment_payload}/deploy/root/manage-vzn-sudoers"
+deployment_archive="${artifact_root}/deployment/vzn-deployment-${commit}.tar.gz"
+tar --create --gzip --file "${deployment_archive}" --directory "${deployment_payload}" .
+(cd "$(dirname "${deployment_archive}")" && sha256sum "$(basename "${deployment_archive}")" > \
+  "$(basename "${deployment_archive}.sha256")")
+
+sudo install -o root -g root -m 0755 deploy/root/stage-vzn-artifacts "${INSTALLED_STAGER}"
+sudo "${INSTALLED_STAGER}" "${artifact_root}"
+
+[[ "$(stat --format='%U:%G:%a' "${STAGING_ROOT}")" == "root:root:750" ]]
+[[ "$(tr -d '\r\n' < "${STAGING_ROOT}/source/REVISION")" == "${commit}" ]]
+[[ "$(stat --format='%U:%G:%a' "${INSTALLED_DEPLOYER}")" == "root:root:755" ]]
+cmp deploy/root/install-vzn-activity-tracker "${INSTALLED_DEPLOYER}"
+
+printf 'tampered after staging\n' > "${frontend_archive}"
+expected_frontend_digest="$(awk '{print $1}' "${frontend_archive}.sha256")"
+staged_frontend_digest="$(sudo sha256sum "${STAGING_ROOT}/frontend/$(basename "${frontend_archive}")" | awk '{print $1}')"
+[[ "${staged_frontend_digest}" == "${expected_frontend_digest}" ]]

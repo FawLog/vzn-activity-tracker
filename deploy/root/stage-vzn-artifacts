@@ -80,6 +80,25 @@ backend_manifest="${backend_manifests[0]}"
 deployment_archive="${deployment_archives[0]}"
 for archive in "${frontend_archive}" "${backend_archive}" "${deployment_archive}"; do
   [[ -f "${archive}.sha256" ]] || fail "Checksum is missing: ${archive}.sha256"
+done
+
+staging_temp="$(mktemp -d "${STAGING_ROOT}.tmp.XXXXXX")"
+chmod 0750 "${staging_temp}"
+install -d -o root -g root -m 0750 \
+  "${staging_temp}/source" "${staging_temp}/frontend" "${staging_temp}/backend" \
+  "${staging_temp}/deployment"
+install -o root -g root -m 0640 \
+  "${frontend_archive}" "${frontend_archive}.sha256" "${staging_temp}/frontend/"
+install -o root -g root -m 0640 \
+  "${backend_archive}" "${backend_archive}.sha256" "${backend_manifest}" "${staging_temp}/backend/"
+install -o root -g root -m 0640 \
+  "${deployment_archive}" "${deployment_archive}.sha256" "${staging_temp}/deployment/"
+
+frontend_archive="${staging_temp}/frontend/$(basename "${frontend_archive}")"
+backend_archive="${staging_temp}/backend/$(basename "${backend_archive}")"
+backend_manifest="${staging_temp}/backend/$(basename "${backend_manifest}")"
+deployment_archive="${staging_temp}/deployment/$(basename "${deployment_archive}")"
+for archive in "${frontend_archive}" "${backend_archive}" "${deployment_archive}"; do
   (cd "$(dirname "${archive}")" && sha256sum --check "$(basename "${archive}.sha256")")
 done
 validate_archive "${frontend_archive}"
@@ -91,16 +110,8 @@ commit="$(sed -n 's/^GIT_COMMIT=//p' "${backend_manifest}")"
 [[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || fail "Backend commit mismatch"
 [[ "$(basename "${deployment_archive}")" == "vzn-deployment-${commit}.tar.gz" ]] || fail "Deployment commit mismatch"
 
-staging_temp="$(mktemp -d "${STAGING_ROOT}.tmp.XXXXXX")"
-chmod 0750 "${staging_temp}"
-install -d -o root -g root -m 0750 \
-  "${staging_temp}/source" "${staging_temp}/frontend" "${staging_temp}/backend"
 tar --extract --gzip --file "${deployment_archive}" --directory "${staging_temp}/source" \
   --no-same-owner --no-same-permissions
-install -o root -g root -m 0640 \
-  "${frontend_archive}" "${frontend_archive}.sha256" "${staging_temp}/frontend/"
-install -o root -g root -m 0640 \
-  "${backend_archive}" "${backend_archive}.sha256" "${backend_manifest}" "${staging_temp}/backend/"
 chown -R root:root "${staging_temp}"
 chmod -R go-w "${staging_temp}"
 

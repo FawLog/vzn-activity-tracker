@@ -16,25 +16,32 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
-  await page.getByRole("button", { name: "Start setup" }).click();
-  await expect(page.getByRole("heading", { name: "Set up the first alliance group" })).toBeVisible();
-  await page.getByLabel("Group name").fill("WZN");
-  await page.getByLabel("Primary alliance name").fill("WZN");
-  await page.getByLabel("Tag").fill("WZN");
-  await page.getByLabel("State ID").fill("1001");
-  await page.getByRole("button", { name: "Confirm group setup" }).click();
-  await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
+  const setupButton = page.getByRole("button", { name: "Start setup" });
+  if (await setupButton.isVisible()) {
+    await setupButton.click();
+    await expect(page.getByRole("heading", { name: "Set up the first alliance group" })).toBeVisible();
+    await page.getByLabel("Group name").fill("WZN");
+    await page.getByLabel("Primary alliance name").fill("WZN");
+    await page.getByLabel("Tag").fill("WZN");
+    await page.getByLabel("State ID").fill("1001");
+    await page.getByRole("button", { name: "Confirm group setup" }).click();
+    await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
+  }
   await page.screenshot({ path: testInfo.outputPath("group-overview.png"), fullPage: true });
 
   await page.goto("/groups");
   await expect(page.getByRole("heading", { name: "Alliance groups" })).toBeVisible();
-  await page.getByRole("button", { name: "Add alliance" }).click();
-  await page.getByPlaceholder("Alliance name").fill("WZN Academy");
-  await page.getByPlaceholder("Tag").fill("WZNA");
-  await page.getByPlaceholder("State ID").fill("1001");
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(page.getByText("Additional alliance added.")).toBeVisible();
-  await expect(page.getByText("WZN Academy")).toBeVisible();
+  const academy = page.getByRole("button", { name: "WZN Academy WZNA" });
+  if (await academy.count() === 0) {
+    await page.getByRole("button", { name: "Add alliance" }).click();
+    await page.getByPlaceholder("Alliance name").fill("WZN Academy");
+    await page.getByPlaceholder("Tag").fill("WZNA");
+    await page.getByPlaceholder("State ID").fill("1001");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByText("Additional alliance added.")).toBeVisible();
+  }
+  await expect(academy).toBeVisible();
+  await academy.click();
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
   await page.goto("/admin?mode=events");

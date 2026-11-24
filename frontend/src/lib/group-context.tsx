@@ -9,7 +9,7 @@ interface GroupContextValue {
   selectedGroup: AllianceGroup | null;
   selectedAlliance: Alliance | null;
   loading: boolean;
-  refresh: () => Promise<void>;
+  refresh: (selection?: { groupId?: string; allianceId?: string }) => Promise<void>;
   selectGroup: (groupId: string) => void;
   selectAlliance: (allianceId: string) => void;
 }
@@ -26,18 +26,20 @@ export function GroupProvider({ children }: { children: ReactNode }) {
   const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(() => localStorage.getItem(ALLIANCE_KEY));
   const [loading, setLoading] = useState(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (selection?: { groupId?: string; allianceId?: string }) => {
     if (!authenticated) { setGroups([]); setAlliances([]); return; }
     setLoading(true);
     try {
       const nextGroups = (await api.groups()).items;
       setGroups(nextGroups);
-      const activeGroup = nextGroups.find((group) => group.id === selectedGroupId) ?? nextGroups.find((group) => group.status === "active") ?? nextGroups[0] ?? null;
+      const targetGroupId = selection?.groupId ?? selectedGroupId;
+      const activeGroup = nextGroups.find((group) => group.id === targetGroupId) ?? nextGroups.find((group) => group.status === "active") ?? nextGroups[0] ?? null;
       if (!activeGroup) { setAlliances([]); return; }
       if (activeGroup.id !== selectedGroupId) { setSelectedGroupId(activeGroup.id); localStorage.setItem(GROUP_KEY, activeGroup.id); }
       const nextAlliances = (await api.alliances(activeGroup.id)).items;
       setAlliances(nextAlliances);
-      const activeAlliance = nextAlliances.find((alliance) => alliance.id === selectedAllianceId) ?? nextAlliances.find((alliance) => alliance.alliance_type === "primary") ?? nextAlliances[0] ?? null;
+      const targetAllianceId = selection?.allianceId ?? selectedAllianceId;
+      const activeAlliance = nextAlliances.find((alliance) => alliance.id === targetAllianceId) ?? nextAlliances.find((alliance) => alliance.alliance_type === "primary") ?? nextAlliances[0] ?? null;
       if (activeAlliance && activeAlliance.id !== selectedAllianceId) { setSelectedAllianceId(activeAlliance.id); localStorage.setItem(ALLIANCE_KEY, activeAlliance.id); }
     } finally { setLoading(false); }
   }, [authenticated, selectedAllianceId, selectedGroupId]);

@@ -9,6 +9,21 @@ readonly STAGING_ROOT="/var/lib/vzn-deploy-staging"
 readonly INSTALLED_DEPLOYER="/usr/local/sbin/vzn-deploy"
 readonly INSTALLED_SUDOERS_HELPER="/usr/local/sbin/vzn-manage-sudoers"
 
+staging_temp=""
+
+cleanup() {
+  local exit_code="$?"
+  trap - EXIT INT TERM
+  if [[ -n "${staging_temp}" && -d "${staging_temp}" ]]; then
+    rm -rf -- "${staging_temp}"
+  fi
+  exit "${exit_code}"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
@@ -38,6 +53,9 @@ PY
 [[ "${EUID}" -eq 0 ]] || fail "Run this staging helper as root"
 [[ "$#" -eq 1 ]] || fail "Usage: stage-vzn-artifacts /absolute/path/to/artifacts"
 [[ ! -e "${STAGING_ROOT}" ]] || fail "Staging root already exists: ${STAGING_ROOT}"
+[[ ! -e "${INSTALLED_DEPLOYER}" ]] || fail "Installed deployer already exists: ${INSTALLED_DEPLOYER}"
+[[ ! -e "${INSTALLED_SUDOERS_HELPER}" ]] || \
+  fail "Installed sudoers helper already exists: ${INSTALLED_SUDOERS_HELPER}"
 
 artifact_root="$(realpath --canonicalize-existing "$1")"
 [[ "${artifact_root}" == /* ]] || fail "Artifact root must resolve to an absolute path"
@@ -73,17 +91,23 @@ commit="$(sed -n 's/^GIT_COMMIT=//p' "${backend_manifest}")"
 [[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || fail "Backend commit mismatch"
 [[ "$(basename "${deployment_archive}")" == "vzn-deployment-${commit}.tar.gz" ]] || fail "Deployment commit mismatch"
 
+staging_temp="$(mktemp -d "${STAGING_ROOT}.tmp.XXXXXX")"
+chmod 0750 "${staging_temp}"
 install -d -o root -g root -m 0750 \
-  "${STAGING_ROOT}" "${STAGING_ROOT}/source" "${STAGING_ROOT}/frontend" "${STAGING_ROOT}/backend"
-tar --extract --gzip --file "${deployment_archive}" --directory "${STAGING_ROOT}/source" \
+  "${staging_temp}/source" "${staging_temp}/frontend" "${staging_temp}/backend"
+tar --extract --gzip --file "${deployment_archive}" --directory "${staging_temp}/source" \
   --no-same-owner --no-same-permissions
-install -o root -g root -m 0640 "${frontend_archive}" "${frontend_archive}.sha256" "${STAGING_ROOT}/frontend/"
 install -o root -g root -m 0640 \
-  "${backend_archive}" "${backend_archive}.sha256" "${backend_manifest}" "${STAGING_ROOT}/backend/"
-chown -R root:root "${STAGING_ROOT}"
-chmod -R go-w "${STAGING_ROOT}"
+  "${frontend_archive}" "${frontend_archive}.sha256" "${staging_temp}/frontend/"
+install -o root -g root -m 0640 \
+  "${backend_archive}" "${backend_archive}.sha256" "${backend_manifest}" "${staging_temp}/backend/"
+chown -R root:root "${staging_temp}"
+chmod -R go-w "${staging_temp}"
 
-[[ "$(tr -d '\r\n' < "${STAGING_ROOT}/source/REVISION")" == "${commit}" ]] || fail "Deployment source commit mismatch"
+[[ "$(tr -d '\r\n' < "${staging_temp}/source/REVISION")" == "${commit}" ]] || \
+  fail "Deployment source commit mismatch"
+mv -T "${staging_temp}" "${STAGING_ROOT}"
+staging_temp=""
 install -o root -g root -m 0755 \
   "${STAGING_ROOT}/source/deploy/root/install-vzn-activity-tracker" "${INSTALLED_DEPLOYER}"
 install -o root -g root -m 0755 \

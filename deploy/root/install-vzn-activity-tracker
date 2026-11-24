@@ -14,7 +14,15 @@ readonly NGINX_AVAILABLE="/etc/nginx/sites-available/vzn.fawlog.cc"
 readonly NGINX_ENABLED="/etc/nginx/sites-enabled/vzn.fawlog.cc"
 readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly HOST_CONFIG="/etc/vzn-activity-tracker/deploy.conf"
-readonly MINIMUM_FREE_BYTES=2147483648
+readonly CONTAINER_NAME="vzn-activity-tracker-backend"
+readonly MINIMUM_RESERVE_BYTES=2147483648
+readonly INSTALL_OVERHEAD_BYTES=268435456
+
+runtime_root=""
+release_id=""
+release_backup_root=""
+transaction_started=0
+install_completed=0
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -42,24 +50,26 @@ validate_root_owned_directory() {
   fi
 }
 
-validate_frontend_archive() {
-  local archive="$1"
-  python3 - "${archive}" <<'PY'
+archive_payload_bytes() {
+  python3 - "$@" <<'PY'
 from pathlib import PurePosixPath
 import sys
 import tarfile
 
-archive = sys.argv[1]
-with tarfile.open(archive, mode="r:gz") as bundle:
-    members = bundle.getmembers()
-    if not members:
-        raise SystemExit("frontend archive is empty")
-    for member in members:
-        path = PurePosixPath(member.name)
-        if path.is_absolute() or ".." in path.parts:
-            raise SystemExit(f"unsafe archive path: {member.name}")
-        if not (member.isdir() or member.isfile()):
-            raise SystemExit(f"unsupported archive member: {member.name}")
+sizes = []
+for archive in sys.argv[1:]:
+    with tarfile.open(archive, mode="r:gz") as bundle:
+        members = bundle.getmembers()
+        if not members:
+            raise SystemExit(f"archive is empty: {archive}")
+        for member in members:
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts:
+                raise SystemExit(f"unsafe archive path: {member.name}")
+            if not (member.isdir() or member.isfile()):
+                raise SystemExit(f"unsupported archive member: {member.name}")
+        sizes.append(sum(member.size for member in members if member.isfile()))
+print(*sizes)
 PY
 }
 
@@ -112,10 +122,147 @@ wait_for_health() {
   fail "VZN backend did not become healthy"
 }
 
+move_vzn_nginx_to() {
+  local destination="$1"
+  if [[ -e "${NGINX_ENABLED}" || -L "${NGINX_ENABLED}" ]]; then
+    [[ -L "${NGINX_ENABLED}" ]] || return 1
+    [[ "$(readlink "${NGINX_ENABLED}")" == "${NGINX_AVAILABLE}" ]] || return 1
+    mv -T "${NGINX_ENABLED}" "${destination}/nginx-enabled"
+  fi
+  if [[ -e "${NGINX_AVAILABLE}" || -L "${NGINX_AVAILABLE}" ]]; then
+    [[ -f "${NGINX_AVAILABLE}" && ! -L "${NGINX_AVAILABLE}" ]] || return 1
+    [[ "$(stat --format='%U:%G' "${NGINX_AVAILABLE}")" == "root:root" ]] || return 1
+    mv -T "${NGINX_AVAILABLE}" "${destination}/nginx-available"
+  fi
+}
+
+restore_vzn_nginx_from() {
+  local source="$1"
+  if [[ -e "${source}/nginx-available" ]]; then
+    mv -T "${source}/nginx-available" "${NGINX_AVAILABLE}"
+  fi
+  if [[ -e "${source}/nginx-enabled" || -L "${source}/nginx-enabled" ]]; then
+    mv -T "${source}/nginx-enabled" "${NGINX_ENABLED}"
+  fi
+}
+
+recover_interrupted_install() {
+  local marker marker_commit marker_release recovery_root
+  [[ -e "${APP_ROOT}" || -L "${APP_ROOT}" ]] || return 0
+
+  marker="${APP_ROOT}/.vzn-installing"
+  [[ -d "${APP_ROOT}" && ! -L "${APP_ROOT}" ]] || \
+    fail "Application root exists but is not a recoverable directory: ${APP_ROOT}"
+  require_file "${marker}"
+  [[ ! -L "${marker}" ]] || fail "Interrupted-install marker must not be a symlink"
+  [[ "$(stat --format='%U:%G:%a' "${marker}")" == "root:root:600" ]] || \
+    fail "Interrupted-install marker has unexpected ownership or mode"
+  [[ "$(grep -c '^COMMIT=' "${marker}" || true)" == "1" ]] || fail "Invalid interrupted-install marker"
+  [[ "$(grep -c '^RELEASE_ID=' "${marker}" || true)" == "1" ]] || fail "Invalid interrupted-install marker"
+  marker_commit="$(sed -n 's/^COMMIT=//p' "${marker}")"
+  marker_release="$(sed -n 's/^RELEASE_ID=//p' "${marker}")"
+  [[ "${marker_commit}" == "${commit}" ]] || \
+    fail "Interrupted installation belongs to another commit; manual review is required"
+  [[ "${marker_release}" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}$ ]] || \
+    fail "Interrupted-install release identifier is invalid"
+
+  if [[ -e "${NGINX_ENABLED}" || -L "${NGINX_ENABLED}" ]]; then
+    [[ -L "${NGINX_ENABLED}" && "$(readlink "${NGINX_ENABLED}")" == "${NGINX_AVAILABLE}" ]] || \
+      fail "Unexpected Nginx enabled target blocks interrupted-install recovery"
+  fi
+  if [[ -e "${NGINX_AVAILABLE}" || -L "${NGINX_AVAILABLE}" ]]; then
+    [[ -f "${NGINX_AVAILABLE}" && ! -L "${NGINX_AVAILABLE}" ]] || \
+      fail "Unexpected Nginx available target blocks interrupted-install recovery"
+    [[ "$(stat --format='%U:%G' "${NGINX_AVAILABLE}")" == "root:root" ]] || \
+      fail "Unexpected Nginx config ownership blocks interrupted-install recovery"
+  fi
+
+  if [[ -f "${APP_ROOT}/compose.yaml" && -f "${APP_ROOT}/.env" ]]; then
+    docker compose --project-directory "${APP_ROOT}" down --remove-orphans
+  elif docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    fail "The interrupted VZN container exists without recoverable Compose metadata"
+  fi
+
+  install -d -o root -g root -m 0750 "${BACKUP_ROOT}"
+  recovery_root="$(mktemp -d "${BACKUP_ROOT}/interrupted-${marker_release}.XXXXXX")"
+  chmod 0700 "${recovery_root}"
+  if ! move_vzn_nginx_to "${recovery_root}"; then
+    restore_vzn_nginx_from "${recovery_root}" || true
+    fail "Unable to isolate interrupted VZN Nginx files"
+  fi
+  if ! nginx -t || ! systemctl reload nginx; then
+    restore_vzn_nginx_from "${recovery_root}" || true
+    nginx -t || true
+    systemctl reload nginx || true
+    fail "Unable to restore Nginx while recovering an interrupted installation"
+  fi
+  mv -T "${APP_ROOT}" "${recovery_root}/app-root"
+  if [[ -d "${BACKUP_ROOT}/${marker_release}" ]]; then
+    mv -T "${BACKUP_ROOT}/${marker_release}" "${recovery_root}/release-backup"
+  fi
+  printf 'Recovered interrupted VZN installation into %s. Starting a clean attempt.\n' "${recovery_root}"
+}
+
+rollback_install() {
+  local recovery_root compose_stopped=1
+  set +e
+  install -d -o root -g root -m 0750 "${BACKUP_ROOT}"
+  recovery_root="$(mktemp -d "${BACKUP_ROOT}/failed-${release_id}.XXXXXX")"
+  if [[ -z "${recovery_root}" || ! -d "${recovery_root}" ]]; then
+    printf 'ERROR: Could not create a recovery directory; partial VZN state remains in place.\n' >&2
+    return
+  fi
+  chmod 0700 "${recovery_root}"
+  printf 'Installation failed; isolating only VZN state in %s.\n' "${recovery_root}" >&2
+
+  if [[ -f "${APP_ROOT}/compose.yaml" && -f "${APP_ROOT}/.env" ]]; then
+    docker compose --project-directory "${APP_ROOT}" down --remove-orphans || compose_stopped=0
+  elif docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+    compose_stopped=0
+  fi
+
+  if ! move_vzn_nginx_to "${recovery_root}"; then
+    printf 'ERROR: VZN Nginx files could not be isolated automatically.\n' >&2
+  else
+    if ! nginx -t || ! systemctl reload nginx; then
+      printf 'ERROR: Nginx rollback validation or reload failed; restoring VZN files.\n' >&2
+      restore_vzn_nginx_from "${recovery_root}" || true
+      nginx -t || true
+      systemctl reload nginx || true
+    fi
+  fi
+
+  if (( compose_stopped == 1 )) && [[ -d "${APP_ROOT}" && ! -L "${APP_ROOT}" ]]; then
+    mv -T "${APP_ROOT}" "${recovery_root}/app-root" || true
+  elif [[ -e "${APP_ROOT}" || -L "${APP_ROOT}" ]]; then
+    printf 'ERROR: VZN container could not be stopped; application root remains for a safe retry.\n' >&2
+  fi
+  if [[ -n "${release_backup_root}" && -d "${release_backup_root}" ]]; then
+    mv -T "${release_backup_root}" "${recovery_root}/release-backup" || true
+  fi
+  printf 'The prebuilt Docker image may remain cached; no unrelated image, volume, or service was changed.\n' >&2
+}
+
+on_exit() {
+  local exit_code="$?"
+  trap - EXIT INT TERM
+  if (( exit_code != 0 && transaction_started == 1 && install_completed == 0 )); then
+    rollback_install
+  fi
+  if [[ "${runtime_root}" == /run/vzn-install.* && -d "${runtime_root}" ]]; then
+    rm -rf -- "${runtime_root}"
+  fi
+  exit "${exit_code}"
+}
+
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 [[ "${EUID}" -eq 0 ]] || fail "Run this installer as root"
 [[ "$#" -eq 0 ]] || fail "This installer accepts no arguments"
 
-for command_name in curl docker find grep install nginx openssl python3 sha256sum ss stat systemctl tar; do
+for command_name in curl df docker du find grep install nginx openssl python3 sha256sum ss stat systemctl tar; do
   require_command "${command_name}"
 done
 
@@ -124,6 +271,7 @@ validate_root_owned_directory "${SOURCE_ROOT}"
 validate_root_owned_directory "${FRONTEND_ROOT}"
 validate_root_owned_directory "${BACKEND_ROOT}"
 require_file "${HOST_CONFIG}"
+[[ ! -L "${HOST_CONFIG}" ]] || fail "Host config must not be a symlink"
 [[ "$(stat --format='%U:%G:%a' "${HOST_CONFIG}")" == "root:root:600" ]] || \
   fail "Host config must be root:root mode 0600"
 
@@ -143,21 +291,19 @@ PY
 require_file "${certificate_fullchain}"
 require_file "${certificate_private_key}"
 
-[[ ! -e "${APP_ROOT}" ]] || fail "Application root already exists: ${APP_ROOT}"
-[[ ! -e "${NGINX_AVAILABLE}" ]] || fail "Nginx target already exists: ${NGINX_AVAILABLE}"
-[[ ! -e "${NGINX_ENABLED}" && ! -L "${NGINX_ENABLED}" ]] || fail "Nginx target is already enabled"
-[[ -z "$(ss -H -ltn 'sport = :8088')" ]] || fail "Loopback port 8088 is already in use"
 [[ "$(systemctl is-active docker)" == "active" ]] || fail "Docker is not active"
 [[ "$(systemctl is-enabled docker)" == "enabled" ]] || fail "Docker is not enabled at boot"
 [[ "$(systemctl is-active nginx)" == "active" ]] || fail "Nginx is not active"
+[[ "$(systemctl is-enabled nginx)" == "enabled" ]] || fail "Nginx is not enabled at boot"
+docker compose version >/dev/null
 nginx -t
 openssl x509 -in "${certificate_fullchain}" -checkend 86400 -noout
 certificate_sans="$(openssl x509 -in "${certificate_fullchain}" -noout -ext subjectAltName)"
-grep -Fq 'DNS:*.fawlog.cc' <<< "${certificate_sans}" || fail "Wildcard certificate does not cover vzn.fawlog.cc"
-
-available_bytes="$(df --output=avail --block-size=1 / | tail -n 1 | tr -d ' ')"
-[[ "${available_bytes}" =~ ^[0-9]+$ ]] || fail "Unable to determine free disk space"
-(( available_bytes >= MINIMUM_FREE_BYTES )) || fail "At least 2 GiB of free disk space is required"
+grep -Fq 'DNS:*.fawlog.cc' <<< "${certificate_sans}" || \
+  fail "Wildcard certificate does not cover vzn.fawlog.cc"
+certificate_public_key="$(openssl x509 -in "${certificate_fullchain}" -pubkey -noout | sha256sum | awk '{print $1}')"
+private_public_key="$(openssl pkey -in "${certificate_private_key}" -pubout 2>/dev/null | sha256sum | awk '{print $1}')"
+[[ "${certificate_public_key}" == "${private_public_key}" ]] || fail "Certificate and private key do not match"
 
 require_file "${SOURCE_ROOT}/REVISION"
 require_file "${SOURCE_ROOT}/compose.yaml"
@@ -177,10 +323,9 @@ backend_archive="${backend_archives[0]}"
 backend_manifest="${backend_manifests[0]}"
 require_file "${frontend_archive}.sha256"
 require_file "${backend_archive}.sha256"
-
 (cd "${FRONTEND_ROOT}" && sha256sum --check "$(basename "${frontend_archive}.sha256")")
 (cd "${BACKEND_ROOT}" && sha256sum --check "$(basename "${backend_archive}.sha256")")
-validate_frontend_archive "${frontend_archive}"
+read -r frontend_payload_bytes backend_payload_bytes < <(archive_payload_bytes "${frontend_archive}" "${backend_archive}")
 
 commit="$(sed -n 's/^GIT_COMMIT=//p' "${backend_manifest}")"
 image_tag="$(sed -n 's/^VZN_IMAGE_TAG=//p' "${backend_manifest}")"
@@ -188,22 +333,60 @@ source_commit="$(tr -d '\r\n' < "${SOURCE_ROOT}/REVISION")"
 [[ "${commit}" =~ ^[0-9a-f]{40}$ ]] || fail "Backend manifest has an invalid commit"
 [[ "${source_commit}" == "${commit}" ]] || fail "Source and backend commits differ"
 [[ "${image_tag}" == "ci-${commit}" ]] || fail "Backend image tag does not match the commit"
-[[ "$(basename "${frontend_archive}")" == "vzn-frontend-${commit}.tar.gz" ]] || fail "Frontend artifact does not match the commit"
-[[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || fail "Backend artifact does not match the commit"
+[[ "$(basename "${frontend_archive}")" == "vzn-frontend-${commit}.tar.gz" ]] || \
+  fail "Frontend artifact does not match the commit"
+[[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || \
+  fail "Backend artifact does not match the commit"
+
+recover_interrupted_install
+
+[[ ! -e "${APP_ROOT}" && ! -L "${APP_ROOT}" ]] || fail "Application root already exists: ${APP_ROOT}"
+[[ ! -e "${NGINX_AVAILABLE}" && ! -L "${NGINX_AVAILABLE}" ]] || \
+  fail "Nginx target already exists: ${NGINX_AVAILABLE}"
+[[ ! -e "${NGINX_ENABLED}" && ! -L "${NGINX_ENABLED}" ]] || fail "Nginx target is already enabled"
+[[ -z "$(ss -H -ltn 'sport = :8088')" ]] || fail "Loopback port 8088 is already in use"
+if docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+  fail "VZN container name is already in use: ${CONTAINER_NAME}"
+fi
+
+available_bytes="$(df --output=avail --block-size=1 / | tail -n 1 | tr -d ' ')"
+source_bytes="$(du -sb -- "${SOURCE_ROOT}" | awk '{print $1}')"
+[[ "${available_bytes}" =~ ^[0-9]+$ && "${source_bytes}" =~ ^[0-9]+$ ]] || \
+  fail "Unable to determine disk usage"
+estimated_peak_bytes=$((backend_payload_bytes * 3 + frontend_payload_bytes + source_bytes + INSTALL_OVERHEAD_BYTES))
+required_available_bytes=$((MINIMUM_RESERVE_BYTES + estimated_peak_bytes))
+printf 'Disk preflight: available=%s bytes, conservative peak=%s bytes, required=%s bytes (includes 2 GiB reserve).\n' \
+  "${available_bytes}" "${estimated_peak_bytes}" "${required_available_bytes}"
+(( available_bytes >= required_available_bytes )) || \
+  fail "Insufficient disk space for the conservative installation peak and 2 GiB post-install reserve"
 
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
 release_root="${APP_ROOT}/releases/${release_id}"
-backup_root="${BACKUP_ROOT}/${release_id}"
+release_backup_root="${BACKUP_ROOT}/${release_id}"
+runtime_root="$(mktemp -d /run/vzn-install.XXXXXX)"
+chmod 0700 "${runtime_root}"
+pending_env="${runtime_root}/pending.env"
+rendered_nginx="${runtime_root}/vzn.fawlog.cc.conf"
 
-install -d -o root -g root -m 0750 "${backup_root}"
+python3 "${SOURCE_ROOT}/scripts/init_env.py" \
+  --domain vzn.fawlog.cc --image-tag "${image_tag}" --output "${pending_env}"
+render_nginx_config "${SOURCE_ROOT}/deploy/nginx/vzn.fawlog.cc.conf" "${rendered_nginx}"
+
+transaction_started=1
+install -d -o root -g root -m 0750 "${BACKUP_ROOT}" "${release_backup_root}"
 install -d -o root -g root -m 0755 "${APP_ROOT}" "${APP_ROOT}/releases" "${release_root}/frontend"
+printf 'COMMIT=%s\nRELEASE_ID=%s\n' "${commit}" "${release_id}" > "${APP_ROOT}/.vzn-installing"
+chown root:root "${APP_ROOT}/.vzn-installing"
+chmod 0600 "${APP_ROOT}/.vzn-installing"
 install -d -o 10001 -g 10001 -m 0750 "${APP_ROOT}/data" "${APP_ROOT}/data/backups"
 install -o root -g root -m 0644 "${SOURCE_ROOT}/compose.yaml" "${APP_ROOT}/compose.yaml"
 cp --archive "${SOURCE_ROOT}/scripts" "${APP_ROOT}/scripts"
 cp --archive "${SOURCE_ROOT}/backend" "${APP_ROOT}/backend"
 chown -R root:root "${APP_ROOT}/scripts" "${APP_ROOT}/backend"
+install -o root -g root -m 0600 "${pending_env}" "${APP_ROOT}/.env"
 
-tar --extract --gzip --file "${frontend_archive}" --directory "${release_root}/frontend" --no-same-owner --no-same-permissions
+tar --extract --gzip --file "${frontend_archive}" --directory "${release_root}/frontend" \
+  --no-same-owner --no-same-permissions
 find "${release_root}" -type d -exec chmod 0755 {} +
 find "${release_root}" -type f -exec chmod 0644 {} +
 chown -R root:root "${release_root}"
@@ -212,30 +395,18 @@ mv -T "${APP_ROOT}/current.next" "${APP_ROOT}/current"
 
 docker load --input "${backend_archive}"
 docker image inspect "vzn-activity-tracker-backend:${image_tag}" >/dev/null
-
-cd "${APP_ROOT}"
-python3 scripts/init_env.py --domain vzn.fawlog.cc --image-tag "${image_tag}"
-chown root:root .env
-chmod 0600 .env
-
 docker compose --project-directory "${APP_ROOT}" up --detach --no-build backend
 wait_for_health
 
-rendered_nginx="$(mktemp)"
-trap 'rm -f "${rendered_nginx}"' EXIT
-render_nginx_config "${SOURCE_ROOT}/deploy/nginx/vzn.fawlog.cc.conf" "${rendered_nginx}"
 install -o root -g root -m 0644 "${rendered_nginx}" "${NGINX_AVAILABLE}"
-rm -f "${rendered_nginx}"
-trap - EXIT
 ln -s "${NGINX_AVAILABLE}" "${NGINX_ENABLED}"
-if ! nginx -t; then
-  rm -f "${NGINX_ENABLED}" "${NGINX_AVAILABLE}"
-  nginx -t || true
-  fail "New Nginx configuration failed validation and was removed"
-fi
+nginx -t
 systemctl reload nginx
 
-docker compose --project-directory "${APP_ROOT}" ps
 curl --fail --silent --show-error --resolve "vzn.fawlog.cc:443:${public_ipv4}" \
   https://vzn.fawlog.cc/api/v1/health
-printf '\nInstalled VZN release %s from commit %s.\n' "${release_id}" "${commit}"
+printf '\n'
+docker compose --project-directory "${APP_ROOT}" ps
+rm -f "${APP_ROOT}/.vzn-installing"
+install_completed=1
+printf 'Installed VZN release %s from commit %s.\n' "${release_id}" "${commit}"

@@ -20,13 +20,20 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--domain", default="vzn.fawlog.cc")
     parser.add_argument("--image-tag", default="0.1.0")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Write the environment file to this path instead of the application root",
+    )
     arguments = parser.parse_args()
     if not arguments.domain or any(character in arguments.domain for character in "/:* "):
         parser.error("--domain must be a hostname without a scheme or port")
 
-    target = ROOT / ".env"
+    target = arguments.output if arguments.output is not None else ROOT / ".env"
     if target.exists():
-        parser.error(".env already exists; refusing to overwrite it")
+        parser.error(f"{target} already exists; refusing to overwrite it")
+    if not target.parent.is_dir():
+        parser.error(f"output directory does not exist: {target.parent}")
 
     password = getpass.getpass("Administrator password (at least 14 characters): ")
     confirmation = getpass.getpass("Repeat administrator password: ")

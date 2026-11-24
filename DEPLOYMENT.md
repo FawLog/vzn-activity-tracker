@@ -43,7 +43,9 @@ Two privilege models are supported and must be reviewed immediately before use:
 
 Exact generic commands and the revoke procedure are documented in `deploy/root/README.md`. Do not install or execute them until CI is green and production deployment is explicitly authorized.
 
-The installer verifies root ownership, archive paths, checksums, commit identity, free space, service state, TLS inputs, and port availability. It loads the prebuilt image, extracts the prebuilt frontend, initializes secrets interactively, starts only the VZN Compose project, renders an isolated Nginx configuration, validates `nginx -t`, and performs a health check. It performs no build and installs no packages.
+The installer verifies root ownership, archive paths, checksums, commit identity, service state, matching TLS certificate/key inputs, and port availability. Its disk preflight budgets three times the uncompressed backend OCI payload, the frontend and deployment payloads, 256 MiB of installation overhead, and a 2 GiB post-install reserve. It then loads the prebuilt image, extracts the prebuilt frontend, initializes secrets interactively, starts only the VZN Compose project, renders an isolated Nginx configuration, validates `nginx -t`, and performs a health check. It performs no build and installs no packages.
+
+Artifact staging is transactional. Application installation writes a root-only marker before durable changes. A handled error or signal stops only the VZN Compose project, restores the pre-existing Nginx state, and moves partial VZN files to a root-only recovery directory under `/var/backups/vzn-activity-tracker/`; it never prunes Docker. If a reboot or uncatchable interruption leaves a marked partial application root, rerunning the same commit's no-argument deployer first isolates that state and then starts a clean attempt. An unmarked directory or a marker from another commit is never changed automatically and requires manual review.
 
 ## 4. Production verification
 

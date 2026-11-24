@@ -51,6 +51,9 @@ jobs:
       - name: Check installed dependency consistency
         run: python -m pip check
 
+      - name: Validate deployment helper syntax
+        run: bash -n deploy/root/audit-vps-storage deploy/root/install-vzn-activity-tracker deploy/root/manage-vzn-sudoers deploy/root/stage-vzn-artifacts
+
       - name: Run backend tests and migration checks
         env:
           PYTHONPATH: backend

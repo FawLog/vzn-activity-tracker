@@ -31,6 +31,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
 
   await page.goto("/groups");
   await expect(page.getByRole("heading", { name: "Alliance groups" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "WZN WZN" })).toBeVisible();
   const academy = page.getByRole("button", { name: "WZN Academy WZNA" });
   if (await academy.count() === 0) {
     await page.getByRole("button", { name: "Add alliance" }).click();
@@ -40,8 +41,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByText("Additional alliance added.")).toBeVisible();
   }
-  await expect(academy).toBeVisible();
-  await academy.click();
+  const selectedAcademy = academy.first();
+  await expect(selectedAcademy).toBeVisible();
+  await selectedAcademy.click();
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
   await page.goto("/admin?mode=events");

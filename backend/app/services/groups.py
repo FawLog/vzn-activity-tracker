@@ -154,6 +154,8 @@ def update_group(database_path: str, group_id: str, payload: GroupUpdate) -> dic
         existing = _group_row(database, group_id)
         if existing is None:
             return None
+        if existing["status"] == "archived" and payload.status != "active":
+            raise ValueError("Restore the archived group before changing its settings")
         if payload.status == "archived" and not payload.confirm_archive:
             raise ValueError("Archiving a group requires explicit confirmation")
         values: dict[str, Any] = {}
@@ -248,11 +250,18 @@ def update_alliance(
     payload: AllianceUpdate,
 ) -> dict[str, Any] | None:
     with transaction(database_path) as database:
+        group = _group_row(database, group_id)
+        if group is None:
+            return None
+        if group["status"] != "active":
+            raise ValueError("Restore the archived group before changing alliances")
         existing = database.execute(
             "SELECT * FROM alliances WHERE id = ? AND group_id = ?", (alliance_id, group_id)
         ).fetchone()
         if existing is None:
             return None
+        if existing["status"] == "archived" and payload.status != "active":
+            raise ValueError("Restore the archived alliance before changing its settings")
         if payload.status == "archived":
             if not payload.confirm_archive:
                 raise ValueError("Archiving an alliance requires explicit confirmation")

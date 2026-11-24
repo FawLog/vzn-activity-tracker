@@ -32,7 +32,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.goto("/groups");
   await expect(page.getByRole("heading", { name: "Alliance groups" })).toBeVisible();
   await expect(page.getByRole("button", { name: "WZN WZN" })).toBeVisible();
-  const academy = page.getByRole("button", { name: "WZN Academy WZNA" });
+  const academy = page.getByRole("button", { name: /^WZN Academy(?: Updated)? WZNA$/ });
   if (await academy.count() === 0) {
     await page.getByRole("button", { name: "Add alliance" }).click();
     await page.getByPlaceholder("Alliance name").fill("WZN Academy");
@@ -42,9 +42,19 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(page.getByText("Additional alliance added.")).toBeVisible();
   }
   await expect(academy.first()).toBeVisible();
+  if (testInfo.project.name === "desktop-1440") {
+    await page.getByRole("button", { name: "Edit WZN Academy" }).click();
+    await page.getByLabel("Alliance name").fill("WZN Academy Updated");
+    await page.getByLabel("Alliance tag").fill("WZNA");
+    await page.getByLabel("Alliance state ID").fill("1002");
+    await page.getByRole("button", { name: "Save alliance" }).click();
+    await expect(page.getByText("Alliance settings saved.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "WZN Academy Updated WZNA" })).toBeVisible();
+  }
   const allianceSwitcher = page.getByLabel("Current alliance");
-  await allianceSwitcher.selectOption({ label: "WZN Academy · WZNA" });
-  await expect(allianceSwitcher.locator("option:checked")).toHaveText("WZN Academy · WZNA");
+  const academyOption = allianceSwitcher.locator("option").filter({ hasText: "WZNA" });
+  await allianceSwitcher.selectOption(await academyOption.first().getAttribute("value") ?? "");
+  await expect(allianceSwitcher.locator("option:checked")).toContainText("WZNA");
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
   await page.goto("/admin?mode=events");

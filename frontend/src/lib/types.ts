@@ -2,14 +2,13 @@ export type EventStatus = "draft" | "published";
 
 export interface Player {
   fid: string;
-  nickname: string;
+  nickname: string | null;
   created_at: string;
   updated_at: string;
   nickname_history?: Array<{ nickname: string; valid_from: string; valid_to: string | null }>;
   group_status?: "unconfirmed" | "active" | "archived";
   primary_alliance_id?: string | null;
   primary_alliance_name?: string | null;
-  legacy_memberships?: Array<{ joined_on: string; left_on: string | null }>;
 }
 
 export interface AllianceGroup {

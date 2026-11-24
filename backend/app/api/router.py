@@ -239,6 +239,8 @@ def create_api_router(settings: Settings) -> APIRouter:
             return records.create_event(settings.database_path, group_id, alliance_id, payload)
         except LookupError as error:
             raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/groups/{group_id}/events/{event_id}")
     async def get_event(request: Request, group_id: str, event_id: str) -> dict[str, object]:

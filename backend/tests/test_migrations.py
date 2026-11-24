@@ -18,8 +18,8 @@ def copy_migrations(tmp_path: Path) -> Path:
 def test_migrations_are_idempotent(tmp_path: Path) -> None:
     database_path = str(tmp_path / "idempotent.sqlite3")
 
-    assert database.migrate(database_path) == 3
-    assert database.migrate(database_path) == 3
+    assert database.migrate(database_path) == 4
+    assert database.migrate(database_path) == 4
 
 
 def test_modified_applied_migration_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,7 +66,7 @@ def test_v2_database_data_is_preserved_by_multi_alliance_migration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     migration_directory = copy_migrations(tmp_path)
-    for migration in migration_directory.glob("0003_*.sql"):
+    for migration in migration_directory.glob("000[34]_*.sql"):
         migration.unlink()
     monkeypatch.setattr(database, "MIGRATIONS_DIR", migration_directory)
     database_path = str(tmp_path / "legacy.sqlite3")
@@ -79,10 +79,11 @@ def test_v2_database_data_is_preserved_by_multi_alliance_migration(
                           VALUES ('legacy-event', 'legacy-fid', 'unknown', 'main', 0)""")
         legacy.execute("INSERT INTO audit_log(action, entity_type, entity_id, actor) VALUES ('created', 'event', 'legacy-event', 'admin')")
     monkeypatch.setattr(database, "MIGRATIONS_DIR", Path(__file__).resolve().parents[1] / "migrations")
-    assert database.migrate(database_path) == 3
+    assert database.migrate(database_path) == 4
     with sqlite3.connect(database_path) as migrated:
         assert migrated.execute("SELECT nickname FROM players WHERE fid = 'legacy-fid'").fetchone()[0] == "Legacy Player"
         assert migrated.execute("SELECT alliance_id FROM events WHERE id = 'legacy-event'").fetchone()[0] is None
         assert migrated.execute("SELECT raw_points FROM event_participants WHERE event_id = 'legacy-event'").fetchone()[0] == 0
         assert migrated.execute("SELECT actor FROM audit_log WHERE entity_id = 'legacy-event'").fetchone()[0] == "admin"
         assert migrated.execute("SELECT COUNT(*) FROM alliance_groups").fetchone()[0] == 0
+        assert migrated.execute("PRAGMA integrity_check").fetchone()[0] == "ok"

@@ -41,9 +41,10 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByText("Additional alliance added.")).toBeVisible();
   }
-  const selectedAcademy = academy.first();
-  await expect(selectedAcademy).toBeVisible();
-  await selectedAcademy.click();
+  await expect(academy.first()).toBeVisible();
+  const allianceSwitcher = page.getByLabel("Current alliance");
+  await allianceSwitcher.selectOption({ label: "WZN Academy · WZNA" });
+  await expect(allianceSwitcher.locator("option:checked")).toHaveText("WZN Academy · WZNA");
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
   await page.goto("/admin?mode=events");

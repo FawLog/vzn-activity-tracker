@@ -160,6 +160,7 @@ h1, h2, h3, p { margin-top: 0; }
 .page-header p { margin: 0; max-width: 680px; color: var(--text-soft); font-size: 13px; line-height: 1.55; }
 .page-header__action { padding-top: 2px; flex: 0 0 auto; }
 .section-header { min-height: 63px; display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding: 17px 19px 13px; border-bottom: 1px solid var(--line); }
+.section-header > :first-child { min-width: 0; }
 .section-header h2 { margin-bottom: 3px; font-size: 16px; letter-spacing: -.01em; }
 .section-header p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
 

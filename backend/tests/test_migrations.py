@@ -40,7 +40,7 @@ def test_modified_applied_migration_is_rejected(tmp_path: Path, monkeypatch: pyt
 
 def test_migration_versions_must_be_contiguous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     migration_directory = copy_migrations(tmp_path)
-    (migration_directory / "0005_gap.sql").write_text("SELECT 1;\n", encoding="utf-8")
+    (migration_directory / "0006_gap.sql").write_text("SELECT 1;\n", encoding="utf-8")
     monkeypatch.setattr(database, "MIGRATIONS_DIR", migration_directory)
 
     with pytest.raises(RuntimeError, match="unique, contiguous"):
@@ -55,9 +55,9 @@ def test_applied_migration_file_cannot_disappear(
     monkeypatch.setattr(database, "MIGRATIONS_DIR", migration_directory)
     database_path = str(tmp_path / "missing.sqlite3")
     database.migrate(database_path)
-    (migration_directory / "0003_multi_alliance_foundation.sql").unlink()
+    (migration_directory / "0004_group_alliance_scope_guards.sql").unlink()
 
-    with pytest.raises(RuntimeError, match="files are missing: 0003"):
+    with pytest.raises(RuntimeError, match="files are missing: 0004"):
         database.migrate(database_path)
 
 

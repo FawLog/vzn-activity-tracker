@@ -1,8 +1,9 @@
 name: CI and production artifacts
 
-# Push and pull_request triggers are enabled only in the commit that adds the
-# externally generated package-lock.json. Ordinary CI must never generate it.
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:

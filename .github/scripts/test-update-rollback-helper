@@ -126,7 +126,7 @@ if sudo env MOCK_OLD_IMAGE="${old_image}" MOCK_APP_ROOT="${app_root}" MOCK_LOG="
   exit 1
 fi
 
-grep -Fqx "stop" "${mock_log}"
-grep -Fq "restore run --rm --user 10001:10001 --volume ${app_root}/data:/data ${old_image}" "${mock_log}"
-grep -Fqx "restart previous" "${mock_log}"
+sudo grep -Fqx "stop" "${mock_log}"
+sudo grep -Fq "restore run --rm --user 10001:10001 --volume ${app_root}/data:/data ${old_image}" "${mock_log}"
+sudo grep -Fqx "restart previous" "${mock_log}"
 [[ "$(readlink --canonicalize-existing "${app_root}/current")" == "${app_root}/releases/previous" ]]

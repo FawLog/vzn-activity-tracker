@@ -24,3 +24,17 @@ describe("screenshot layouts",()=>{
  const preview=fixture([["Рейтинг",68,840,100],["Личные очки",470,840,170],["[VZN]NOVA EBRU",262,900,200],["11 353",565,920,70],["Задания: 23/23",262,940,170]]);
  expect(parseScreenshot(preview,"alliance_mobilization","main","ru").rows).toEqual([{nickname:"NOVA EBRU",completed:23,total:23,points:11353,source:"ru"}]);
  });
+
+ it("reads all eleven championship rows from reconstructed IMG_9215 geometry, including offset Piro",()=>{
+ const names=["相忘於江湖","Mehmetylmzs","Piro","TENRİKENosm","CHAPO INFINITY X","BaRda AzReal","Zackeri Ma'at","Saint Erken","DarksideAMK","watermelon","Harissa"];
+ const scores=["4,252","4,210","4,056","4,040","3,999","3,933","3,909","3,798","3,797","3,756","3,724"];
+ const words:[string,number,number,number][]=[];
+ names.forEach((name,i)=>{const y=222+i*111;words.push([name,i===2?171:132,y,Math.max(40,name.length*10)],[scores[i],490,y+22,68],[i===2||i===4||i===6?"R4":"R3",132,y+43,30]);if(i===2)words.push(["e",224,y-9,9]);});
+ const parsed=parseScreenshot(fixture(words),"alliance_championship","main","IMG_9215");
+ expect(parsed.rows.map(r=>r.nickname)).toEqual(names.map(n=>n==="Piro"?"Piro e":n));
+ expect(parsed.warnings).toContain("Registration rows: 11 of 11 detected rank anchors; verify against the screenshot.");
+ });
+ it("warns about an incomplete rank row instead of borrowing another player's name",()=>{
+ const parsed=parseScreenshot(fixture([["Alice",132,200,50],["4,200",490,222,65],["R3",132,243,30],["R4",132,354,30],["4,000",490,333,65]]),"alliance_championship","main","partial");
+ expect(parsed.rows.map(r=>r.nickname)).toEqual(["Alice"]);expect(parsed.warnings.some(w=>w.includes("Skipped registration row"))).toBe(true);
+ });

@@ -54,20 +54,32 @@ export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:s
   }else if(eventType==="alliance_championship"){
     const header=lines.find(l=>/(?:Registered|зарегистрирован[оы]?|регистрация)\s*:\s*\d+\s*\/\s*\d+/iu.test(lineText(l)));
     if(!header)warnings.push("Registration header not visible; verify screenshot type manually.");
-    for(let i=1;i<lines.length;i++){
-      const l=lines[i];if(l.y<=(header?.y??-1))continue;
-      const rank=l.words.find(w=>/^[RР][1-5]$/iu.test(w.text));
-      if(!rank)continue;
-      const prev=lines.slice(0,i).reverse().find(n=>n.words.some(w=>w.x>=rank.x-rank.height&&w.x<=rank.x+rank.height*2&&!/^[RР][1-5]$/iu.test(w.text)&&numberFrom(w.text)===undefined));
-      if(!prev)continue;
-      if(prev.y<=(header?.y??-1)||l.y-prev.y>Math.max(l.height,prev.height)*3.5)continue;
-      // A complete row needs the rank and its numeric right-hand column.
-      const numeric=lines.filter(n=>Math.abs(n.y-(prev.y+l.y)/2)<=Math.max(l.height,prev.height)*1.2).flatMap(n=>n.words).find(w=>w.x>rank.x+rank.height*6&&numberFrom(w.text)!==undefined);
-      if(!numeric){warnings.push("Registration row has no readable right-hand value.");continue}
-      const name=prev.words.filter(w=>w.x>=rank.x-rank.height&&w.right<numeric.x).map(w=>w.text).join(" ").trim();
-      if(name&&!/^[RР][1-5]$/iu.test(name))rows.push({nickname:name,source});
-      else warnings.push("Cannot associate registration rank with a nickname.");
+    const all=lines.flatMap(l=>l.words).filter(w=>w.y>(header?.y??-1));
+    // Use each rank's own coordinates, not the baseline of a nearby OCR word.
+    // Adjacent rank anchors bound the row, so a missing name cannot borrow its neighbour.
+    const isRank=(w:Word)=>/^[RР]\\s*[1-5]$/iu.test(w.text);
+    const ranks=all.filter(isRank).sort((a,b)=>a.y-b.y);
+    for(let i=0;i<ranks.length;i++){
+      const rank=ranks[i],previous=ranks[i-1],next=ranks[i+1];
+      const top=Math.max(header?.y??-1,rank.y-rank.height*4.5,previous?(previous.y+rank.y)/2-rank.height*.5:-Infinity);
+      const bottom=Math.min(rank.y+rank.height*.65,next?(rank.y+next.y)/2:Infinity);
+      const region=all.filter(w=>w.y>top&&w.y<=bottom);
+      const scores=region.filter(w=>w.x>rank.x+rank.height*6&&numberFrom(w.text)!==undefined);
+      const left=rank.x-rank.height*.65;
+      const right=scores.length?Math.min(...scores.map(w=>w.x)):rank.x+rank.height*14;
+      const nameWords=region.filter(w=>w.y<rank.y-rank.height*.4&&w.x>=left&&w.right<right&&!isRank(w));
+      // Preserve offset decorations when they share the same nickname baseline.
+      const base=nameWords.filter(w=>/\\p{L}|\\p{N}/u.test(w.text)).sort((a,b)=>b.height-a.height||a.y-b.y)[0];
+      const name=base?nameWords.filter(w=>Math.abs(w.y-base.y)<=Math.max(w.height,base.height)*.95).sort((a,b)=>a.x-b.x).map(w=>w.text).join(" ").trim():"";
+      if(!name||scores.length!==1){
+        warnings.push("Skipped registration row near y="+Math.round(rank.y)+": "+(name||"(nickname unreadable)")+"; "+(!name?"no nickname":scores.length?"ambiguous right-hand value":"no readable right-hand value")+".");
+        continue;
+      }
+      rows.push({nickname:name,source});
     }
+    if(!ranks.length)warnings.push("No registration rank anchors recognized.");
+    warnings.push("Registration rows: "+rows.length+" of "+ranks.length+" detected rank anchors; verify against the screenshot.");
+
   }
   if(eventType==="alliance_mobilization"){
     // Missions ratios are the row anchors. Use local horizontal regions rather than

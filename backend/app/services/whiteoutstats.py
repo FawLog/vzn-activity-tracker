@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import sqlite3
 import time
 import uuid
@@ -43,6 +44,25 @@ def _parse_timestamp(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
     except ValueError:
         return None
+
+
+def _source_observed_at(value: object) -> str | None:
+    """Return a provider cache timestamp without inventing an observation time.
+
+    WhiteoutStats returns ``cached_at`` as an ISO string in some responses and
+    as a Unix timestamp with fractional seconds in alliance roster responses.
+    ``age_seconds`` is intentionally not used as a fallback: it is the cache
+    age at response time, not a source-observed timestamp.
+    """
+    if isinstance(value, str):
+        return value if _parse_timestamp(value) is not None else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    try:
+        observed_at = datetime.fromtimestamp(value, UTC)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return observed_at.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _number(value: object) -> int | None:
@@ -440,8 +460,8 @@ def _validate_roster(body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[st
 
 def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_id: str, response: dict[str, Any]) -> SyncResult:
     alliance_data, members, roster_complete = _validate_roster(response)
-    observed_at = response.get("cached_at")
-    if not isinstance(observed_at, str) or _parse_timestamp(observed_at) is None:
+    observed_at = _source_observed_at(response.get("cached_at"))
+    if observed_at is None:
         raise ValueError("WhiteoutStats response is missing cached_at")
     received_at = _timestamp()
     added = 0

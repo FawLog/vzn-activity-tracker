@@ -40,7 +40,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   const rosterPlayer = page.getByRole("button", { name: "Roster Scout" });
   if (await rosterPlayer.count() === 0) {
     await page.goto("/admin?mode=players");
-    await page.getByLabel("FID").fill("e2e-roster-fid");
+    await page.getByLabel(/^ID\b/).fill("e2e-roster-fid");
     await page.getByLabel("Nickname").fill("Roster Scout");
     await page.getByRole("button", { name: "Add player" }).click();
     await expect(page.getByText(/Player record created in the selected group.|This player already belongs to the selected group/)).toBeVisible();
@@ -55,11 +55,14 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(page.getByText("No players in this view")).toBeVisible();
   await affiliation.selectOption("all");
   await expect(rosterPlayer).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "Power", exact: true })).toHaveAttribute("aria-sort", "descending");
+  await expect(page.getByRole("columnheader", { name: "ID", exact: true })).toBeVisible();
+  await expect(rosterPlayer.locator(".roster-avatar svg")).toBeVisible();
   for (const [label, column] of [["Power", "power"], ["Rank", "alliance_rank"], ["Furnace", "furnace_level"], ["Kills", "kills"], ["Nickname", "nickname"]]) {
     await test.step(`Sort roster by ${label}`, async () => {
       const header = page.getByRole("columnheader", { name: label, exact: true });
       const button = header.getByRole("button");
-      for (const direction of label === "Nickname" ? ["asc"] : ["desc", "asc"]) {
+      for (const direction of label === "Nickname" ? ["asc"] : label === "Power" ? ["asc", "desc"] : ["desc", "asc"]) {
         await button.scrollIntoViewIfNeeded({ timeout: 8_000 });
         if (testInfo.project.name === "mobile-390") {
           await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
@@ -76,6 +79,30 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
       }
     });
   }
+  await page.reload();
+  await expect(page.getByRole("columnheader", { name: "Nickname", exact: true })).toHaveAttribute("aria-sort", "ascending");
+  await expect(rosterPlayer).toBeVisible();
+  await page.route("https://avatar.example.test/scout.png", route => route.fulfill({
+    contentType: "image/png",
+    body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ1sAAAAASUVORK5CYII=", "base64"),
+  }));
+  await page.route("**/api/v1/groups/*/players?*", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const player of body.items ?? []) if (player.fid === "e2e-roster-fid") {
+      player.avatar_url = "https://avatar.example.test/scout.png";
+      player.furnace_level = 55;
+      player.alliance_rank = "5";
+    }
+    await route.fulfill({ response, json: body });
+  });
+  await page.reload();
+  const row = page.getByRole("row").filter({ has: rosterPlayer });
+  await expect(row.getByText("FC5", { exact: true })).toBeVisible();
+  await expect(row.locator(".roster-rank--r5")).toHaveText("R5");
+  await expect.poll(() => row.locator(".roster-avatar img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await page.unroute("**/api/v1/groups/*/players?*");
+  await page.unroute("https://avatar.example.test/scout.png");
   await page.screenshot({ path: testInfo.outputPath("player-affiliation-filter.png"), fullPage: true });
 
   await page.goto("/groups");

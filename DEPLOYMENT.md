@@ -128,3 +128,9 @@ checks.
 ## Rollback
 
 For a code-only rollback, restore the previous backend image tag and atomically repoint the frontend release link. For a schema rollback, restore the verified backup taken immediately before the update; never reverse SQLite migrations ad hoc. Validate the full production checklist afterward.
+
+## Roster avatar images (operator-managed CSP)
+
+Roster rows use the already stored provider `avatar_url`, not a new API call or a server-side image proxy. The frontend accepts HTTPS URLs only, sends no referrer, lazy-loads images and falls back to a local icon if an image is absent or blocked. The production Nginx CSP originally allows only same-origin and data images; the normal updater intentionally leaves Nginx unchanged.
+
+Before enabling external avatars in production, inspect only distinct HTTPS hostnames from the existing VZN SQLite `player_whiteoutstats_profiles.avatar_url` values (no player identifiers, full URLs, tokens or new WhiteoutStats requests). Verify the observed hosts are legitimate provider/game avatar CDNs. The owner may back up the active VZN-only Nginx virtual host, add just those exact HTTPS origins to the existing `img-src 'self' data:` directive, preserve every other directive and service, run `nginx -t`, and gracefully reload Nginx. Verify the delivered CSP and actual image loading in an authenticated roster. Never add a general `https:` or wildcard to CSP; do not alter unrelated vhosts. Restore the backed-up vhost if validation fails. If a host cannot be verified, leave the placeholder in place.

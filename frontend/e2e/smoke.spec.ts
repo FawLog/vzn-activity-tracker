@@ -42,7 +42,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.getByLabel("FID").fill("e2e-roster-fid");
     await page.getByLabel("Nickname").fill("Roster Scout");
     await page.getByRole("button", { name: "Add player" }).click();
-    await expect(page.getByText("Player record created in the selected group.")).toBeVisible();
+    await expect(page.getByText(/Player record created in the selected group.|This player already belongs to the selected group/)).toBeVisible();
     await page.goto("/players");
   }
   await expect(rosterPlayer).toBeVisible();

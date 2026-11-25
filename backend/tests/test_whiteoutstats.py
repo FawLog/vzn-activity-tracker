@@ -99,11 +99,12 @@ def synced(settings: Settings, group_id: str, alliance_id: str, response: dict[s
 def test_first_successful_roster_import_of_100_members(settings: Settings) -> None:
     configured = replace(settings, whiteoutstats_api_key="test-key")
     group_id, alliance_id = setup_alliance(configured)
-    members = [{"fid": str(index), "nick_name": f"Member {index}", "power": index, "kills": index + 1, "furnace_level": 30, "alliance_rank": 4, "kid": "1001"} for index in range(1, 101)]
+    members = [{"fid": str(index), "nick_name": f"Member {index}", "avatar_url": f"https://example.test/{index}.png", "power": index, "kills": index + 1, "furnace_level": 30, "alliance_rank": 4, "kid": "1001"} for index in range(1, 101)]
     result = synced(configured, group_id, alliance_id, payload(members=members))
     assert (result.status, result.found_count, result.added_count) == ("success", 100, 100)
     roster = records.list_players(configured.database_path, group_id, limit=250)
     assert roster is not None and roster["total"] == 100
+    assert all(row["avatar_url"] == f"https://example.test/{row['fid']}.png" for row in roster["items"])
 
 
 def test_roster_column_sorting_before_pagination(settings: Settings) -> None:

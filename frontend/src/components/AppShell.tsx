@@ -104,7 +104,7 @@ export function AppShell({ path, children }: { path: string; children: ReactNode
                 <label className="context-select"><span>Group</span><select value={selectedGroup.id} onChange={(event) => selectGroup(event.target.value)} aria-label="Current group">{groups.map((group) => <option key={group.id} value={group.id}>{group.name}{group.status === "archived" ? " · archived" : ""}</option>)}</select></label>
                 <label className="context-select"><span>Alliance</span><select value={selectedAlliance?.id ?? ""} onChange={(event) => selectAlliance(event.target.value)} aria-label="Current alliance">{alliances.map((alliance) => <option key={alliance.id} value={alliance.id}>{alliance.name} · {alliance.tag}</option>)}</select></label>
               </> : <span className="topbar__setup">Set up a group to begin</span>}
-              <form className="global-search" onSubmit={submitSearch} role="search"><Search size={18} /><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search players by FID or nickname" aria-label="Search players" /><kbd>/</kbd></form>
+              <form className="global-search" onSubmit={submitSearch} role="search"><Search size={18} /><input ref={searchRef} value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search players by ID or nickname" aria-label="Search players" /><kbd>/</kbd></form>
             </div>
           ) : <div className="topbar__spacer" />}
           <div className="topbar__actions">

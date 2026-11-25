@@ -155,7 +155,7 @@ def list_players(
             SELECT pgp.player_fid AS fid, pno.nickname, pgp.created_at, pgp.updated_at,
                    pgp.status AS group_status, pgp.primary_alliance_id,
                    primary_alliance.name AS primary_alliance_name,
-                   wsp.power, wsp.kills, wsp.furnace_level, wsp.alliance_rank, wsp.state_id,
+                   wsp.power, wsp.kills, wsp.furnace_level, wsp.alliance_rank, wsp.state_id, wsp.avatar_url,
                    source_alliance.name AS observed_alliance_name
             FROM player_group_profiles pgp
             LEFT JOIN alliances primary_alliance
@@ -181,7 +181,7 @@ def list_players(
             (*parameters, limit, offset),
         ).fetchall()
     items: list[dict[str, Any]] = []
-    external_fields = {"power", "kills", "furnace_level", "alliance_rank", "state_id", "observed_alliance_name"}
+    external_fields = {"power", "kills", "furnace_level", "alliance_rank", "state_id", "observed_alliance_name", "avatar_url"}
     for row in rows:
         item = dict(row)
         for field in external_fields:

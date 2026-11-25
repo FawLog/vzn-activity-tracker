@@ -40,3 +40,17 @@ export function formatTimestamp(value: string): string {
     minute: "2-digit",
   }).format(date);
 }
+
+export function formatFurnaceLevel(level?: number | null): string {
+  if (level == null || !Number.isInteger(level) || level < 1) return "—";
+  if (level <= 30 || level > 80) return String(level);
+  const crystals = Math.floor((level - 30) / 5);
+  const step = (level - 30) % 5;
+  const base = crystals === 0 ? "30" : `FC${crystals}`;
+  return step === 0 ? base : `${base}-${step}`;
+}
+
+export function formatAllianceRank(rank?: string | number | null): string {
+  const match = String(rank ?? "").trim().match(/^R?([1-5])$/i);
+  return match ? `R${match[1]}` : "—";
+}

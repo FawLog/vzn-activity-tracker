@@ -639,3 +639,10 @@ td strong { color: var(--text); font-weight: 650; }
 .analytics-legend { display:flex; flex-wrap:wrap; gap:12px; color:#b7c8d8; font-size:12px; margin:10px 0; }
 .analytics-legend span { display:inline-flex; align-items:center; gap:5px; }.analytics-legend i { width:12px;height:12px;border-radius:2px; }
 .analytics-recent { margin-top:18px; }
+
+.rankings-tabs {display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 4px}
+.rankings-tabs .button {min-height:36px}
+.rankings-panel {min-width:0;max-width:100%}
+.rankings-panel .table-wrap {overflow-x:auto}
+.rankings-sort {white-space:nowrap}
+@media(max-width:620px){.rankings-tabs .button{flex:1 1 auto;min-height:44px}.rankings-tabs{gap:6px}}

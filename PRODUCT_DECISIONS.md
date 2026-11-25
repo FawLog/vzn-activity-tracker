@@ -41,3 +41,7 @@ Foundation v0.1 includes authentication, pages, the database, FID-based manual p
 ## Manual entry UX
 
 Load the current alliance roster automatically as unconfirmed candidates, not historical proof. Officers can paste exact names or FIDs and tab-separated scores; ambiguous or unmatched entries require correction. Championship records registration only in the UI. Technical completeness and eligibility controls belong in a review step, not ordinary entry. Only explicit historical roster and evidence confirmation permit negative assessments. Preserve existing hidden metrics and do not infer absence from zero or missing score alone.
+
+## OCR initial scope
+
+Bear Hunt, Alliance Championship and Alliance Mobilization first. Foundry and Canyon automated parsing deferred until actual registration and results mail examples are available. English and Russian labels are supported on a best-effort basis; localized layouts and unrecognized labels require review. Never assume the screenshot is complete. Mobilization podium and ordinary ranking rows must be separated; preserve the mission ratio in preview, import completed missions and points only. No inferred absence from OCR.

@@ -24,7 +24,7 @@ from ..schemas import (
     WhiteoutStatsPreviewRequest,
 )
 from ..security import verify_password
-from ..services import records, event_editor, vision_ocr
+from ..services import records, event_editor, vision_ocr, analytics
 from ..services.event_editor import SessionCreate, SessionSave
 from ..services import groups
 from ..services import whiteoutstats
@@ -533,6 +533,26 @@ def create_api_router(settings: Settings) -> APIRouter:
             return await asyncio.to_thread(vision_ocr.extract, bytes(image), settings.google_vision_api_key, settings.google_application_credentials)
         except vision_ocr.OcrError as error:
             raise HTTPException(status_code=error.status, detail=str(error)) from None
+
+    @router.get("/groups/{group_id}/alliances/{alliance_id}/analytics")
+    async def alliance_analytics(request: Request, group_id: str, alliance_id: str, start: date, end: date):
+        require_admin(request, settings)
+        try:
+            return await asyncio.to_thread(analytics.report, settings.database_path, group_id, alliance_id, start, end)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.get("/groups/{group_id}/players/{fid}/activity")
+    async def player_activity(request: Request, group_id: str, fid: str, start: date, end: date, alliance_id: str | None = None):
+        require_admin(request, settings)
+        try:
+            return await asyncio.to_thread(analytics.report, settings.database_path, group_id, alliance_id, start, end, fid)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @router.get("/groups/{group_id}/rankings")
     async def get_rankings(request: Request, group_id: str) -> dict[str, object]:

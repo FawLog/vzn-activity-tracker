@@ -21,7 +21,7 @@ from ..schemas import (
     WhiteoutStatsPreviewRequest,
 )
 from ..security import verify_password
-from ..services import records, event_editor
+from ..services import records, event_editor, vision_ocr
 from ..services.event_editor import SessionCreate, SessionSave
 from ..services import groups
 from ..services import whiteoutstats
@@ -481,6 +481,36 @@ def create_api_router(settings: Settings) -> APIRouter:
             raise _not_found(str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/ocr/status")
+    async def ocr_status(request: Request):
+        require_admin(request, settings)
+        return {"configured": bool(settings.google_vision_api_key or settings.google_application_credentials), "provider": "google_vision", "max_image_bytes": vision_ocr.MAX_IMAGE_BYTES}
+
+    @router.post("/groups/{group_id}/events/{event_id}/sessions/{session_id}/ocr/preview")
+    async def preview_ocr(request: Request, group_id: str, event_id: str, session_id: str):
+        require_csrf(request, require_admin(request, settings))
+        try:
+            event_editor.check_ocr_scope(settings.database_path, group_id, event_id, session_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if not (settings.google_vision_api_key or settings.google_application_credentials):
+            raise HTTPException(status_code=409, detail="Google Vision OCR is not configured")
+        if request.headers.get("content-type", "").split(";")[0].lower() not in {"image/png", "image/jpeg"}:
+            raise HTTPException(status_code=415, detail="Use a PNG or JPEG image")
+        if vision_ocr.is_busy():
+            raise HTTPException(status_code=429, detail="OCR is busy; try again after the current image completes")
+        image = bytearray()
+        async for chunk in request.stream():
+            if len(image) + len(chunk) > vision_ocr.MAX_IMAGE_BYTES:
+                raise HTTPException(status_code=413, detail="Image exceeds OCR upload limit")
+            image.extend(chunk)
+        try:
+            return await asyncio.to_thread(vision_ocr.extract, bytes(image), settings.google_vision_api_key, settings.google_application_credentials)
+        except vision_ocr.OcrError as error:
+            raise HTTPException(status_code=error.status, detail=str(error)) from None
 
     @router.get("/groups/{group_id}/rankings")
     async def get_rankings(request: Request, group_id: str) -> dict[str, object]:

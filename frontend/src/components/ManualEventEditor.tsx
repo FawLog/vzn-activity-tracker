@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { ScreenshotImport } from "./ScreenshotImport";
 import type { EventRecord, ManualEvent, ManualRow, ManualSession, Player } from "../lib/types";
 
 const definitions: Record<string, { keys: string[]; metrics: [string,string][]; registration?: boolean; battle?: boolean; attendance?: boolean }> = {
@@ -169,6 +170,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
       <label>Sort<select value={sort} onChange={e=>setSort(e.target.value)}><option value="nickname">Name</option>{definition.metrics.map(([key,label])=><option key={key} value={key}>{label} (highest first)</option>)}</select></label>
       {definition.registration&&<><button className="button button--quiet" disabled={busy||!loaded} onClick={()=>bulk(true)}>Register all</button><button className="button button--quiet" disabled={busy||!loaded} onClick={()=>bulk(false)}>Clear registrations</button><span>{visibleRows.filter(r=>r.registration==="registered").length} registered</span></>}
     </div>
+    <ScreenshotImport key={groupId+":"+record.id+":"+draft.id} groupId={groupId} eventId={record.id} sessionId={draft.id} disabled={busy} onBusy={setBusy} eventType={record.event_type} sessionKey={draft.session_key} players={candidates} onPaste={text=>{setPaste(text);setMessage("Reviewed OCR rows copied to Paste a list. Click Import list to apply to the draft.")}} />
     <div className="manual-import">
       <h3>Paste a list</h3>
       {definition.battle&&<label>List type<select value={pasteKind} onChange={e=>setPasteKind(e.target.value)}><option value="registration">Registered players</option><option value="main">Main players</option><option value="substitute">Substitutes</option><option value="metrics">Personal points</option></select></label>}

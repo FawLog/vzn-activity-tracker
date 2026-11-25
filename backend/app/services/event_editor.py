@@ -158,3 +158,10 @@ def publish(path, group_id, event_id):
         db.execute("UPDATE events SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
         _audit(db, event_id, "published")
     return read(path, group_id, event_id)
+
+
+def check_ocr_scope(path, group_id, event_id, session_id):
+    with connection(path) as db:
+        _event(db, group_id, event_id, editable=True)
+        if not db.execute("SELECT 1 FROM event_sessions WHERE id=? AND event_id=?", (session_id, event_id)).fetchone():
+            raise LookupError("Session not found")

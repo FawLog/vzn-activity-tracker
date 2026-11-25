@@ -21,7 +21,7 @@ export function setCsrfToken(value: string | null): void {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
-  if (options.body) headers.set("Content-Type", "application/json");
+  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   if (csrfToken && options.method && options.method !== "GET") {
     headers.set("X-CSRF-Token", csrfToken);
   }
@@ -34,7 +34,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
+
 export const api = {
+  ocrStatus: () => request<{configured:boolean;provider:string;max_image_bytes:number}>("/api/v1/ocr/status"),
+  ocrPreview: (groupId:string,eventId:string,sessionId:string,image:Blob) => request<OcrPreview>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(eventId)}/sessions/${encodeURIComponent(sessionId)}/ocr/preview`, {method:"POST",headers:{"Content-Type":image.type},body:image}),
   csrf: () => request<{ csrf_token: string; authenticated: boolean }>("/api/v1/auth/csrf"),
   login: (password: string) =>
     request<{ csrf_token: string; authenticated: true }>("/api/v1/auth/login", {

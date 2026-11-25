@@ -1,0 +1,9 @@
+import type {AnalyticsReport,Counts,Metrics,ActivityCell,EventKind} from "./analytics";
+export type TrendKind=EventKind;
+export function dimension(kind:EventKind):keyof Metrics{return kind==="alliance_championship"?"registration":kind==="bear_trap"?"attendance":kind==="alliance_mobilization"?"points":"reliability"}
+export function combineCounts(values:(Counts|undefined)[]):Counts{const c={positive:0,negative:0,unknown:0,excused:0,known:0,rate:null as number|null};for(const v of values){if(v)for(const k of ["positive","negative","unknown","excused","known"] as const)c[k]+=v[k]}c.rate=c.known?Math.round(c.positive/c.known*10000)/100:null;return c}
+export function eventCounts(report:AnalyticsReport,kind:EventKind){const key=dimension(kind);if(key==="points")return undefined;return combineCounts(report.events.filter(e=>e.event_type===kind).map(e=>e.metrics[key] as Counts|undefined))}
+export function trend(report:AnalyticsReport,kind:EventKind){return report.events.filter(e=>e.event_type===kind).map(e=>({id:e.id,date:e.occurred_on,value:kind==="alliance_mobilization"?(e.metrics.points?.samples?e.metrics.points.average:null):((e.metrics[dimension(kind)] as Counts|undefined)?.rate??null),known:kind==="alliance_mobilization"?(e.metrics.points?.samples??0):((e.metrics[dimension(kind)] as Counts|undefined)?.known??0)}))}
+export const heatLabels:Record<ActivityCell,string>={positive:"Confirmed positive",negative:"Confirmed negative",excused:"Excused / no duty",unknown:"Unknown / no record",mixed:"Mixed outcomes",recorded:"Score recorded"};
+export const heatMarks:Record<ActivityCell,string>={positive:"+",negative:"−",excused:"E",unknown:"·",mixed:"±",recorded:"R"};
+export function heatCell(event:AnalyticsReport["events"][number],fid:string):ActivityCell{return event.activity_cells?.[fid]??"unknown"}

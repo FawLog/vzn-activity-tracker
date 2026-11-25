@@ -1,6 +1,7 @@
-import { CalendarPlus, CheckCircle2, Layers3, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { CalendarPlus, CheckCircle2, UserPlus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
+import { AllianceAnalytics } from "../components/AllianceAnalytics";
 import { PageHeader, SectionHeader } from "../components/Page";
 import { api } from "../lib/api";
 import { useGroupContext } from "../lib/group-context";
@@ -14,8 +15,9 @@ export function OverviewPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!selectedGroup) return;
-    api.overview(selectedGroup.id, selectedAlliance?.id).then(setData).catch((requestError) => setError(requestError.message));
+    let live=true;setData(null);setError("");
+    if (selectedGroup) api.overview(selectedGroup.id, selectedAlliance?.id).then(v=>{if(live)setData(v)}).catch((requestError) => {if(live)setError(requestError.message)});
+    return ()=>{live=false};
   }, [selectedGroup, selectedAlliance]);
 
   if (!selectedGroup) return <div className="page"><PageHeader title="Operational overview" description="Set up an alliance group before viewing scoped records." /><EmptyState title="No active group" description="Create the first primary alliance to start the evidence record." action={<button className="button button--primary" onClick={() => navigate("/onboarding")}>Start setup</button>} /></div>;
@@ -40,7 +42,8 @@ export function OverviewPage() {
           <div><small>Observed</small><strong>{formatTimestamp(data.alliance.source_observed_at)}</strong></div>
         </div></section> : selectedAlliance ? <EmptyState compact title="No alliance statistics yet" description="Run WhiteoutStats Sync once configured; no external values are inferred." /> : null}
 
-      <section className="foundation-banner">
+      <AllianceAnalytics key={selectedGroup.id+":"+selectedAlliance?.id} groupId={selectedGroup.id} allianceId={selectedAlliance?.id??""} allianceLabel={selectedAlliance?.tag??"Selected alliance"}/>
+      {!data?.published_events&&<section className="foundation-banner">
         <div className="foundation-banner__content">
           <h2>The intelligence picture starts with verified records</h2>
           <p>Add alliance players and create event records to build a trusted, reviewable history. Missing evidence is never converted to zero.</p>
@@ -48,10 +51,10 @@ export function OverviewPage() {
             <><button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={18} />Add player</button><button className="button button--secondary" disabled={!selectedAlliance} onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={18} />Create event</button></>
           </div>
         </div>
-      </section>
+      </section>}
 
       {error ? <ErrorState message={error} /> : !data ? <LoadingState /> : (
-        <div className="overview-grid">
+        <div className="analytics-recent">
           <section className="data-panel">
             <SectionHeader title="Recent events" description="Verified alliance event records, most recent first." action={<button className="button button--quiet" onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={16} />Create event</button>} />
             {data.recent_events.length === 0 ? (
@@ -69,17 +72,7 @@ export function OverviewPage() {
               </div>
             )}
           </section>
-          <section className="signal-panel">
-            <SectionHeader title="Activity signals" description="Independent indicators derived from verified records." />
-            {[
-              [Layers3, "Contribution", "Raw points stay specific to each event type."],
-              [Users, "Attendance", "Confirmed presence, absence, excused, and unknown stay distinct."],
-              [ShieldCheck, "Reliability", "Registration commitments are evaluated separately."],
-            ].map(([Icon, title, copy]) => {
-              const SignalIcon = Icon as typeof Layers3;
-              return <div className="signal-row" key={String(title)}><SignalIcon size={22} /><span><strong>{String(title)}</strong><small>{String(copy)}</small></span><em>Unavailable</em></div>;
-            })}
-          </section>
+
         </div>
       )}
     </div>

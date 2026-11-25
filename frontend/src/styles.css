@@ -619,3 +619,23 @@ td strong { color: var(--text); font-weight: 650; }
 .activity-history { margin-top:18px; }
 .activity-explainer { color:#b7c8d8; font-size:12px; line-height:1.6; padding:10px 0; }
 @media(max-width:620px){.activity-toolbar label{flex:1 1 135px}.activity-toolbar input,.activity-toolbar select{width:100%;min-width:0}.activity-history{margin-top:12px}}
+
+.analytics-panel { margin:16px 0; }
+.analytics-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:0; border-block:1px solid #29445b; margin:12px 0; }
+.analytics-summary>div { padding:14px; border-right:1px solid #29445b; }
+.analytics-summary small,.analytics-summary span { display:block; color:#b7c8d8; font-size:12px; }
+.analytics-summary strong { display:block; font-size:24px; font-variant-numeric:tabular-nums; margin:6px 0; }
+.analytics-trend { margin:18px 0; }
+.analytics-trend svg { width:100%; max-height:260px; display:block; }
+.analytics-trend svg text { fill:#b7c8d8; font-size:11px; }
+.analytics-trend svg .grid-line { stroke:#29445b; stroke-width:1; }
+.analytics-trend svg .data-line { stroke:#72d9f1; fill:none; stroke-width:2; }
+.analytics-trend svg .data-point { fill:#72d9f1; }
+.analytics-heatmap table { width:max-content; min-width:100%; }
+.analytics-heatmap th,.analytics-heatmap td { padding:5px 8px; text-align:center; }
+.analytics-heatmap th:first-child,.analytics-heatmap td:first-child { position:sticky; left:0; background:#0c1a29; text-align:left; z-index:1; min-width:130px; }
+.analytics-heatmap .heat-cell { display:inline-flex; width:28px; height:26px; align-items:center; justify-content:center; border-radius:3px; font-size:13px; font-weight:600; color:#f1f0eb; }
+.heat-positive { background:#205d49; }.heat-negative { background:#783a43; }.heat-excused { background:#66512d; }.heat-unknown { background:#263849; }.heat-mixed { background:#705034; }.heat-recorded { background:#24546a; }
+.analytics-legend { display:flex; flex-wrap:wrap; gap:12px; color:#b7c8d8; font-size:12px; margin:10px 0; }
+.analytics-legend span { display:inline-flex; align-items:center; gap:5px; }.analytics-legend i { width:12px;height:12px;border-radius:2px; }
+.analytics-recent { margin-top:18px; }

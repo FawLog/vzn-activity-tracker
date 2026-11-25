@@ -40,7 +40,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 h1, h2, h3, p { margin-top: 0; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
-.workspace { min-width: 0; min-height: 100vh; display: grid; grid-template-rows: 58px 1fr 36px; }
+.workspace { min-width: 0; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 58px 1fr 36px; }
 
 .sidebar {
   position: sticky;
@@ -576,3 +576,19 @@ td strong { color: var(--text); font-weight: 650; }
   .player-profile .history-list > div { flex-direction:column; padding:12px 16px; gap:4px; }
   .player-profile .history-list span { text-align:left; font-size:11px; }
 }
+
+/* Keep desktop workspace within its allocated grid track; shrink search before controls. */
+@media (min-width:821px) {
+  .topbar { min-width:0; gap:12px; }
+  .topbar__workspace-tools { flex:1 1 0; min-width:0; }
+  .topbar__workspace-tools .global-search { flex:1 1 0; width:auto; min-width:0; }
+  .topbar__workspace-tools .context-select { min-width:0; flex:0 1 auto; }
+  .topbar__workspace-tools .context-select select { min-width:0; }
+  .topbar__actions { flex:0 0 auto; }
+  .global-search > svg,.global-search > kbd { flex-shrink:0; }
+}
+.player-profile { min-width:0; max-width:100%; }
+.player-profile .profile-empty-stack { grid-template-columns:minmax(0,1fr); }
+.player-profile .principle-rail { min-width:0; }
+.player-profile .principle-rail > span { min-width:0; overflow-wrap:anywhere; }
+.player-profile .principle-rail > svg { flex-shrink:0; }

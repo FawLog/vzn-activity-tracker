@@ -118,12 +118,18 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(heading.locator("xpath=../..")).toHaveClass("section-header");
     expect(await heading.evaluate(el => el.getBoundingClientRect().left - el.closest("section")!.getBoundingClientRect().left)).toBeGreaterThanOrEqual(16);
   }
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await expect.poll(() => page.evaluate(() => {
+    if (document.documentElement.scrollWidth <= window.innerWidth + 1) return [];
+    return Array.from(document.querySelectorAll("body *")).filter(el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.right > window.innerWidth + 1;
+    }).slice(0, 15).map(el => ({ tag: el.tagName, className: el.getAttribute("class"), right: Math.round(el.getBoundingClientRect().right) }));
+  }), { message: "Profile and workspace must fit the viewport" }).toEqual([]);
   await page.screenshot({ path: testInfo.outputPath("player-profile.png"), fullPage: true });
   await page.unroute("**/api/v1/groups/*/players/e2e-roster-fid");
   await page.reload();
   await expect(page.locator(".profile-avatar svg")).toBeVisible();
-  await page.getByRole("button", { name: "Players", exact: true }).click();
+  await page.getByRole("main").getByRole("button", { name: "Players", exact: true }).click();
   await expect(rosterPlayer).toBeVisible();
   await page.unroute("**/api/v1/groups/*/players?*");
   await page.unroute("https://avatar.example.test/scout.png");

@@ -7,6 +7,7 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app import database
 from app.factory import create_app
 from app.schemas import AllianceCreate, GroupCreate
 from app.services import groups, records, whiteoutstats
@@ -28,6 +29,7 @@ def payload(*, cached_at: str = "2026-01-01T00:00:00Z", members: list[dict[str, 
 
 
 def setup_alliance(settings: Settings, *, name: str = "VZN", state: str = "1001", onboarding: bool = True) -> tuple[str, str]:
+    database.migrate(settings.database_path)
     group = groups.create_group(settings.database_path, GroupCreate(name=name, primary_alliance_name=name, primary_alliance_tag=name, primary_alliance_state_id=state), onboarding=onboarding, sync_enabled=True)
     alliance = groups.list_alliances(settings.database_path, str(group["id"]))[0]
     return str(group["id"]), str(alliance["id"])

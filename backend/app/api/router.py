@@ -485,7 +485,7 @@ def create_api_router(settings: Settings) -> APIRouter:
     @router.get("/ocr/status")
     async def ocr_status(request: Request):
         require_admin(request, settings)
-        return {"configured": bool(settings.google_vision_api_key), "provider": "google_vision", "max_image_bytes": vision_ocr.MAX_IMAGE_BYTES}
+        return {"configured": bool(settings.google_vision_api_key or settings.google_application_credentials), "provider": "google_vision", "max_image_bytes": vision_ocr.MAX_IMAGE_BYTES}
 
     @router.post("/groups/{group_id}/events/{event_id}/sessions/{session_id}/ocr/preview")
     async def preview_ocr(request: Request, group_id: str, event_id: str, session_id: str):
@@ -496,7 +496,7 @@ def create_api_router(settings: Settings) -> APIRouter:
             raise _not_found(str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        if not settings.google_vision_api_key:
+        if not (settings.google_vision_api_key or settings.google_application_credentials):
             raise HTTPException(status_code=409, detail="Google Vision OCR is not configured")
         if request.headers.get("content-type", "").split(";")[0].lower() not in {"image/png", "image/jpeg"}:
             raise HTTPException(status_code=415, detail="Use a PNG or JPEG image")
@@ -508,7 +508,7 @@ def create_api_router(settings: Settings) -> APIRouter:
                 raise HTTPException(status_code=413, detail="Image exceeds OCR upload limit")
             image.extend(chunk)
         try:
-            return await asyncio.to_thread(vision_ocr.extract, bytes(image), settings.google_vision_api_key)
+            return await asyncio.to_thread(vision_ocr.extract, bytes(image), settings.google_vision_api_key, settings.google_application_credentials)
         except vision_ocr.OcrError as error:
             raise HTTPException(status_code=error.status, detail=str(error)) from None
 

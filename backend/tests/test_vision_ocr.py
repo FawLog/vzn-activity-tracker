@@ -47,8 +47,30 @@ def test_preview_authorization_and_no_writes(settings, monkeypatch):
         session = client.post(base + "/sessions", json={"session_key": "trap_1", "started_at": "2026-11-25T18:00:00Z"}).json()["sessions"][0]
         url = base + "/sessions/" + session["id"] + "/ocr/preview"
         before = client.get(base + "/editor").json()
-        monkeypatch.setattr(vision_ocr, "extract", lambda image, key: {"text": "Fox", "tokens": [], "provider": "google_vision", "warnings": []})
+        monkeypatch.setattr(vision_ocr, "extract", lambda image, key, credentials_path=None: {"text": "Fox", "tokens": [], "provider": "google_vision", "warnings": []})
         assert client.post(url, content=PNG, headers={"Content-Type": "image/png", "X-CSRF-Token": "invalid"}).status_code == 403
         assert client.post(url, content=PNG, headers={"Content-Type": "image/png"}).status_code == 200
         assert client.post(url, content=b"x" * (vision_ocr.MAX_IMAGE_BYTES + 1), headers={"Content-Type": "image/png"}).status_code == 413
         assert client.get(base + "/editor").json() == before
+
+
+def test_service_account_precedence(monkeypatch):
+    class Credentials:
+        valid = True
+        _token_uri = "https://oauth2.googleapis.com/token"
+        def apply(self, headers):
+            headers["authorization"] = "Bearer fake-token"
+    monkeypatch.setattr(vision_ocr, "_credentials", lambda path: Credentials())
+    headers = vision_ocr._headers("fake-api-key", "/data/secrets/google-vision.json")
+    assert headers["authorization"] == "Bearer fake-token"
+    assert "x-goog-api-key" not in headers
+
+
+def test_service_account_failure_does_not_fallback(monkeypatch):
+    def broken(path):
+        raise ValueError("private credential content")
+    monkeypatch.setattr(vision_ocr, "_credentials", broken)
+    with pytest.raises(vision_ocr.OcrError) as caught:
+        vision_ocr._headers("fake-key", "/missing.json")
+    assert caught.value.status == 502
+    assert "private credential content" not in str(caught.value)

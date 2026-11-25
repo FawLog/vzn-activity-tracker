@@ -35,6 +35,7 @@ class Settings:
     whiteoutstats_sync_interval_minutes: int = 720
 
     google_vision_api_key: str | None = None
+    google_application_credentials: str | None = None
 
     @property
     def is_production(self) -> bool:
@@ -88,6 +89,7 @@ def load_settings() -> Settings:
         session_ttl_seconds=session_ttl_seconds,
         login_window_seconds=login_window_seconds,
         login_max_attempts=login_max_attempts,
+        google_application_credentials=os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip() or None,
         google_vision_api_key=os.getenv("GOOGLE_VISION_API_KEY", "").strip() or None,
         whiteoutstats_api_key=whiteoutstats_api_key,
         whiteoutstats_base_url=os.getenv("WHITEOUTSTATS_BASE_URL", "https://api.whiteoutstats.com/v1").rstrip("/"),

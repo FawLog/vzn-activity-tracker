@@ -4,6 +4,10 @@ from __future__ import annotations
 import base64
 import json
 import threading
+from functools import lru_cache
+from google.oauth2 import service_account
+from google.auth.transport.requests import Request as GoogleRequest
+from google.auth.exceptions import GoogleAuthError
 import urllib.error
 import urllib.request
 
@@ -29,18 +33,52 @@ def is_busy() -> bool:
     return _lock.locked()
 
 
-def extract(image: bytes, api_key: str) -> dict:
+@lru_cache(maxsize=2)
+def _credentials(path: str):
+    return service_account.Credentials.from_service_account_file(
+        path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+
+
+def _headers(api_key: str | None, credentials_path: str | None) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if credentials_path:
+        try:
+            credentials = _credentials(credentials_path)
+            # Do not accept arbitrary token destinations from credential files.
+            if credentials._token_uri != "https://oauth2.googleapis.com/token":
+                raise ValueError("Unexpected token endpoint")
+            if not credentials.valid:
+                transport = GoogleRequest()
+                def bounded_request(*args, **kwargs):
+                    kwargs["timeout"] = 8
+                    return transport(*args, **kwargs)
+                try:
+                    credentials.refresh(bounded_request)
+                finally:
+                    transport.session.close()
+            credentials.apply(headers)
+        except (GoogleAuthError, OSError, ValueError, TypeError, KeyError):
+            raise OcrError(502, "Google service account authentication failed") from None
+    elif api_key:
+        headers["x-goog-api-key"] = api_key
+    else:
+        raise OcrError(409, "Google Vision OCR is not configured")
+    return headers
+
+
+def extract(image: bytes, api_key: str | None, credentials_path: str | None = None) -> dict:
     if len(image) > MAX_IMAGE_BYTES:
         raise OcrError(413, "Image exceeds OCR upload limit")
     if not (image.startswith(b"\x89PNG\r\n\x1a\n") or image.startswith(b"\xff\xd8\xff")):
         raise OcrError(415, "Use a PNG or JPEG image")
-    if not api_key:
+    if not api_key and not credentials_path:
         raise OcrError(409, "Google Vision OCR is not configured")
     if not _lock.acquire(blocking=False):
         raise OcrError(429, "OCR is busy; try again")
     try:
         payload = json.dumps({"requests": [{"image": {"content": base64.b64encode(image).decode("ascii")}, "features": [{"type": "TEXT_DETECTION"}]}]}).encode()
-        request = urllib.request.Request(ENDPOINT, data=payload, headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, method="POST")
+        request = urllib.request.Request(ENDPOINT, data=payload, headers=_headers(api_key, credentials_path), method="POST")
         try:
             with urllib.request.build_opener(NoRedirect()).open(request, timeout=TIMEOUT_SECONDS) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)

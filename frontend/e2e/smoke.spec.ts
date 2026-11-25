@@ -142,9 +142,15 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
   await page.getByRole("button",{name:"Add session"}).click();
-  await page.getByRole("button",{name:"Load group players"}).click();
-  await page.getByRole("button",{name:"Add Roster Scout",exact:true}).click();
-  await page.getByLabel("Roster Scout Personal points").fill("4500000000");
+  await page.getByLabel("List type").selectOption("metrics");
+  await page.getByLabel("Paste player list").fill("e2e-roster-fid\t4500000000");
+  await page.getByRole("button",{name:"Import list"}).click();
+  await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");
+  await expect(page.getByLabel("Roster Scout Attendance")).toHaveValue("confirmed_present");
+  await page.getByLabel("Paste player list").fill("unknown-fid\t1");
+  await page.getByRole("button",{name:"Import list"}).click();
+  await expect(page.getByRole("alert")).toContainText("not found");
+  await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");
   const [saveResponse] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "PUT" && /\/events\/[^/]+\/sessions\/[^/]+$/.test(response.url())),
     page.getByRole("button",{name:"Save draft"}).click(),

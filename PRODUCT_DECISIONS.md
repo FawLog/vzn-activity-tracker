@@ -37,3 +37,7 @@ Foundation v0.1 includes authentication, pages, the database, FID-based manual p
 3. Attendance OCR for Foundry/Canyon and Bear with substitute/zero-point handling.
 4. Optional events and officer notes.
 5. Discord OAuth2 and role mapping before multiple officers can edit.
+
+## Manual entry UX
+
+Load the current alliance roster automatically as unconfirmed candidates, not historical proof. Officers can paste exact names or FIDs and tab-separated scores; ambiguous or unmatched entries require correction. Championship records registration only in the UI. Technical completeness and eligibility controls belong in a review step, not ordinary entry. Only explicit historical roster and evidence confirmation permit negative assessments. Preserve existing hidden metrics and do not infer absence from zero or missing score alone.

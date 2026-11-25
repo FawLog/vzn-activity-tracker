@@ -97,6 +97,21 @@ def test_incomplete_roster_never_creates_absence_observations(settings: Settings
         assert database.execute("SELECT roster_complete FROM alliance_stat_snapshots ORDER BY source_observed_at DESC LIMIT 1").fetchone()[0] == 0
 
 
+def test_roster_without_count_never_creates_absence_observations(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, alliance_id = setup_alliance(configured)
+    first = payload(members=[{"fid": "101", "nick_name": "North", "power": 1, "kills": 1, "furnace_level": 1, "alliance_rank": 4, "kid": "1001"}, {"fid": "102", "nick_name": "South", "power": 2, "kills": 2, "furnace_level": 2, "alliance_rank": 4, "kid": "1001"}])
+    assert synced(configured, group_id, alliance_id, first).status == "success"
+    without_count = payload(cached_at="2026-01-02T00:00:00Z", members=[{"fid": "101", "nick_name": "Northern Fox", "power": 3, "kills": 3, "furnace_level": 2, "alliance_rank": 3, "kid": "1001"}])
+    del without_count["alliance"]["count"]
+    assert synced(configured, group_id, alliance_id, without_count).status == "success"
+    player = records.get_player(configured.database_path, group_id, "101")
+    assert player is not None and player["nickname"] == "Northern Fox" and player["power"] == 3
+    with sqlite3.connect(configured.database_path) as database:
+        assert database.execute("SELECT roster_complete FROM alliance_stat_snapshots ORDER BY source_observed_at DESC LIMIT 1").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM player_roster_absence_observations WHERE player_fid = '102'").fetchone()[0] == 0
+
+
 def test_unconfirmed_manual_profile_adopts_confirmed_roster_membership(settings: Settings) -> None:
     configured = replace(settings, whiteoutstats_api_key="test-key")
     group_id, alliance_id = setup_alliance(configured)

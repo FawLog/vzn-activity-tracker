@@ -328,7 +328,7 @@ def _validate_roster(body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[st
         raise ValueError("WhiteoutStats returned an empty incomplete roster")
     # Info and roster sections can be refreshed independently by the provider.
     # A count mismatch therefore makes absences unknowable, not members invalid.
-    roster_complete = expected_count is None or expected_count == len(valid)
+    roster_complete = expected_count is not None and expected_count == len(valid)
     return alliance, valid, roster_complete
 
 

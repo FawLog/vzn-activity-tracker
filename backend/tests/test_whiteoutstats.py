@@ -96,6 +96,27 @@ def synced(settings: Settings, group_id: str, alliance_id: str, response: dict[s
     return whiteoutstats.sync_alliance(settings.database_path, settings, group_id, alliance_id, trigger_type=trigger, fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, response)))
 
 
+def test_avatar_url_normalization_is_exact_and_idempotent() -> None:
+    obsolete = "https://gof-format-avatar.akamaized.net:443/avatar.png?size=64#preview"
+    canonical = "https://gof-formal-avatar.akamaized.net:443/avatar.png?size=64#preview"
+
+    assert whiteoutstats.normalize_avatar_url(obsolete) == canonical
+    assert whiteoutstats.normalize_avatar_url(canonical) == canonical
+    assert whiteoutstats.normalize_avatar_url("https://gof-format-avatar.akamaized.net.example.test/avatar.png") == "https://gof-format-avatar.akamaized.net.example.test/avatar.png"
+    assert whiteoutstats.normalize_avatar_url(None) is None
+
+
+def test_roster_import_normalizes_obsolete_avatar_hostname(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, alliance_id = setup_alliance(configured)
+    members = [{"fid": "101", "nick_name": "North", "power": 100, "kills": 12, "furnace_level": 30, "alliance_rank": 4, "kid": "1001", "avatar_url": "https://gof-format-avatar.akamaized.net/avatar.png?size=64"}]
+
+    assert synced(configured, group_id, alliance_id, payload(members=members)).status == "success"
+    player = records.get_player(configured.database_path, group_id, "101")
+    assert player is not None
+    assert player["avatar_url"] == "https://gof-formal-avatar.akamaized.net/avatar.png?size=64"
+
+
 def test_first_successful_roster_import_of_100_members(settings: Settings) -> None:
     configured = replace(settings, whiteoutstats_api_key="test-key")
     group_id, alliance_id = setup_alliance(configured)

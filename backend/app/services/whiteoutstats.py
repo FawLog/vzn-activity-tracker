@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from ..config import Settings
@@ -27,6 +27,8 @@ from ..database import connection, transaction
 
 
 WHITEOUTSTATS_USER_AGENT = "VZN-Activity-Tracker/1.0 (+https://vzn.fawlog.cc)"
+OBSOLETE_AVATAR_HOST = "gof-format-avatar.akamaized.net"
+CANONICAL_AVATAR_HOST = "gof-formal-avatar.akamaized.net"
 
 
 def _now() -> datetime:
@@ -73,6 +75,29 @@ def _number(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if number >= 0 else None
+
+
+def normalize_avatar_url(value: object) -> str | None:
+    """Correct the known provider hostname without changing the rest of a URL."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if parsed.hostname != OBSOLETE_AVATAR_HOST:
+        return value
+
+    userinfo, separator, host_port = parsed.netloc.rpartition("@")
+    prefix = f"{userinfo}@" if separator else ""
+    lowered_host_port = host_port.lower()
+    if lowered_host_port == OBSOLETE_AVATAR_HOST:
+        suffix = ""
+    elif lowered_host_port.startswith(f"{OBSOLETE_AVATAR_HOST}:"):
+        suffix = host_port[len(OBSOLETE_AVATAR_HOST):]
+    else:
+        return value
+    return urlunsplit(parsed._replace(netloc=f"{prefix}{CANONICAL_AVATAR_HOST}{suffix}"))
 
 
 @dataclass(frozen=True)
@@ -570,7 +595,7 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
                          furnace_level=excluded.furnace_level, alliance_rank=excluded.alliance_rank, state_id=excluded.state_id,
                          avatar_url=excluded.avatar_url, observed_at=excluded.observed_at, received_at=excluded.received_at, source_alliance_id=excluded.source_alliance_id""",
                     (fid, group_id, str(member.get("uid")) if member.get("uid") is not None else None, *values,
-                     member.get("avatar_url") if isinstance(member.get("avatar_url"), str) else None, observed_at, received_at, alliance_id),
+                     normalize_avatar_url(member.get("avatar_url")), observed_at, received_at, alliance_id),
                 )
             database.execute(
                 """INSERT OR IGNORE INTO player_game_stat_snapshots(player_fid, group_id, alliance_id, uid, power, kills, furnace_level, alliance_rank, state_id, source_observed_at, received_at)

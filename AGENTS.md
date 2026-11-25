@@ -47,7 +47,7 @@ If sudo, Docker socket, DNS provider, or external-runner access is unavailable, 
 - Raw points from different event types are never summed.
 - Missing from a partial top-N list does not mean zero.
 - Presence is explicitly confirmed present, confirmed absent, excused/no duty, or unknown.
-- Registered-but-absent differs from not registered; an unused substitute is not a no-show.
+- Registered-but-absent differs from not registered; registered substitutes must enter independently and have the same attendance obligations as main players; confirmed absence is a no-show for either role.
 - Bear damage and Foundry/Canyon points are informational, not proportional effectiveness scores.
 - OCR must be review-first and cannot publish directly.
 - Officer notes are private and audited.

@@ -45,6 +45,7 @@ def _create_group(
     *,
     require_empty_groups: bool,
     sync_enabled: bool = False,
+    whiteoutstats_alliance_id: str | None = None,
 ) -> dict[str, Any]:
     if require_empty_groups and database.execute("SELECT 1 FROM alliance_groups LIMIT 1").fetchone():
         raise ValueError("Initial onboarding has already been completed")
@@ -81,8 +82,9 @@ def _create_group(
         ),
     )
     database.execute(
-        "INSERT INTO alliance_sync_settings(alliance_id, sync_enabled, sync_interval_minutes) VALUES (?, ?, 720)",
-        (alliance_id, int(sync_enabled)),
+        """INSERT INTO alliance_sync_settings(alliance_id, whiteoutstats_alliance_id, sync_enabled, sync_interval_minutes)
+           VALUES (?, ?, ?, 720)""",
+        (alliance_id, whiteoutstats_alliance_id, int(sync_enabled)),
     )
 
     if require_empty_groups:
@@ -126,9 +128,22 @@ def _create_group(
     return dict(result)
 
 
-def create_group(database_path: str, payload: GroupCreate, *, onboarding: bool = False, sync_enabled: bool = False) -> dict[str, Any]:
+def create_group(
+    database_path: str,
+    payload: GroupCreate,
+    *,
+    onboarding: bool = False,
+    sync_enabled: bool = False,
+    whiteoutstats_alliance_id: str | None = None,
+) -> dict[str, Any]:
     with transaction(database_path) as database:
-        return _create_group(database, payload, require_empty_groups=onboarding, sync_enabled=sync_enabled)
+        return _create_group(
+            database,
+            payload,
+            require_empty_groups=onboarding,
+            sync_enabled=sync_enabled,
+            whiteoutstats_alliance_id=whiteoutstats_alliance_id,
+        )
 
 
 def list_groups(database_path: str) -> list[dict[str, Any]]:
@@ -213,8 +228,9 @@ def get_alliance(database_path: str, group_id: str, alliance_id: str) -> dict[st
         row = database.execute(
             """
             SELECT a.id, a.group_id, a.name, a.tag, a.state_id, a.alliance_type, a.status,
-                   a.created_at, a.updated_at
-            FROM alliances a WHERE a.id = ? AND a.group_id = ?
+                   a.created_at, a.updated_at, s.whiteoutstats_alliance_id, s.sync_enabled
+            FROM alliances a JOIN alliance_sync_settings s ON s.alliance_id = a.id
+            WHERE a.id = ? AND a.group_id = ?
             """,
             (alliance_id, group_id),
         ).fetchone()
@@ -222,7 +238,12 @@ def get_alliance(database_path: str, group_id: str, alliance_id: str) -> dict[st
 
 
 def create_additional_alliance(
-    database_path: str, group_id: str, payload: AllianceCreate, *, sync_enabled: bool = False
+    database_path: str,
+    group_id: str,
+    payload: AllianceCreate,
+    *,
+    sync_enabled: bool = False,
+    whiteoutstats_alliance_id: str | None = None,
 ) -> dict[str, Any] | None:
     alliance_id = uuid.uuid4().hex
     with transaction(database_path) as database:
@@ -239,8 +260,9 @@ def create_additional_alliance(
             (alliance_id, group_id, payload.name, payload.tag, payload.state_id),
         )
         database.execute(
-            "INSERT INTO alliance_sync_settings(alliance_id, sync_enabled, sync_interval_minutes) VALUES (?, ?, 720)",
-            (alliance_id, int(sync_enabled)),
+            """INSERT INTO alliance_sync_settings(alliance_id, whiteoutstats_alliance_id, sync_enabled, sync_interval_minutes)
+               VALUES (?, ?, ?, 720)""",
+            (alliance_id, whiteoutstats_alliance_id, int(sync_enabled)),
         )
         database.execute(
             """
@@ -251,6 +273,37 @@ def create_additional_alliance(
         )
         row = database.execute("SELECT * FROM alliances WHERE id = ?", (alliance_id,)).fetchone()
     return dict(row) if row else None
+
+
+def connect_whiteoutstats_alliance(
+    database_path: str,
+    group_id: str,
+    alliance_id: str,
+    whiteoutstats_alliance_id: str,
+    *,
+    sync_enabled: bool,
+) -> dict[str, Any] | None:
+    with transaction(database_path) as database:
+        row = database.execute(
+            """SELECT a.id FROM alliances a JOIN alliance_groups g ON g.id = a.group_id
+               WHERE a.id = ? AND a.group_id = ? AND a.status = 'active' AND g.status = 'active'""",
+            (alliance_id, group_id),
+        ).fetchone()
+        if row is None:
+            return None
+        database.execute(
+            """UPDATE alliance_sync_settings
+               SET whiteoutstats_alliance_id = ?, sync_enabled = ?, sync_interval_minutes = 720,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE alliance_id = ?""",
+            (whiteoutstats_alliance_id, int(sync_enabled), alliance_id),
+        )
+        database.execute(
+            """INSERT INTO audit_log(action, entity_type, entity_id, actor)
+               VALUES ('whiteoutstats_connected', 'alliance', ?, 'admin')""",
+            (alliance_id,),
+        )
+    return get_alliance(database_path, group_id, alliance_id)
 
 
 def update_alliance(

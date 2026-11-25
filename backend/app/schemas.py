@@ -53,6 +53,7 @@ class GroupCreate(BaseModel):
     primary_alliance_state_id: str = Field(min_length=1, max_length=32)
     assign_legacy_events: bool = False
     confirm_legacy_assignment: bool = False
+    whiteoutstats_preview_token: str | None = Field(default=None, max_length=2048)
 
     @field_validator(
         "name",
@@ -93,6 +94,7 @@ class AllianceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     tag: str = Field(min_length=1, max_length=32)
     state_id: str = Field(min_length=1, max_length=32)
+    whiteoutstats_preview_token: str | None = Field(default=None, max_length=2048)
 
     @field_validator("name", "tag", "state_id")
     @classmethod
@@ -109,6 +111,7 @@ class AllianceUpdate(BaseModel):
     state_id: str | None = Field(default=None, min_length=1, max_length=32)
     status: str | None = Field(default=None, pattern="^(active|archived)$")
     confirm_archive: bool = False
+    whiteoutstats_preview_token: str | None = Field(default=None, max_length=2048)
 
     @field_validator("name", "tag", "state_id")
     @classmethod
@@ -123,6 +126,23 @@ class AllianceUpdate(BaseModel):
 
 class AllianceSyncSettingsUpdate(BaseModel):
     sync_enabled: bool
+
+
+class WhiteoutStatsPreviewRequest(BaseModel):
+    tag: str = Field(min_length=1, max_length=32)
+    state_id: str = Field(min_length=1, max_length=32)
+
+    @field_validator("tag", "state_id")
+    @classmethod
+    def normalize_preview_text(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split())
+        if not normalized:
+            raise ValueError("Value cannot be blank")
+        return normalized
+
+
+class WhiteoutStatsConnectionConfirm(BaseModel):
+    preview_token: str = Field(min_length=1, max_length=2048)
 
 
 class EventCreate(BaseModel):

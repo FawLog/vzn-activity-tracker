@@ -7,6 +7,9 @@ stores small, typed observations instead of retaining provider JSON blobs.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import sqlite3
 import time
@@ -60,17 +63,20 @@ class AllianceFetcher(Protocol):
     def fetch(self, state_id: str, tag: str, *, wait: int) -> ProviderResponse: ...
 
 
+class AllianceInfoFetcher(Protocol):
+    def fetch_info(self, state_id: str, tag: str) -> ProviderResponse: ...
+
+
 class WhiteoutStatsClient:
     """Small standard-library client so production needs no extra HTTP stack."""
 
     def __init__(self, settings: Settings):
         self._settings = settings
 
-    def fetch(self, state_id: str, tag: str, *, wait: int) -> ProviderResponse:
+    def _request(self, state_id: str, tag: str, query: dict[str, str]) -> ProviderResponse:
         if not self._settings.whiteoutstats_api_key:
             raise RuntimeError("WhiteoutStats synchronization is not configured")
-        query = urlencode({"include": "info,roster", "wait": str(wait)})
-        url = f"{self._settings.whiteoutstats_base_url}/alliances/{quote(state_id, safe='')}/{quote(tag, safe='')}?{query}"
+        url = f"{self._settings.whiteoutstats_base_url}/alliances/{quote(state_id, safe='')}/{quote(tag, safe='')}?{urlencode(query)}"
         request = Request(url, headers={"Authorization": f"Bearer {self._settings.whiteoutstats_api_key}", "Accept": "application/json"})
         try:
             with urlopen(request, timeout=self._settings.whiteoutstats_timeout_seconds) as response:  # noqa: S310 - fixed provider base URL
@@ -88,6 +94,12 @@ class WhiteoutStatsClient:
         except (URLError, TimeoutError, json.JSONDecodeError) as error:
             raise RuntimeError("WhiteoutStats request failed") from error
 
+    def fetch(self, state_id: str, tag: str, *, wait: int) -> ProviderResponse:
+        return self._request(state_id, tag, {"include": "info,roster", "wait": str(wait)})
+
+    def fetch_info(self, state_id: str, tag: str) -> ProviderResponse:
+        return self._request(state_id, tag, {"include": "info"})
+
 
 @dataclass(frozen=True)
 class SyncResult:
@@ -100,6 +112,88 @@ class SyncResult:
 
     def payload(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _encode_preview_token(settings: Settings, state_id: str, tag: str, aid: str) -> str:
+    payload = json.dumps(
+        {"state_id": state_id, "tag": tag, "aid": aid, "expires_at": int(time.time()) + 600},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    signature = hmac.new(settings.session_secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def confirmed_preview_aid(
+    settings: Settings,
+    token: str | None,
+    *,
+    state_id: str,
+    tag: str,
+    expected_aid: str | None = None,
+) -> str:
+    if not token or "." not in token:
+        raise ValueError("Find and confirm the WhiteoutStats alliance before saving")
+    encoded, signature = token.rsplit(".", 1)
+    expected_signature = hmac.new(settings.session_secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected_signature):
+        raise ValueError("Alliance confirmation has expired or is invalid")
+    try:
+        raw = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        payload = json.loads(raw)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise ValueError("Alliance confirmation has expired or is invalid") from error
+    aid = payload.get("aid") if isinstance(payload, dict) else None
+    if (
+        not isinstance(aid, str)
+        or not aid
+        or payload.get("state_id") != state_id
+        or payload.get("tag") != tag
+        or not isinstance(payload.get("expires_at"), int)
+        or payload["expires_at"] < int(time.time())
+    ):
+        raise ValueError("Alliance confirmation has expired or does not match the entered State ID and tag")
+    if expected_aid is not None and aid != expected_aid:
+        raise ValueError(f"Alliance identity mismatch: expected {expected_aid}, received {aid}")
+    return aid
+
+
+def preview_alliance(
+    settings: Settings,
+    state_id: str,
+    tag: str,
+    *,
+    fetcher: AllianceInfoFetcher | None = None,
+) -> dict[str, Any]:
+    if not settings.whiteoutstats_api_key:
+        return {"status": "not_configured", "message": "WhiteoutStats synchronization is not configured"}
+    try:
+        response = (fetcher or WhiteoutStatsClient(settings)).fetch_info(state_id, tag)
+    except RuntimeError as error:
+        return {"status": "failed", "message": str(error)}
+    if response.status_code != 200:
+        return {"status": "failed", "message": f"WhiteoutStats returned HTTP {response.status_code}"}
+    alliance = response.body.get("alliance")
+    aid = alliance.get("aid") if isinstance(alliance, dict) else None
+    if not isinstance(aid, (str, int)) or not str(aid).strip():
+        return {"status": "failed", "message": "WhiteoutStats did not return an Alliance ID"}
+    aid_text = str(aid).strip()
+    return {
+        "status": "success",
+        "confirmation_token": _encode_preview_token(settings, state_id, tag, aid_text),
+        "alliance": {
+            "aid": aid_text,
+            "name": alliance.get("name") if isinstance(alliance.get("name"), str) else None,
+            "tag": alliance.get("abbr") if isinstance(alliance.get("abbr"), str) else None,
+            "state_id": str(alliance.get("kid")) if alliance.get("kid") is not None else None,
+            "leader_name": alliance.get("leader_name") if isinstance(alliance.get("leader_name"), str) else None,
+            "member_count": _number(alliance.get("count")),
+            "power": _number(alliance.get("power")),
+            "power_rank": _number(alliance.get("power_rank")),
+            "flag_url": alliance.get("flag_url") if isinstance(alliance.get("flag_url"), str) else None,
+        },
+    }
 
 
 def _set_terminal_result(
@@ -158,7 +252,7 @@ def _claim_run(database_path: str, group_id: str, alliance_id: str, trigger_type
     with transaction(database_path) as database:
         alliance = database.execute(
             """
-            SELECT a.id, a.group_id, a.tag, a.state_id, a.status, s.sync_enabled,
+            SELECT a.id, a.group_id, a.tag, a.state_id, a.status, s.sync_enabled, s.whiteoutstats_alliance_id,
                    s.sync_in_progress_at, s.last_manual_sync_at
             FROM alliances a JOIN alliance_sync_settings s ON s.alliance_id = a.id
             WHERE a.id = ? AND a.group_id = ?
@@ -169,6 +263,8 @@ def _claim_run(database_path: str, group_id: str, alliance_id: str, trigger_type
             return SyncResult("failed", message="Alliance not found in selected group")
         if alliance["status"] != "active":
             return SyncResult("failed", message="Archived alliances are not synchronized")
+        if not alliance["whiteoutstats_alliance_id"]:
+            return SyncResult("failed", message="WhiteoutStats alliance is not connected")
         if not alliance["sync_enabled"]:
             return SyncResult("failed", message="Synchronization is disabled")
         locked_at = _parse_timestamp(alliance["sync_in_progress_at"])
@@ -342,11 +438,18 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
     updated = 0
     with transaction(database_path) as database:
         alliance = database.execute(
-            "SELECT id, group_id, state_id, status FROM alliances WHERE id = ? AND group_id = ?",
+            """SELECT a.id, a.group_id, a.state_id, a.status, s.whiteoutstats_alliance_id
+               FROM alliances a JOIN alliance_sync_settings s ON s.alliance_id = a.id
+               WHERE a.id = ? AND a.group_id = ?""",
             (alliance_id, group_id),
         ).fetchone()
         if alliance is None or alliance["status"] != "active":
             raise ValueError("Alliance is unavailable for synchronization")
+        expected_aid = alliance["whiteoutstats_alliance_id"]
+        received_aid = alliance_data.get("aid")
+        if not expected_aid or received_aid is None or str(received_aid) != str(expected_aid):
+            received = str(received_aid) if received_aid is not None else "missing"
+            raise ValueError(f"Alliance identity mismatch: expected {expected_aid or 'missing'}, received {received}")
         database.execute(
             """INSERT INTO alliance_stat_snapshots(
                 alliance_id, group_id, external_aid, external_name, external_tag, state_id, power, member_count,
@@ -488,6 +591,17 @@ def sync_alliance(
             return _set_terminal_result(database_path, alliance_id, run_id, SyncResult("partial", message="WhiteoutStats is still preparing the roster", retry_after=retry_after), retry_at=retry_at)
         if response.status_code != 200:
             return _set_terminal_result(database_path, alliance_id, run_id, SyncResult("failed", message=f"WhiteoutStats returned HTTP {response.status_code}"))
+        provider_alliance = response.body.get("alliance")
+        received_aid = provider_alliance.get("aid") if isinstance(provider_alliance, dict) else None
+        expected_aid = alliance["whiteoutstats_alliance_id"]
+        if received_aid is None or str(received_aid) != str(expected_aid):
+            received = str(received_aid) if received_aid is not None else "missing"
+            return _set_terminal_result(
+                database_path,
+                alliance_id,
+                run_id,
+                SyncResult("failed", message=f"Alliance identity mismatch: expected {expected_aid}, received {received}"),
+            )
         if response.body.get("fresh") is not True:
             retry_at = _timestamp(_now() + timedelta(seconds=retry_after or 60))
             return _set_terminal_result(database_path, alliance_id, run_id, SyncResult("partial", message="WhiteoutStats returned cached roster; refresh is pending", retry_after=retry_after), retry_at=retry_at)
@@ -501,7 +615,7 @@ def sync_status(database_path: str, group_id: str, alliance_id: str, *, configur
         row = database.execute(
             """SELECT s.sync_enabled, s.sync_interval_minutes, s.last_sync_at, s.last_attempt_at, s.last_sync_status,
                       s.last_sync_error, s.sync_in_progress_at, s.next_retry_at, s.last_found_count, s.last_added_count, s.last_updated_count,
-                      a.state_id, a.tag, a.status
+                      a.state_id, a.tag, a.status, s.whiteoutstats_alliance_id
                FROM alliance_sync_settings s JOIN alliances a ON a.id = s.alliance_id
                WHERE a.id = ? AND a.group_id = ?""",
             (alliance_id, group_id),
@@ -522,11 +636,18 @@ def update_sync_settings(database_path: str, group_id: str, alliance_id: str, *,
     if enabled and not configured:
         raise ValueError("WhiteoutStats API key is not configured on the backend")
     with transaction(database_path) as database:
-        row = database.execute("SELECT a.status FROM alliances a WHERE a.id = ? AND a.group_id = ?", (alliance_id, group_id)).fetchone()
+        row = database.execute(
+            """SELECT a.status, s.whiteoutstats_alliance_id FROM alliances a
+               JOIN alliance_sync_settings s ON s.alliance_id = a.id
+               WHERE a.id = ? AND a.group_id = ?""",
+            (alliance_id, group_id),
+        ).fetchone()
         if row is None:
             return None
         if row["status"] != "active" and enabled:
             raise ValueError("Archived alliances cannot be synchronized")
+        if enabled and not row["whiteoutstats_alliance_id"]:
+            raise ValueError("Connect and confirm the WhiteoutStats alliance before enabling synchronization")
         database.execute("UPDATE alliance_sync_settings SET sync_enabled = ?, sync_interval_minutes = 720, updated_at = CURRENT_TIMESTAMP WHERE alliance_id = ?", (int(enabled), alliance_id))
     return sync_status(database_path, group_id, alliance_id, configured=configured)
 
@@ -539,7 +660,8 @@ def due_alliances(database_path: str) -> list[tuple[str, str]]:
             """SELECT a.group_id, a.id, s.last_sync_at, s.last_attempt_at, s.next_retry_at, s.sync_in_progress_at
                FROM alliances a JOIN alliance_sync_settings s ON s.alliance_id = a.id
                JOIN alliance_groups g ON g.id = a.group_id
-               WHERE a.status = 'active' AND g.status = 'active' AND s.sync_enabled = 1"""
+               WHERE a.status = 'active' AND g.status = 'active' AND s.sync_enabled = 1
+                 AND s.whiteoutstats_alliance_id IS NOT NULL"""
         ).fetchall()
     for row in rows:
         lock = _parse_timestamp(row["sync_in_progress_at"])

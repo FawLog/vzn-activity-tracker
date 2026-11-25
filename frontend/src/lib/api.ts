@@ -1,4 +1,4 @@
-import type { Alliance, AllianceGroup, AuditRecord, EventRecord, OverviewData, Player, SyncStatus } from "./types";
+import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
   error?: { message?: string };
@@ -48,8 +48,10 @@ export const api = {
   createGroup: (payload: GroupPayload) => request<AllianceGroup>("/api/v1/groups", { method: "POST", body: JSON.stringify(payload) }),
   updateGroup: (groupId: string, payload: Partial<GroupUpdatePayload>) => request<AllianceGroup>(`/api/v1/groups/${encodeURIComponent(groupId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   alliances: (groupId: string) => request<{ items: Alliance[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances`),
+  previewAlliance: (state_id: string, tag: string) => request<AlliancePreview>("/api/v1/whiteoutstats/alliances/preview", { method: "POST", body: JSON.stringify({ state_id, tag }) }),
   createAlliance: (groupId: string, payload: AlliancePayload) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances`, { method: "POST", body: JSON.stringify(payload) }),
   updateAlliance: (groupId: string, allianceId: string, payload: Partial<AllianceUpdatePayload>) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  connectAlliance: (groupId: string, allianceId: string, preview_token: string) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/whiteoutstats/connect`, { method: "POST", body: JSON.stringify({ preview_token }) }),
   allianceSync: (groupId: string, allianceId: string) => request<SyncStatus>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`),
   updateAllianceSync: (groupId: string, allianceId: string, sync_enabled: boolean) => request<SyncStatus>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`, { method: "PATCH", body: JSON.stringify({ sync_enabled }) }),
   syncAllianceNow: (groupId: string, allianceId: string) => request<{ status: string; found_count: number; added_count: number; updated_count: number; message?: string | null }>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`, { method: "POST" }),
@@ -73,7 +75,7 @@ export const api = {
   audit: () => request<{ items: AuditRecord[] }>("/api/v1/admin/audit"),
 };
 
-export interface AlliancePayload { name: string; tag: string; state_id: string; }
+export interface AlliancePayload { name: string; tag: string; state_id: string; whiteoutstats_preview_token?: string; }
 export type PlayerAffiliationFilter =
   | { mode: "all" }
   | { mode: "unconfirmed" }
@@ -88,5 +90,6 @@ export interface GroupPayload {
   primary_alliance_state_id: string;
   assign_legacy_events: boolean;
   confirm_legacy_assignment: boolean;
+  whiteoutstats_preview_token?: string;
 }
 export interface GroupUpdatePayload { name: string; discord_server_id: string | null; combined_statistics: boolean; status: "active" | "archived"; confirm_archive: boolean; }

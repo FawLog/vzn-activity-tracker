@@ -61,7 +61,10 @@ jobs:
         run: .github/scripts/test-staging-helper
 
       - name: Test update rollback before a new image loads
-        run: .github/scripts/test-update-rollback-helper
+        run: .github/scripts/test-update-rollback-helper docker-load-failure
+
+      - name: Test update rollback after backend switching begins
+        run: .github/scripts/test-update-rollback-helper backend-switch-failure
 
       - name: Run backend tests and migration checks
         env:

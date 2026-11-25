@@ -29,6 +29,7 @@ backup_host_path=""
 previous_release=""
 previous_image=""
 transaction_started=0
+backend_switch_started=0
 update_completed=0
 
 fail() {
@@ -134,6 +135,27 @@ restore_database() {
     python -m app.backup restore "${backup_container_path}" --database /data/vzn.sqlite3 >/dev/null
 }
 
+restore_pre_switch_state() {
+  set +e
+  printf 'Update failed before the backend switch; restoring only previous VZN control files and frontend release.\n' >&2
+  if ! install -o root -g root -m 0600 "${transaction_root}/.env" "${APP_ROOT}/.env"; then
+    printf 'ERROR: Previous VZN environment could not be restored. Manual recovery is required.\n' >&2
+    return
+  fi
+  if ! install -o root -g root -m 0644 "${transaction_root}/compose.yaml" "${APP_ROOT}/compose.yaml"; then
+    printf 'ERROR: Previous VZN Compose file could not be restored. Manual recovery is required.\n' >&2
+    return
+  fi
+  if ! ln -s "${previous_release}" "${APP_ROOT}/current.previous" || \
+    ! mv -T "${APP_ROOT}/current.previous" "${APP_ROOT}/current"; then
+    printf 'ERROR: Previous VZN frontend release could not be restored. Manual recovery is required.\n' >&2
+    return
+  fi
+  if ! rm -f "${UPDATE_MARKER}"; then
+    printf 'ERROR: Update marker could not be removed after pre-switch recovery. Manual recovery is required.\n' >&2
+  fi
+}
+
 restore_previous_state() {
   set +e
   printf 'Update failed; restoring only the previous VZN release and its verified SQLite backup.\n' >&2
@@ -167,7 +189,11 @@ on_exit() {
   local exit_code="$?"
   trap - EXIT INT TERM
   if (( exit_code != 0 && transaction_started == 1 && update_completed == 0 )); then
-    restore_previous_state
+    if (( backend_switch_started == 1 )); then
+      restore_previous_state
+    else
+      restore_pre_switch_state
+    fi
   fi
   exit "${exit_code}"
 }
@@ -294,6 +320,7 @@ install -o root -g root -m 0644 "${SOURCE_ROOT}/compose.yaml" "${APP_ROOT}/compo
 python3 "${SOURCE_ROOT}/scripts/set_image_tag.py" set "${APP_ROOT}/.env" "${image_tag}"
 ln -s "${release_root}" "${APP_ROOT}/current.next"
 mv -T "${APP_ROOT}/current.next" "${APP_ROOT}/current"
+backend_switch_started=1
 docker compose --project-directory "${APP_ROOT}" up --detach --no-build --force-recreate backend
 wait_for_local_health || fail "Updated VZN backend did not become healthy"
 wait_for_public_https_health "vzn.fawlog.cc" "${public_ipv4}" \

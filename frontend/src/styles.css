@@ -603,3 +603,6 @@ td strong { color: var(--text); font-weight: 650; }
 .ocr-import select.ocr-match-warning { background-color: rgba(234, 179, 8, .15); border-color: #a78b42; }
 
 .ocr-import select.ocr-match-unresolved { background-color: rgba(239, 68, 68, .15); border-color: #b56565; }
+
+.ocr-conflict-row { background:rgba(239,68,68,.07); }
+.ocr-conflict-label { display:block; color:#f4a5a5; font-size:12px; }

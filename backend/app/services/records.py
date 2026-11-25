@@ -14,6 +14,12 @@ PLAYER_SORT_COLUMNS = {
     "nickname": "pno.nickname",
     "created_at": "pgp.created_at",
     "power": "wsp.power",
+    "kills": "wsp.kills",
+    "furnace_level": "wsp.furnace_level",
+    "alliance_rank": "CASE UPPER(TRIM(wsp.alliance_rank)) "
+    "WHEN '1' THEN 1 WHEN 'R1' THEN 1 WHEN '2' THEN 2 WHEN 'R2' THEN 2 "
+    "WHEN '3' THEN 3 WHEN 'R3' THEN 3 WHEN '4' THEN 4 WHEN 'R4' THEN 4 "
+    "WHEN '5' THEN 5 WHEN 'R5' THEN 5 END",
 }
 EVENT_SORT_COLUMNS = {"occurred_on": "e.occurred_on", "event_type": "e.event_type", "status": "e.status"}
 
@@ -169,7 +175,7 @@ def list_players(
             WHERE pgp.group_id = ?
               AND {affiliation_condition}
               AND (? = '' OR pgp.player_fid LIKE ? OR pno.nickname LIKE ?)
-            ORDER BY {sort_column} {sort_direction}, pgp.player_fid ASC
+            ORDER BY {sort_column} {sort_direction} NULLS LAST, pgp.player_fid ASC
             LIMIT ? OFFSET ?
             """,
             (*parameters, limit, offset),

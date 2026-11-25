@@ -106,6 +106,29 @@ def test_first_successful_roster_import_of_100_members(settings: Settings) -> No
     assert roster is not None and roster["total"] == 100
 
 
+def test_roster_column_sorting_before_pagination(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, alliance_id = setup_alliance(configured)
+    members = [
+        {"fid": "101", "nick_name": "North", "power": 20, "kills": 300, "furnace_level": 30, "alliance_rank": 2, "kid": "1001"},
+        {"fid": "102", "nick_name": "South", "power": 100, "kills": 10, "furnace_level": 9, "alliance_rank": "R5", "kid": "1001"},
+        {"fid": "103", "nick_name": "West", "power": 3, "kills": 40, "furnace_level": 20, "alliance_rank": 3, "kid": "1001"},
+    ]
+    assert synced(configured, group_id, alliance_id, payload(members=members)).status == "success"
+    records.create_player(configured.database_path, group_id, PlayerCreate(fid="104", nickname="Unconfirmed"))
+    for column, ascending in {
+        "power": ["103", "101", "102"],
+        "kills": ["102", "103", "101"],
+        "furnace_level": ["102", "103", "101"],
+        "alliance_rank": ["101", "103", "102"],
+    }.items():
+        for direction, expected in (("asc", ascending), ("desc", ascending[::-1])):
+            first = records.list_players(configured.database_path, group_id, sort=column, direction=direction, limit=2)
+            second = records.list_players(configured.database_path, group_id, sort=column, direction=direction, limit=2, offset=2)
+            assert first is not None and second is not None
+            assert [row["fid"] for row in first["items"] + second["items"]] == expected + ["104"]
+
+
 def test_repeat_cached_roster_does_not_duplicate_observations(settings: Settings) -> None:
     configured = replace(settings, whiteoutstats_api_key="test-key")
     group_id, alliance_id = setup_alliance(configured)

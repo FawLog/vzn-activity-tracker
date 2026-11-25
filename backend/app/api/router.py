@@ -42,6 +42,23 @@ def _not_found(message: str) -> HTTPException:
 def create_api_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1")
 
+    async def initial_sync(group: dict[str, object]) -> dict[str, object]:
+        if not settings.whiteoutstats_api_key:
+            return {"status": "not_configured", "message": "Synchronization is not configured"}
+        alliances = groups.list_alliances(settings.database_path, str(group["id"]))
+        if not alliances:
+            return {"status": "failed", "message": "Primary alliance was not persisted"}
+        return (
+            await asyncio.to_thread(
+                whiteoutstats.sync_alliance,
+                settings.database_path,
+                settings,
+                str(group["id"]),
+                str(alliances[0]["id"]),
+                trigger_type="initial",
+            )
+        ).payload()
+
     @router.get("/health")
     async def health() -> dict[str, object]:
         ready, migration_version = database_is_ready(settings.database_path)
@@ -99,15 +116,7 @@ def create_api_router(settings: Settings) -> APIRouter:
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
-        primary = groups.list_alliances(settings.database_path, str(group["id"]))
-        if settings.whiteoutstats_api_key and primary:
-            group["initial_sync"] = (
-                await asyncio.to_thread(
-                    whiteoutstats.sync_alliance, settings.database_path, settings, str(group["id"]), str(primary[0]["id"]), trigger_type="initial"
-                )
-            ).payload()
-        else:
-            group["initial_sync"] = {"status": "not_configured", "message": "Synchronization is not configured"}
+        group["initial_sync"] = await initial_sync(group)
         return group
 
     @router.get("/groups")
@@ -120,9 +129,11 @@ def create_api_router(settings: Settings) -> APIRouter:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
-            return groups.create_group(settings.database_path, payload, sync_enabled=bool(settings.whiteoutstats_api_key))
+            group = groups.create_group(settings.database_path, payload, sync_enabled=bool(settings.whiteoutstats_api_key))
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        group["initial_sync"] = await initial_sync(group)
+        return group
 
     @router.get("/groups/{group_id}")
     async def get_group(request: Request, group_id: str) -> dict[str, object]:

@@ -117,6 +117,21 @@ def _set_terminal_result(
     # partial attempt in the legacy settings row.
     settings_status = "partial" if result.status == "rate_limited" else result.status
     with transaction(database_path) as database:
+        effective_retry_at = retry_at
+        if result.status == "failed":
+            # A hard error is retried on the normal cadence, not once a minute.
+            effective_retry_at = _timestamp(_now() + timedelta(minutes=720))
+        elif result.status in {"partial", "rate_limited"} and retry_at:
+            previous_retryable_runs = int(database.execute(
+                """SELECT COUNT(*) FROM alliance_sync_runs
+                   WHERE alliance_id = ? AND status IN ('partial', 'rate_limited')
+                     AND requested_at >= COALESCE((SELECT last_sync_at FROM alliance_sync_settings WHERE alliance_id = ?), '0000-01-01T00:00:00Z')""",
+                (alliance_id, alliance_id),
+            ).fetchone()[0])
+            # Two follow-ups are enough to consume the provider's free refresh
+            # window. Further stale/pending results return to the 12-hour cycle.
+            if previous_retryable_runs >= 2:
+                effective_retry_at = _timestamp(_now() + timedelta(minutes=720))
         database.execute(
             """
             UPDATE alliance_sync_settings
@@ -125,7 +140,7 @@ def _set_terminal_result(
                 last_updated_count = ?, updated_at = CURRENT_TIMESTAMP
             WHERE alliance_id = ?
             """,
-            (retry_at, settings_status, result.message, result.found_count, result.added_count, result.updated_count, alliance_id),
+            (effective_retry_at, settings_status, result.message, result.found_count, result.added_count, result.updated_count, alliance_id),
         )
         database.execute(
             """
@@ -220,6 +235,13 @@ def _apply_membership(
         (fid, group_id, alliance_id, observed_at, observed_at),
     )
     observation_id = int(cursor.lastrowid)
+    newer_observation = database.execute(
+        """SELECT 1 FROM player_membership_observations
+           WHERE player_fid = ? AND group_id = ? AND id <> ? AND observed_at > ? LIMIT 1""",
+        (fid, group_id, observation_id, observed_at),
+    ).fetchone()
+    if newer_observation:
+        return
     profile = database.execute(
         """SELECT primary_alliance_id, source_type FROM player_group_profiles
            WHERE player_fid = ? AND group_id = ?""",
@@ -229,15 +251,25 @@ def _apply_membership(
         return
     current_alliance = profile["primary_alliance_id"]
     if current_alliance is None:
-        if profile["source_type"] != "manual":
-            database.execute(
-                """UPDATE player_group_profiles SET primary_alliance_id = ?, status = 'active', source_type = 'whiteoutstats', updated_at = CURRENT_TIMESTAMP
-                   WHERE player_fid = ? AND group_id = ?""",
-                (alliance_id, fid, group_id),
-            )
-            _record_primary_history(database, fid, group_id, alliance_id, observed_at)
+        # A manual profile without an alliance is unconfirmed identity entry,
+        # not a protected manual membership correction.
+        database.execute(
+            """UPDATE player_group_profiles SET primary_alliance_id = ?, status = 'active', source_type = 'whiteoutstats', updated_at = CURRENT_TIMESTAMP
+               WHERE player_fid = ? AND group_id = ?""",
+            (alliance_id, fid, group_id),
+        )
+        _record_primary_history(database, fid, group_id, alliance_id, observed_at)
         return
     if current_alliance == alliance_id:
+        # Seeing the current alliance again interrupts any earlier tentative
+        # departure. A later appearance in the destination must start fresh.
+        database.execute(
+            """UPDATE player_alliance_transitions
+               SET classification = 'disputed', classified_at = ?, updated_at = CURRENT_TIMESTAMP
+               WHERE player_fid = ? AND group_id = ? AND from_alliance_id = ?
+                 AND classification = 'temporary_pending' AND first_observed_at <= ?""",
+            (observed_at, fid, group_id, current_alliance, observed_at),
+        )
         return
     from_state = database.execute("SELECT state_id FROM alliances WHERE id = ?", (current_alliance,)).fetchone()
     state_changed = bool(state_id and from_state and str(from_state["state_id"]) != state_id)
@@ -270,7 +302,7 @@ def _apply_membership(
         _record_primary_history(database, fid, group_id, alliance_id, observed_at, transition_id)
 
 
-def _validate_roster(body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _validate_roster(body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
     alliance = body.get("alliance")
     members = body.get("members")
     if not isinstance(alliance, dict) or not isinstance(members, list):
@@ -294,11 +326,14 @@ def _validate_roster(body: dict[str, Any]) -> tuple[dict[str, Any], list[dict[st
     expected_count = _number(alliance.get("count"))
     if expected_count and not valid:
         raise ValueError("WhiteoutStats returned an empty incomplete roster")
-    return alliance, valid
+    # Info and roster sections can be refreshed independently by the provider.
+    # A count mismatch therefore makes absences unknowable, not members invalid.
+    roster_complete = expected_count is None or expected_count == len(valid)
+    return alliance, valid, roster_complete
 
 
 def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_id: str, response: dict[str, Any]) -> SyncResult:
-    alliance_data, members = _validate_roster(response)
+    alliance_data, members, roster_complete = _validate_roster(response)
     observed_at = response.get("cached_at")
     if not isinstance(observed_at, str) or _parse_timestamp(observed_at) is None:
         raise ValueError("WhiteoutStats response is missing cached_at")
@@ -313,10 +348,12 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
         if alliance is None or alliance["status"] != "active":
             raise ValueError("Alliance is unavailable for synchronization")
         database.execute(
-            """INSERT OR IGNORE INTO alliance_stat_snapshots(
+            """INSERT INTO alliance_stat_snapshots(
                 alliance_id, group_id, external_aid, external_name, external_tag, state_id, power, member_count,
-                power_rank, leader_name, leader_fid, flag_url, source_observed_at, received_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                power_rank, leader_name, leader_fid, flag_url, source_observed_at, received_at, roster_complete
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(alliance_id, source_observed_at) DO UPDATE
+                SET roster_complete = MAX(alliance_stat_snapshots.roster_complete, excluded.roster_complete)""",
             (
                 alliance_id, group_id, str(alliance_data.get("aid")) if alliance_data.get("aid") is not None else None,
                 alliance_data.get("name") if isinstance(alliance_data.get("name"), str) else None,
@@ -326,7 +363,7 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
                 alliance_data.get("leader_name") if isinstance(alliance_data.get("leader_name"), str) else None,
                 str(alliance_data.get("leader_chief_id")) if alliance_data.get("leader_chief_id") is not None else None,
                 alliance_data.get("flag_url") if isinstance(alliance_data.get("flag_url"), str) else None,
-                observed_at, received_at,
+                observed_at, received_at, int(roster_complete),
             ),
         )
         snapshot_row = database.execute(
@@ -337,12 +374,13 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
             raise RuntimeError("Alliance snapshot was not persisted")
         snapshot_id = int(snapshot_row["id"])
         previous_snapshot = database.execute(
-            """SELECT id FROM alliance_stat_snapshots WHERE alliance_id = ? AND id <> ?
+            """SELECT id FROM alliance_stat_snapshots
+               WHERE alliance_id = ? AND roster_complete = 1 AND source_observed_at < ?
                ORDER BY source_observed_at DESC, id DESC LIMIT 1""",
-            (alliance_id, snapshot_id),
+            (alliance_id, observed_at),
         ).fetchone()
         member_fids = {str(member["fid"]) for member in members}
-        if previous_snapshot:
+        if roster_complete and previous_snapshot:
             previous_members = database.execute(
                 "SELECT player_fid FROM alliance_roster_snapshot_members WHERE alliance_snapshot_id = ?",
                 (previous_snapshot["id"],),
@@ -380,25 +418,27 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
                     (fid, group_id, alliance_id, member["nick_name"], observed_at, observed_at),
                 )
             existing_stats = database.execute(
-                "SELECT power, kills, furnace_level, alliance_rank, state_id FROM player_whiteoutstats_profiles WHERE player_fid = ? AND group_id = ?",
+                "SELECT power, kills, furnace_level, alliance_rank, state_id, observed_at FROM player_whiteoutstats_profiles WHERE player_fid = ? AND group_id = ?",
                 (fid, group_id),
             ).fetchone()
             values = (_number(member.get("power")), _number(member.get("kills")), _number(member.get("furnace_level")),
                       str(member.get("alliance_rank")) if member.get("alliance_rank") is not None else None,
                       str(member.get("kid")) if member.get("kid") is not None else None)
-            if existing_stats and tuple(existing_stats) != values:
+            current_stats = existing_stats is None or (_parse_timestamp(observed_at) or _now()) > (_parse_timestamp(existing_stats["observed_at"]) or _now())
+            if current_stats and existing_stats and tuple(existing_stats[:5]) != values:
                 updated += 1
-            elif profile is not None:
+            elif current_stats and profile is not None:
                 updated += 1
-            database.execute(
-                """INSERT INTO player_whiteoutstats_profiles(player_fid, group_id, uid, power, kills, furnace_level, alliance_rank, state_id, avatar_url, observed_at, received_at, source_alliance_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(player_fid, group_id) DO UPDATE SET uid=excluded.uid, power=excluded.power, kills=excluded.kills,
-                     furnace_level=excluded.furnace_level, alliance_rank=excluded.alliance_rank, state_id=excluded.state_id,
-                     avatar_url=excluded.avatar_url, observed_at=excluded.observed_at, received_at=excluded.received_at, source_alliance_id=excluded.source_alliance_id""",
-                (fid, group_id, str(member.get("uid")) if member.get("uid") is not None else None, *values,
-                 member.get("avatar_url") if isinstance(member.get("avatar_url"), str) else None, observed_at, received_at, alliance_id),
-            )
+            if current_stats:
+                database.execute(
+                    """INSERT INTO player_whiteoutstats_profiles(player_fid, group_id, uid, power, kills, furnace_level, alliance_rank, state_id, avatar_url, observed_at, received_at, source_alliance_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(player_fid, group_id) DO UPDATE SET uid=excluded.uid, power=excluded.power, kills=excluded.kills,
+                         furnace_level=excluded.furnace_level, alliance_rank=excluded.alliance_rank, state_id=excluded.state_id,
+                         avatar_url=excluded.avatar_url, observed_at=excluded.observed_at, received_at=excluded.received_at, source_alliance_id=excluded.source_alliance_id""",
+                    (fid, group_id, str(member.get("uid")) if member.get("uid") is not None else None, *values,
+                     member.get("avatar_url") if isinstance(member.get("avatar_url"), str) else None, observed_at, received_at, alliance_id),
+                )
             database.execute(
                 """INSERT OR IGNORE INTO player_game_stat_snapshots(player_fid, group_id, alliance_id, uid, power, kills, furnace_level, alliance_rank, state_id, source_observed_at, received_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -496,7 +536,7 @@ def due_alliances(database_path: str) -> list[tuple[str, str]]:
     due: list[tuple[str, str]] = []
     with connection(database_path) as database:
         rows = database.execute(
-            """SELECT a.group_id, a.id, s.last_sync_at, s.next_retry_at, s.sync_in_progress_at
+            """SELECT a.group_id, a.id, s.last_sync_at, s.last_attempt_at, s.next_retry_at, s.sync_in_progress_at
                FROM alliances a JOIN alliance_sync_settings s ON s.alliance_id = a.id
                JOIN alliance_groups g ON g.id = a.group_id
                WHERE a.status = 'active' AND g.status = 'active' AND s.sync_enabled = 1"""
@@ -509,6 +549,9 @@ def due_alliances(database_path: str) -> list[tuple[str, str]]:
         if retry and retry > now:
             continue
         last_sync = _parse_timestamp(row["last_sync_at"])
+        last_attempt = _parse_timestamp(row["last_attempt_at"])
+        if retry is None and last_attempt and (last_sync is None or last_attempt > last_sync) and last_attempt > now - timedelta(minutes=720):
+            continue
         if last_sync is None or last_sync <= now - timedelta(minutes=720):
             due.append((str(row["group_id"]), str(row["id"])))
     return due

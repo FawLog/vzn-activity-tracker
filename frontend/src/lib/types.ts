@@ -32,6 +32,15 @@ export interface AllianceGroup {
   updated_at: string;
   alliance_count: number;
   primary_count: number;
+  initial_sync?: InitialSyncResult;
+}
+
+export interface InitialSyncResult {
+  status: string;
+  found_count?: number;
+  added_count?: number;
+  updated_count?: number;
+  message?: string | null;
 }
 
 export interface Alliance {

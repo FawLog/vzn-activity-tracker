@@ -172,6 +172,20 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
   await page.getByRole("button",{name:"Add session"}).click();
+  await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
+  await page.route("**/ocr/preview", async route=>{
+    expect(route.request().headers()["content-type"]).toBe("image/png");
+    expect(route.request().headers()["x-csrf-token"]).toBeTruthy();
+    await route.fulfill({json:{provider:"google_vision",text:"Roster Scout 4500000000",tokens:[],warnings:[]}});
+  });
+  await page.reload();
+  await page.getByLabel("Choose screenshots").setInputFiles([{name:"first.png",mimeType:"image/png",buffer:Buffer.from("image1")},{name:"second.png",mimeType:"image/png",buffer:Buffer.from("image2")}]);
+  await page.getByRole("button",{name:"Recognize screenshots"}).click();
+  await expect(page.getByText("2 of 2 screenshots recognized")).toBeVisible();
+  await expect(page.getByLabel("Roster Scout Personal points")).toHaveCount(0);
+  await page.getByRole("button",{name:"Clear screenshots"}).click();
+  await page.unroute("**/ocr/preview");
+  await page.unroute("**/api/v1/ocr/status");
   await page.getByLabel("List type").selectOption("metrics");
   await page.getByLabel("Paste player list").fill("e2e-roster-fid\t4500000000");
   await page.getByRole("button",{name:"Import list"}).click();

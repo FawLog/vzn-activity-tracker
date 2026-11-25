@@ -4,7 +4,6 @@ import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PageHeader } from "../components/Page";
 import { api, type PlayerAffiliationFilter } from "../lib/api";
 import { useGroupContext } from "../lib/group-context";
-import { formatDate } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { Player } from "../lib/types";
 
@@ -26,6 +25,7 @@ export function PlayersPage() {
   const [selection, setSelection] = useState<AffiliationSelection>("all");
   const [selectionGroupId, setSelectionGroupId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
 
   const effectiveSelection = selectionGroupId === selectedGroup?.id && (
@@ -44,7 +44,7 @@ export function PlayersPage() {
     setPlayers(null);
     setError("");
     if (!selectedGroup) return;
-    api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter).then((result) => setPlayers(result.items)).catch((requestError) => setError(requestError.message));
+    api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter).then((result) => { setPlayers(result.items); setTotal(result.total); }).catch((requestError) => setError(requestError.message));
   }, [selectedGroup, submittedQuery, sort, direction, playerFilter]);
 
   if (!selectedGroup) return <div className="page"><EmptyState title="No active group" description="Set up a group before viewing its roster." action={<button className="button button--primary" onClick={() => navigate("/onboarding")}>Start setup</button>} /></div>;
@@ -59,6 +59,13 @@ export function PlayersPage() {
     setSelection(value);
   };
 
+  const loadMore = async () => {
+    if (!selectedGroup || !players) return;
+    const result = await api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter, 100, players.length);
+    setPlayers([...players, ...result.items]);
+    setTotal(result.total);
+  };
+
   return (
     <div className="page">
       <PageHeader title="Players" description={`FID-based roster profiles in ${selectedGroup.name}. Alliance selection in the top bar does not hide unconfirmed profiles.`} action={<button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={17} />Add player</button>} />
@@ -71,7 +78,8 @@ export function PlayersPage() {
         <EmptyState title={submittedQuery ? "No matching players" : "No players in this view"} description={submittedQuery ? "Try a different FID or nickname." : effectiveSelection === "unconfirmed" ? "No profiles without a confirmed primary alliance are available." : "Add the first FID-based roster record from Administration."} action={!submittedQuery && effectiveSelection === "all" && <button className="button button--primary" onClick={() => navigate("/admin?mode=players")}>Add player</button>} />
       ) : (
         <section className="data-panel data-panel--page">
-          <div className="table-wrap"><table><thead><tr><th>FID</th><th>Nickname</th><th>Affiliation</th><th>Added</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td className="mono">{player.fid}</td><td><button className="table-link" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}>{player.nickname ?? "Nickname unconfirmed"}</button></td><td>{player.primary_alliance_name ? player.primary_alliance_name : <span className="status status--draft">Unconfirmed</span>}</td><td>{formatDate(player.created_at)}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr><th>Nickname</th><th>FID</th><th>Power</th><th>Kills</th><th>Furnace</th><th>Rank</th><th>Alliance</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td><button className="table-link" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}>{player.nickname ?? "Nickname unconfirmed"}</button></td><td className="mono">{player.fid}</td><td className="number-cell">{player.power?.toLocaleString() ?? "—"}</td><td className="number-cell">{player.kills?.toLocaleString() ?? "—"}</td><td>{player.furnace_level ?? "—"}</td><td>{player.alliance_rank ?? "—"}</td><td>{player.observed_alliance_name ?? player.primary_alliance_name ?? <span className="status status--draft">Unconfirmed</span>}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
+          {players.length < total ? <button className="button button--quiet" onClick={() => void loadMore()}>Load more ({players.length} of {total})</button> : null}
         </section>
       )}
     </div>

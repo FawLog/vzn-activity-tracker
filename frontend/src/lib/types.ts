@@ -9,6 +9,17 @@ export interface Player {
   group_status?: "unconfirmed" | "active" | "archived";
   primary_alliance_id?: string | null;
   primary_alliance_name?: string | null;
+  observed_alliance_name?: string | null;
+  uid?: string | null;
+  power?: number | null;
+  kills?: number | null;
+  furnace_level?: number | null;
+  alliance_rank?: string | null;
+  state_id?: string | null;
+  avatar_url?: string | null;
+  stats_observed_at?: string | null;
+  stat_history?: Array<{ power: number | null; kills: number | null; furnace_level: number | null; alliance_rank: string | null; state_id: string | null; source_observed_at: string; received_at: string; alliance_id: string }>;
+  membership_history?: Array<{ observed_at: string; confidence: string; alliance_name: string; alliance_tag: string }>;
 }
 
 export interface AllianceGroup {
@@ -21,6 +32,15 @@ export interface AllianceGroup {
   updated_at: string;
   alliance_count: number;
   primary_count: number;
+  initial_sync?: InitialSyncResult;
+}
+
+export interface InitialSyncResult {
+  status: string;
+  found_count?: number;
+  added_count?: number;
+  updated_count?: number;
+  message?: string | null;
 }
 
 export interface Alliance {
@@ -36,6 +56,13 @@ export interface Alliance {
   sync_enabled?: number;
   sync_interval_minutes?: number | null;
   last_sync_status?: string | null;
+  last_sync_at?: string | null;
+  last_attempt_at?: string | null;
+  last_sync_error?: string | null;
+  sync_in_progress_at?: string | null;
+  last_found_count?: number;
+  last_added_count?: number;
+  last_updated_count?: number;
 }
 
 export interface EventRecord {
@@ -63,6 +90,39 @@ export interface OverviewData {
   events: number;
   published_events: number;
   recent_events: EventRecord[];
+  alliance: AllianceStatistics | null;
+}
+
+export interface AllianceStatistics {
+  external_name: string | null;
+  external_tag: string | null;
+  state_id: string | null;
+  power: number | null;
+  member_count: number | null;
+  power_rank: number | null;
+  leader_name: string | null;
+  flag_url: string | null;
+  source_observed_at: string;
+  received_at: string;
+  power_change: number | null;
+}
+
+export interface SyncStatus {
+  api_configured: boolean;
+  sync_enabled: number;
+  sync_interval_minutes: number | null;
+  state_id: string;
+  tag: string;
+  last_sync_at: string | null;
+  last_attempt_at: string | null;
+  last_sync_status: string | null;
+  last_sync_error: string | null;
+  sync_in_progress_at: string | null;
+  next_retry_at: string | null;
+  last_found_count: number;
+  last_added_count: number;
+  last_updated_count: number;
+  runs: Array<{ requested_at: string; completed_at: string | null; trigger_type: string; status: string; found_count: number; added_count: number; updated_count: number; message: string | null }>;
 }
 
 export interface AuditRecord {

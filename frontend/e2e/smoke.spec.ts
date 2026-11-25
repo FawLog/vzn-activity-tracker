@@ -25,6 +25,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.getByLabel("Tag").fill("WZN");
     await page.getByLabel("State ID").fill("1001");
     await page.getByRole("button", { name: "Confirm group setup" }).click();
+    await expect(page.getByRole("heading", { name: "Workspace configured" })).toBeVisible();
+    await expect(page.getByText(/Initial roster import:|Synchronization is not configured/)).toBeVisible();
+    await page.getByRole("button", { name: "Continue to alliance settings" }).click();
+    await expect(page.getByRole("heading", { name: "Alliance groups" })).toBeVisible();
+    await page.goto("/");
     await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
   }
   await page.screenshot({ path: testInfo.outputPath("group-overview.png"), fullPage: true });
@@ -61,7 +66,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.getByPlaceholder("Tag").fill("WZNA");
     await page.getByPlaceholder("State ID").fill("1001");
     await page.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(page.getByText("Additional alliance added.")).toBeVisible();
+    await expect(page.locator(".group-main > .notice").filter({ hasText: /Initial roster import:|Synchronization is not configured/ })).toBeVisible();
   }
   await expect(academy.first()).toBeVisible();
   if (testInfo.project.name === "desktop-1440") {

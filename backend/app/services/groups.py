@@ -44,6 +44,7 @@ def _create_group(
     payload: GroupCreate,
     *,
     require_empty_groups: bool,
+    sync_enabled: bool = False,
 ) -> dict[str, Any]:
     if require_empty_groups and database.execute("SELECT 1 FROM alliance_groups LIMIT 1").fetchone():
         raise ValueError("Initial onboarding has already been completed")
@@ -79,7 +80,10 @@ def _create_group(
             payload.primary_alliance_state_id,
         ),
     )
-    database.execute("INSERT INTO alliance_sync_settings(alliance_id) VALUES (?)", (alliance_id,))
+    database.execute(
+        "INSERT INTO alliance_sync_settings(alliance_id, sync_enabled, sync_interval_minutes) VALUES (?, ?, 720)",
+        (alliance_id, int(sync_enabled)),
+    )
 
     if require_empty_groups:
         database.execute(
@@ -122,9 +126,9 @@ def _create_group(
     return dict(result)
 
 
-def create_group(database_path: str, payload: GroupCreate, *, onboarding: bool = False) -> dict[str, Any]:
+def create_group(database_path: str, payload: GroupCreate, *, onboarding: bool = False, sync_enabled: bool = False) -> dict[str, Any]:
     with transaction(database_path) as database:
-        return _create_group(database, payload, require_empty_groups=onboarding)
+        return _create_group(database, payload, require_empty_groups=onboarding, sync_enabled=sync_enabled)
 
 
 def list_groups(database_path: str) -> list[dict[str, Any]]:
@@ -192,7 +196,8 @@ def list_alliances(database_path: str, group_id: str) -> list[dict[str, Any]] | 
             """
             SELECT a.id, a.group_id, a.name, a.tag, a.state_id, a.alliance_type, a.status,
                    a.created_at, a.updated_at, s.whiteoutstats_alliance_id, s.sync_enabled,
-                   s.sync_interval_minutes, s.last_sync_at, s.last_sync_status, s.last_sync_error
+                   s.sync_interval_minutes, s.last_sync_at, s.last_attempt_at, s.last_sync_status, s.last_sync_error,
+                   s.sync_in_progress_at, s.last_found_count, s.last_added_count, s.last_updated_count
             FROM alliances a
             JOIN alliance_sync_settings s ON s.alliance_id = a.id
             WHERE a.group_id = ?
@@ -216,7 +221,9 @@ def get_alliance(database_path: str, group_id: str, alliance_id: str) -> dict[st
     return dict(row) if row else None
 
 
-def create_additional_alliance(database_path: str, group_id: str, payload: AllianceCreate) -> dict[str, Any] | None:
+def create_additional_alliance(
+    database_path: str, group_id: str, payload: AllianceCreate, *, sync_enabled: bool = False
+) -> dict[str, Any] | None:
     alliance_id = uuid.uuid4().hex
     with transaction(database_path) as database:
         group = _group_row(database, group_id)
@@ -231,7 +238,10 @@ def create_additional_alliance(database_path: str, group_id: str, payload: Allia
             """,
             (alliance_id, group_id, payload.name, payload.tag, payload.state_id),
         )
-        database.execute("INSERT INTO alliance_sync_settings(alliance_id) VALUES (?)", (alliance_id,))
+        database.execute(
+            "INSERT INTO alliance_sync_settings(alliance_id, sync_enabled, sync_interval_minutes) VALUES (?, ?, 720)",
+            (alliance_id, int(sync_enabled)),
+        )
         database.execute(
             """
             INSERT INTO audit_log(action, entity_type, entity_id, actor)

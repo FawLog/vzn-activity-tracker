@@ -9,7 +9,8 @@ VZN Activity Tracker is the foundation for **VZN // Arctic Intelligence**, an ev
 - Manual player creation using FID as the primary identity.
 - Manual event creation with draft/published status.
 - SQLite nickname history, membership intervals, event participant foundations, and attributed audit records.
-- No OCR, screenshot import, Discord OAuth, WhiteoutStats API, automatic scoring, or fabricated demo results.
+- WhiteoutStats free-tier alliance roster sync (`info,roster`) with FID-based profiles, typed history, safe transfer observations, and a 12-hour SQLite-backed schedule.
+- No OCR, screenshot import, Discord OAuth, paid Frosty endpoints, automatic scoring, or fabricated demo results.
 - Roster records and event details are restricted to the administrator in this foundation release.
 
 ## Repository layout
@@ -55,3 +56,17 @@ The bootstrap workflow never commits or pushes. A maintainer must add its lockfi
 - [QA status and fidelity ledger](docs/QA_STATUS.md)
 - [Agent operating rules](AGENTS.md)
 - [Changelog](CHANGELOG.md)
+
+## WhiteoutStats configuration
+
+WhiteoutStats is optional. To enable it, add the API key only to the root-owned
+production environment file (mode `0600`), never to a frontend value or Git:
+
+```dotenv
+WHITEOUTSTATS_API_KEY="wos_..."
+```
+
+The backend uses `Authorization: Bearer`, a 75-second bounded client timeout,
+and only `GET /v1/alliances/{kid}/{tag}?include=info,roster&wait=30`. Without
+the key, alliances can still be created and the UI reports that sync is not
+configured. The default interval is intentionally fixed at 720 minutes.

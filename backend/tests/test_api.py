@@ -34,7 +34,7 @@ def create_onboarded_group(client: TestClient, name: str = "WZN") -> dict[str, o
 def test_health_and_database_migration(client: TestClient) -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ready", "migration_version": 4}
+    assert response.json() == {"status": "ok", "database": "ready", "migration_version": 6}
 
 
 def test_group_routes_require_authentication(client: TestClient) -> None:
@@ -83,6 +83,7 @@ def test_onboarding_creates_exactly_one_primary_and_is_repeat_safe(authenticated
     assert status == {"required": True, "group_count": 0, "unassigned_legacy_events": 0}
     group = create_onboarded_group(authenticated_client)
     assert group["primary_count"] == 1
+    assert group["initial_sync"]["status"] == "not_configured"
     alliances = authenticated_client.get(f"/api/v1/groups/{group['id']}/alliances").json()["items"]
     assert len(alliances) == 1 and alliances[0]["alliance_type"] == "primary"
     duplicate = authenticated_client.post("/api/v1/onboarding/groups", json=group_payload())

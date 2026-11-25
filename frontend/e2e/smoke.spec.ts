@@ -101,6 +101,30 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(row.getByText("FC5", { exact: true })).toBeVisible();
   await expect(row.locator(".roster-rank--r5")).toHaveText("R5");
   await expect.poll(() => row.locator(".roster-avatar img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await page.route("**/api/v1/groups/*/players/e2e-roster-fid", async route => {
+    const response = await route.fetch();
+    const body = await response.json();
+    Object.assign(body, { avatar_url: "https://avatar.example.test/scout.png", power: 331794134, kills: 33469020, furnace_level: 55, alliance_rank: "4", state_id: "4284", primary_alliance_name: "ValiantZenith", stat_history: [{ power: 331794134, kills: 33469020, furnace_level: 55, alliance_rank: "4", source_observed_at: "2026-11-25T12:00:00Z", alliance_id: "test" }], membership_history: [{ alliance_name: "ValiantZenith", alliance_tag: "VZN", observed_at: "2026-11-25T12:00:00Z" }] });
+    await route.fulfill({ response, json: body });
+  });
+  await rosterPlayer.click();
+  await expect(page.getByRole("heading", { name: "Roster Scout" })).toBeVisible();
+  await expect.poll(() => page.locator(".profile-avatar img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await expect(page.locator(".profile-stats > div")).toHaveCount(6);
+  await expect(page.locator(".profile-stats")).toContainText("ValiantZenith");
+  for (const name of ["Game history", "Membership observations"]) {
+    const heading = page.getByRole("heading", { name, exact: true });
+    await expect(heading).toBeVisible();
+    await expect(heading.locator("xpath=../..")).toHaveClass("section-header");
+    expect(await heading.evaluate(el => el.getBoundingClientRect().left - el.closest("section")!.getBoundingClientRect().left)).toBeGreaterThanOrEqual(16);
+  }
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("player-profile.png"), fullPage: true });
+  await page.unroute("**/api/v1/groups/*/players/e2e-roster-fid");
+  await page.reload();
+  await expect(page.locator(".profile-avatar svg")).toBeVisible();
+  await page.getByRole("button", { name: "Players", exact: true }).click();
+  await expect(rosterPlayer).toBeVisible();
   await page.unroute("**/api/v1/groups/*/players?*");
   await page.unroute("https://avatar.example.test/scout.png");
   await page.screenshot({ path: testInfo.outputPath("player-affiliation-filter.png"), fullPage: true });

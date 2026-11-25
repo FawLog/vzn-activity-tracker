@@ -547,3 +547,32 @@ td strong { color: var(--text); font-weight: 650; }
 .manual-editor td input[type=checkbox] { width:auto; min-width:16px; accent-color:var(--cyan-bright); }
 .manual-review p { font-size:12px; color:var(--text-soft); }
 .manual-review label { align-items:flex-start; }
+
+/* Player profile: scoped surfaces, balanced stats, responsive history. */
+.player-profile .profile-header { align-items:center; gap:16px; }
+.player-profile .profile-avatar { width:64px; height:64px; flex:0 0 64px; border-radius:10px; }
+.player-profile .profile-identity { min-width:0; overflow-wrap:anywhere; }
+.player-profile .profile-layout { align-items:start; }
+.player-profile .profile-empty-stack { min-width:0; align-content:start; }
+.player-profile .section-header { min-height:0; padding:16px 18px; align-items:center; }
+.player-profile .section-header h2 { margin:0; }
+.player-profile .section-header p { margin-top:5px; }
+.player-profile .section-header > svg { flex-shrink:0; color:var(--muted); }
+.profile-stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.profile-stats > div { min-width:0; display:grid; align-content:start; gap:5px; padding:14px 18px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.profile-stats > div:nth-child(odd) { border-right:1px solid var(--line); }
+.profile-stats > div:nth-last-child(-n+2) { border-bottom:0; }
+.profile-stats small { color:var(--muted); font-size:12px; }
+.profile-stats strong { font-size:16px; font-variant-numeric:tabular-nums; }
+.player-profile .history-list > div { min-width:0; align-items:flex-start; padding:14px 18px; gap:8px 18px; }
+.player-profile .history-list strong,.player-profile .history-list span { min-width:0; overflow-wrap:anywhere; line-height:1.5; }
+.player-profile .history-list span { text-align:right; }
+@media(max-width:620px) {
+  .player-profile .profile-header { padding:16px; gap:12px; }
+  .player-profile .profile-avatar { width:56px; height:56px; flex-basis:56px; }
+  .player-profile .profile-header h1 { font-size:24px; }
+  .player-profile .section-header { padding:14px 16px; }
+  .profile-stats > div { padding:12px 16px; }
+  .player-profile .history-list > div { flex-direction:column; padding:12px 16px; gap:4px; }
+  .player-profile .history-list span { text-align:left; font-size:11px; }
+}

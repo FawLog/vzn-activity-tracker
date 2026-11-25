@@ -1,6 +1,7 @@
-import { ArrowDown, ArrowUp, ArrowUpDown, Search, UserPlus, UserRound } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Search, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
+import { PlayerAvatar } from "../components/PlayerAvatar";
 import { PageHeader } from "../components/Page";
 import { api, type PlayerAffiliationFilter } from "../lib/api";
 import { formatAllianceRank, formatFurnaceLevel } from "../lib/format";
@@ -23,17 +24,6 @@ function readRosterSort(): RosterSort {
   return DEFAULT_SORT;
 }
 
-function PlayerAvatar({ url }: { url?: string | null }) {
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  let src: string | null = null;
-  try {
-    const parsed = new URL(url ?? "");
-    if (parsed.protocol === "https:" && !parsed.username && !parsed.password) src = parsed.href;
-  } catch { /* A missing or invalid provider URL uses the placeholder. */ }
-  return <span className="roster-avatar" aria-hidden="true">{src && failedUrl !== src
-    ? <img src={src} alt="" width={32} height={32} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedUrl(src)} />
-    : <UserRound size={17} />}</span>;
-}
 
 type AffiliationSelection = "all" | "unconfirmed" | `alliance:${string}`;
 

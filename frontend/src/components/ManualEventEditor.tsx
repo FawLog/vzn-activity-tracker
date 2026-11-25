@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { ReviewRow } from "../lib/ocrReview";
 import { ScreenshotImport } from "./ScreenshotImport";
+import { championshipSummary, championshipRows, invalidateChampionship } from "../lib/championship";
 import type { Alliance, EventRecord, ManualEvent, ManualRow, ManualSession, Player } from "../lib/types";
 
 const definitions: Record<string, { keys: string[]; metrics: [string,string][]; registration?: boolean; battle?: boolean; attendance?: boolean }> = {
@@ -25,6 +26,7 @@ const choices = {
 export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;record:EventRecord;onPublished:()=>void}) {
   const definition=definitions[record.event_type];
   const single=definition.keys.length===1;
+  const championship=record.event_type==="alliance_championship";
   const [editor,setEditor]=useState<ManualEvent|null>(null);
   const [selected,setSelected]=useState("");
   const [draft,setDraft]=useState<ManualSession|null>(null);
@@ -43,13 +45,16 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const [paste,setPaste]=useState("");
   const [pasteKind,setPasteKind]=useState("registration");
   const [review,setReview]=useState(false);
+  const [expectedRegistered,setExpectedRegistered]=useState("");
+  const [expectedRoster,setExpectedRoster]=useState("");
+  const [rosterAttested,setRosterAttested]=useState(false);
   const [sort,setSort]=useState("nickname");
   const [confirmPublish,setConfirmPublish]=useState(false);
   const [cycleComplete,setCycleComplete]=useState(false);
   const apply=(value:ManualEvent, preferred?:string)=>{
     setEditor(value);setCycleComplete(false);
     const session=value.sessions.find(s=>s.id===preferred) ?? value.sessions[0] ?? null;
-    setSelected(session?.id ?? "");setDraft(session);setDirty(false);setReview(false);setPaste("");
+    setSelected(session?.id ?? "");setDraft(session);setDirty(false);setReview(false);setPaste("");setRosterAttested(false);setExpectedRegistered(session?.registration_complete?String(session.rows.filter(r=>r.registration==="registered").length):"");setExpectedRoster(session?.roster_complete?String(session.rows.length):"");
   };
   useEffect(()=>{
     let active=true;
@@ -67,7 +72,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     try{await action()}catch(e){setError(e instanceof Error?e.message:"Request failed")}finally{setBusy(false)}
   };
   const editable=editor?.status==="draft";
-  const change=(next:ManualSession)=>{setDraft(next);setDirty(true);setConfirmPublish(false)};
+  const change=(next:ManualSession)=>{setDraft(championship?invalidateChampionship(next):next);setDirty(true);setConfirmPublish(false);setRosterAttested(false)};
   const add=(player:Player)=>{
     if(!draft||draft.rows.some(r=>r.fid===player.fid))return;
     change({...draft,roster_complete:false,rows:[...visibleRows,blank(player)].map(r=>({...r,eligibility:r.eligibility==="no_duty"?"no_duty":"unknown",registration:r.registration==="not_registered"?"unknown":r.registration,attendance:r.attendance==="confirmed_absent"?"unknown":r.attendance}))});
@@ -88,6 +93,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const blank=(p:Player):ManualRow=>({fid:p.fid,nickname:p.nickname??p.fid,eligibility:"unknown",registration:"unknown",role:null,registered_by:null,attendance:"unknown",metrics:{}});
   const currentRoster=candidates.filter(p=>p.primary_alliance_id===(draft?.host_alliance_id??record.alliance_id)&&p.group_status==="active");
   const visibleRows=draft?[...draft.rows,...(editable&&!draft.roster_complete?currentRoster.filter(p=>!draft.rows.some(r=>r.fid===p.fid)).map(blank):[])]:[];
+  const champSummary=championshipSummary(visibleRows,!!draft?.roster_complete&&!!draft?.registration_complete);
   const materialize=(rows:ManualRow[])=>{if(draft)change({...draft,rows})};
   const patchVisible=(fid:string,patch:Partial<ManualRow>)=>{
     materialize(visibleRows.map(r=>r.fid===fid?{...r,...patch}:r));
@@ -135,7 +141,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     if(errors.length){setError(errors.join("; "));return}
     if(!updates.length){setError("Paste at least one player.");return}
     for(const row of updates)rows.set(row.fid,row);
-    change({...draft,roster_complete:updates.some(r=>!visibleRows.some(v=>v.fid===r.fid))?false:draft.roster_complete,rows:[...rows.values()].map(r=>updates.some(u=>!visibleRows.some(v=>v.fid===u.fid))?{...r,eligibility:r.eligibility==="no_duty"?"no_duty":"unknown",registration:r.registration==="not_registered"?"unknown":r.registration,attendance:r.attendance==="confirmed_absent"?"unknown":r.attendance}:r)});setPaste("");setMessage("Imported "+updates.length+" players into draft. Review before saving.");
+    change({...draft,roster_complete:updates.some(r=>!visibleRows.some(v=>v.fid===r.fid))?false:draft.roster_complete,rows:[...rows.values()].map(r=>updates.some(u=>!visibleRows.some(v=>v.fid===u.fid))?{...r,eligibility:r.eligibility==="no_duty"?"no_duty":"unknown",registration:r.registration==="not_registered"?"unknown":r.registration,attendance:r.attendance==="confirmed_absent"?"unknown":r.attendance}:r)});setPaste("");if(championship)setReview(true);setMessage("Imported "+updates.length+" players into draft. Review before saving.");
   };
   const confirmRoster=(checked:boolean)=>{
     if(!draft)return;
@@ -148,7 +154,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   };
   const save=async()=>{
     if(!draft)return;
-    const rows=visibleRows.map(r=>({...r,registration:definition.registration&&draft.roster_complete&&draft.registration_complete&&r.eligibility==="confirmed"&&r.registration==="unknown"?"not_registered" as const:r.registration,attendance:r.attendance}));
+    const rows=championship?championshipRows(visibleRows,!!draft.roster_complete&&!!draft.registration_complete):visibleRows.map(r=>({...r,registration:definition.registration&&draft.roster_complete&&draft.registration_complete&&r.eligibility==="confirmed"&&r.registration==="unknown"?"not_registered" as const:r.registration,attendance:r.attendance}));
     const v=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:!!draft.roster_complete,registration_complete:!!draft.registration_complete,attendance_complete:!!draft.attendance_complete,results_complete:!!draft.results_complete,rows});
     apply(v,draft.id);setMessage("Draft saved.");
   };
@@ -184,11 +190,11 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     }
     if(!seen.size)throw new Error("No reviewed players to import.");
     if(overwrites&&!window.confirm("Replace existing results or registration for "+overwrites+" players?"))throw new Error("Import cancelled; existing results unchanged.");
-    const nextRows=[...rows.values()].map(r=>added?{...r,eligibility:r.eligibility==="no_duty"?"no_duty" as const:"unknown" as const,registration:r.registration==="not_registered"?"unknown" as const:r.registration,attendance:r.attendance==="confirmed_absent"?"unknown" as const:r.attendance}:r);
+    const nextRows=[...rows.values()].map(r=>added||championship?{...r,eligibility:r.eligibility==="no_duty"?"no_duty" as const:"unknown" as const,registration:r.registration==="not_registered"?"unknown" as const:r.registration,attendance:r.attendance==="confirmed_absent"?"unknown" as const:r.attendance}:r);
     setBusy(true);setError("");setMessage("");
     try{
-      const result=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:added?false:draft.roster_complete,registration_complete:draft.registration_complete,attendance_complete:draft.attendance_complete,results_complete:draft.results_complete,rows:nextRows});
-      apply(result,draft.id);setConfirmPublish(false);setMessage("Imported "+seen.size+" players and saved draft. Review before publishing.");
+      const result=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:added||championship?false:draft.roster_complete,registration_complete:championship?false:draft.registration_complete,attendance_complete:draft.attendance_complete,results_complete:draft.results_complete,rows:nextRows});
+      apply(result,draft.id);setConfirmPublish(false);if(championship)setReview(true);setMessage("Imported "+seen.size+" players and saved draft. Review before publishing.");
     }finally{setBusy(false)}
   };
   const available=(record.event_type==="bear_trap"?Array.from({length:30},(_,i)=>"trap_"+(i+1)):definition.keys).filter(k=>!editor?.sessions.some(s=>s.session_key===k));
@@ -209,7 +215,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
       {!single&&editor.sessions.map(s=><button key={s.id} className="button button--quiet" disabled={busy||dirty} aria-pressed={selected===s.id} onClick={()=>{setSelected(s.id);setDraft(s);setConfirmPublish(false);setReview(false);setPaste("")}}>{title(s.session_key)}{record.event_type==="bear_trap"&&" · "+(hosts.find(a=>a.id===s.host_alliance_id)?.tag??"")}</button>)}
       {editable&&available.length>0&&<><label>{single?"Results":"Trap / Legion"}<select value={available.includes(sessionKey)?sessionKey:available[0]} onChange={e=>setSessionKey(e.target.value)}>{available.map(k=><option key={k} value={k}>{title(k)}</option>)}</select></label>{record.event_type==="bear_trap"&&<label>Host alliance<select value={host} onChange={e=>setHost(e.target.value)}>{hosts.map(a=><option key={a.id} value={a.id}>{a.tag} · {a.name}</option>)}</select></label>}<label>Start UTC<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label><button className="button button--secondary" disabled={busy||dirty||!time||(record.event_type==="bear_trap"&&!hosts.some(a=>a.id===host))} onClick={()=>void run(async()=>{const k=available.includes(sessionKey)?sessionKey:available[0];const v=await api.createEventSession(groupId,record.id,k,time+":00Z",record.event_type==="bear_trap"?host:undefined);apply(v,v.sessions.find(s=>s.session_key===k)?.id)})}>{single?"Initialize results":"Add "+title(available.includes(sessionKey)?sessionKey:available[0])}</button></>}
     </div>
-    {draft&&<>{editable&&!single&&<button className="button button--quiet" disabled={busy||dirty} onClick={()=>{if(window.confirm("Delete this "+title(draft.session_key)+" and all its results?"))void run(async()=>{await api.manageEvent(groupId,record.id,{action:"delete_session",confirmed:true,session_id:draft.id});apply(await api.eventEditor(groupId,record.id))})}}>Delete {title(draft.session_key)}</button>}<p className="manual-help">{draft.started_at.slice(0,16).replace("T"," ")} UTC · {visibleRows.length} players{!loaded&&editable?" · Loading roster…":""}</p>
+    {draft&&<>{championship&&<div className="manual-review"><h3>Registration summary</h3><p role="status">{champSummary.registered} registered · {champSummary.notRegistered} not registered · {champSummary.unknown} unknown · {champSummary.excused} excused / no duty</p><p>{draft.roster_complete&&draft.registration_complete?"Complete registration list and event roster confirmed.":"Partial registration list — unlisted players remain unknown."}</p>{editable&&<><div className="manual-controls"><label>Registration list<select aria-label="Registration list completeness" value={draft.registration_complete&&draft.roster_complete?"complete":"partial"} disabled={busy||!loaded} onChange={e=>{if(e.target.value==="complete"){setReview(true);setMessage("Enter the game registration count and confirm the event roster below.");}else change(draft)}}><option value="partial">Partial / not yet verified</option><option value="complete">Complete registration list</option></select></label><button type="button" className="button button--secondary" disabled={busy||!loaded} onClick={()=>setReview(true)}>Confirm full registration list</button></div>{review&&<div className="manual-review"><p>Use the total registered shown in the game (not the battle capacity). Verify the roster belongs to the event date, not just today. Mark ineligible players in the table below before confirming.</p><div className="manual-controls"><label>Registered in game<input type="number" min={0} max={500} step={1} value={expectedRegistered} disabled={busy} onChange={e=>{setExpectedRegistered(e.target.value);if(draft.registration_complete)change(draft)}}/></label><label>Players in reviewed roster<input type="number" min={1} max={500} step={1} value={expectedRoster} disabled={busy} onChange={e=>{setExpectedRoster(e.target.value);if(draft.registration_complete)change(draft)}}/></label></div><label><input type="checkbox" disabled={busy} checked={rosterAttested} onChange={e=>setRosterAttested(e.target.checked)}/>I verified this is the complete event-date roster and the full registration list, including any roster exceptions.</label><p>Preview if confirmed: {championshipSummary(visibleRows,true).registered} registered · {championshipSummary(visibleRows,true).notRegistered} not registered · {championshipSummary(visibleRows,true).unknown} unknown · {championshipSummary(visibleRows,true).excused} excused / no duty.</p><button type="button" className="button button--primary" disabled={busy||!loaded||!rosterAttested||expectedRegistered.trim()===""||expectedRoster.trim()===""||!/^\\d+$/.test(expectedRegistered)||!/^\\d+$/.test(expectedRoster)||Number(expectedRegistered)!==champSummary.registered||Number(expectedRoster)!==visibleRows.length||!visibleRows.length} onClick={()=>{setDraft({...draft,roster_complete:true,registration_complete:true,rows:championshipRows(visibleRows,true)});setDirty(true);setConfirmPublish(false);setRosterAttested(false);setMessage("Full list confirmed. Save draft before publishing.");}}>Confirm and mark unregistered</button></div>}</>}</div>}{editable&&!single&&<button className="button button--quiet" disabled={busy||dirty} onClick={()=>{if(window.confirm("Delete this "+title(draft.session_key)+" and all its results?"))void run(async()=>{await api.manageEvent(groupId,record.id,{action:"delete_session",confirmed:true,session_id:draft.id});apply(await api.eventEditor(groupId,record.id))})}}>Delete {title(draft.session_key)}</button>}<p className="manual-help">{draft.started_at.slice(0,16).replace("T"," ")} UTC · {visibleRows.length} players{!loaded&&editable?" · Loading roster…":""}</p>
     {editable&&<><div className="manual-controls">
       <label>Find player<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name or ID"/></label>
       <label>Sort<select value={sort} onChange={e=>setSort(e.target.value)}><option value="nickname">Name</option>{definition.metrics.map(([key,label])=><option key={key} value={key}>{label} (highest first)</option>)}</select></label>
@@ -227,15 +233,15 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     </>}
     <div className="table-wrap"><table><thead><tr><th>Player / ID</th>{definition.registration&&<th>Registered</th>}{definition.battle&&<th>Role</th>}{definition.attendance&&(definition.battle||review||!editable)&&<th>Attendance</th>}{definition.metrics.map(([k,l])=><th key={k}>{l}</th>)}{editable&&review&&<th>Roster exception</th>}</tr></thead><tbody>
     {visibleRows.filter(r=>!query.trim()|| (r.nickname+" "+r.fid).toLowerCase().includes(query.toLowerCase())).sort((a,b)=>sort==="nickname"?a.nickname.localeCompare(b.nickname):(b.metrics[sort]??-1)-(a.metrics[sort]??-1)).map(row=><tr key={row.fid}><td>{row.nickname}<small className="table-subline mono">{row.fid}</small></td>
-    {definition.registration&&<td><input type="checkbox" aria-label={row.nickname+" Registered"} checked={row.registration==="registered"} disabled={!editable||busy} onChange={e=>patchVisible(row.fid,regPatch(row,e.target.checked))}/>{row.registration==="unknown"&&!editable?" Unknown":row.registration==="excused"?" Excused":""}</td>}
+    {definition.registration&&<td><input type="checkbox" aria-label={row.nickname+" Registered"} checked={row.registration==="registered"} disabled={!editable||busy} onChange={e=>patchVisible(row.fid,regPatch(row,e.target.checked))}/>{championship?(row.eligibility==="no_duty"||row.registration==="excused"?" Excused / no duty":row.registration==="registered"?" Registered":row.registration==="not_registered"?" Not registered":" Unknown"):row.registration==="unknown"&&!editable?" Unknown":row.registration==="excused"?" Excused":""}</td>}
     {definition.battle&&<td>{selectField(row,"role")}</td>}
     {definition.attendance&&(definition.battle||review||!editable)&&<td>{selectField(row,"attendance")}</td>}
     {definition.metrics.map(([key,label])=><td key={key}><input type="number" min={0} max={Number.MAX_SAFE_INTEGER} step={1} aria-label={row.nickname+" "+label} disabled={!editable||busy} value={row.metrics[key]??""} onChange={e=>{const next=metricPatch(row,key,e.target.value);if(definition.attendance&&Number(e.target.value)>0)next.attendance="confirmed_present";patchVisible(row.fid,next)}}/></td>)}
-    {editable&&review&&<td><label><input type="checkbox" checked={row.eligibility==="no_duty"} onChange={e=>patchVisible(row.fid,{eligibility:e.target.checked?"no_duty":draft.roster_complete?"confirmed":"unknown",registration:row.registration==="not_registered"?"unknown":row.registration,attendance:row.attendance==="confirmed_absent"?"unknown":row.attendance})}/>Not eligible</label></td>}
+    {editable&&review&&<td><label><input type="checkbox" checked={row.eligibility==="no_duty"} disabled={busy} onChange={e=>patchVisible(row.fid,{eligibility:e.target.checked?"no_duty":draft.roster_complete?"confirmed":"unknown",registration:championship&&e.target.checked&&row.registration==="registered"?"excused":row.registration==="not_registered"?"unknown":row.registration,registered_by:championship&&e.target.checked?null:row.registered_by,attendance:row.attendance==="confirmed_absent"?"unknown":row.attendance})}/>Not eligible</label></td>}
     </tr>)}
     </tbody></table></div>
     {editable&&<><div className="manual-controls"><button className="button button--primary" disabled={busy||!loaded||(!dirty&&draft.rows.length===0&&visibleRows.length===0)} onClick={()=>void run(save)}>Save draft</button><button className="button button--secondary" disabled={busy||!loaded} onClick={()=>setReview(v=>!v)}>Review completeness</button>{dirty&&<span>Unsaved changes</span>}</div>
-    {review&&<div className="manual-review"><h3>Review before publishing</h3><p>Leave unchecked if the information is partial. Missing entries remain unknown.</p>
+    {review&&!championship&&<div className="manual-review"><h3>Review before publishing</h3><p>Leave unchecked if the information is partial. Missing entries remain unknown.</p>
     <label><input type="checkbox" checked={!!draft.roster_complete} onChange={e=>confirmRoster(e.target.checked)}/>This is the full alliance roster at the time of the event (mark exceptions in the table).</label>
     {definition.registration&&<label><input type="checkbox" checked={!!draft.registration_complete} onChange={e=>complete("registration_complete",e.target.checked)}/>I entered the complete registration list.</label>}
     {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>I verified who actually attended, not just who scored points. Mark confirmed absences explicitly in the table.</label>}

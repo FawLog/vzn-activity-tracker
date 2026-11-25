@@ -63,7 +63,7 @@ def test_provider_client_sends_identifying_user_agent(settings: Settings, monkey
     assert getattr(request, "get_header")("Authorization") == "Bearer test-key"
 
 
-def payload(*, cached_at: str = "2026-01-01T00:00:00Z", members: list[dict[str, Any]] | None = None, kid: str = "1001", count: int | None = None) -> dict[str, Any]:
+def payload(*, cached_at: object = "2026-01-01T00:00:00Z", members: list[dict[str, Any]] | None = None, kid: str = "1001", count: int | None = None) -> dict[str, Any]:
     roster = members if members is not None else [{"fid": "101", "uid": "u101", "nick_name": "North", "power": 100, "kills": 12, "furnace_level": 30, "alliance_rank": 4, "kid": kid, "avatar_url": "https://example.test/a.png"}]
     return {"ok": True, "fresh": True, "cached_at": cached_at, "refresh": "done", "alliance": {"aid": "a1", "name": "VZN", "abbr": "VZN", "kid": kid, "power": 1000, "count": len(roster) if count is None else count, "leader_name": "North", "leader_chief_id": "101", "flag_url": "https://example.test/f.png", "power_rank": 2}, "members": roster}
 
@@ -193,6 +193,51 @@ def test_older_source_snapshot_does_not_replace_current_profile_or_membership(se
     with sqlite3.connect(configured.database_path) as database:
         assert database.execute("SELECT primary_alliance_id FROM player_group_profiles WHERE player_fid = '101'").fetchone()[0] == primary_id
         assert database.execute("SELECT COUNT(*) FROM player_alliance_transitions").fetchone()[0] == 0
+
+
+def test_numeric_cached_at_from_alliance_response_preserves_source_chronology(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, primary_id = setup_alliance(configured)
+    academy = groups.create_additional_alliance(configured.database_path, group_id, AllianceCreate(name="Academy", tag="ACA", state_id="1001"), sync_enabled=True)
+    assert academy is not None
+    connect_alliance(configured, group_id, str(academy["id"]))
+    newer = payload(
+        cached_at=1_700_000_100.25,
+        members=[{"fid": "101", "nick_name": "Current North", "power": 200, "kills": 20, "furnace_level": 31, "alliance_rank": 3, "kid": "1001"}],
+    )
+    newer["age_seconds"] = 184
+    older = payload(
+        cached_at=1_700_000_000.5,
+        members=[{"fid": "101", "nick_name": "Old North", "power": 100, "kills": 10, "furnace_level": 30, "alliance_rank": 4, "kid": "1001"}],
+    )
+    older["age_seconds"] = 284
+
+    assert synced(configured, group_id, primary_id, newer).status == "success"
+    assert synced(configured, group_id, str(academy["id"]), older).status == "success"
+
+    player = records.get_player(configured.database_path, group_id, "101")
+    assert player is not None and player["nickname"] == "Current North" and player["power"] == 200
+    with sqlite3.connect(configured.database_path) as database:
+        assert database.execute("SELECT source_observed_at FROM alliance_stat_snapshots WHERE alliance_id = ?", (primary_id,)).fetchone()[0] == "2023-11-14T22:15:00.250000Z"
+        assert database.execute("SELECT COUNT(*) FROM player_alliance_transitions").fetchone()[0] == 0
+
+
+def test_missing_cached_at_does_not_write_unknown_freshness_over_existing_data(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, alliance_id = setup_alliance(configured)
+    assert synced(configured, group_id, alliance_id, payload(members=[{"fid": "101", "nick_name": "Current North", "power": 200, "kills": 20, "furnace_level": 31, "alliance_rank": 3, "kid": "1001"}])).status == "success"
+    unknown_time = payload(members=[{"fid": "101", "nick_name": "Unknown North", "power": 100, "kills": 10, "furnace_level": 30, "alliance_rank": 4, "kid": "1001"}])
+    del unknown_time["cached_at"]
+    unknown_time["age_seconds"] = 184
+
+    result = synced(configured, group_id, alliance_id, unknown_time)
+
+    assert result.status == "failed" and result.message == "WhiteoutStats response is missing cached_at"
+    player = records.get_player(configured.database_path, group_id, "101")
+    assert player is not None and player["nickname"] == "Current North" and player["power"] == 200
+    with sqlite3.connect(configured.database_path) as database:
+        assert database.execute("SELECT COUNT(*) FROM alliance_stat_snapshots").fetchone()[0] == 1
+        assert database.execute("SELECT COUNT(*) FROM player_membership_observations").fetchone()[0] == 1
 
 
 def test_temporary_then_permanent_transfer_after_48_hours(settings: Settings) -> None:

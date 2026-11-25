@@ -599,3 +599,5 @@ td strong { color: var(--text); font-weight: 650; }
 .ocr-preview-heading { display:flex; flex-wrap:wrap; align-items:center; gap:8px; overflow-wrap:anywhere; font-size:12px; }
 .ocr-preview-heading strong { flex:1; min-width:0; }
 .ocr-preview-item summary { cursor:pointer; font-size:12px; color:var(--text-soft); }
+
+.ocr-import select.ocr-match-warning { background-color: rgba(234, 179, 8, .15); border-color: #a78b42; }

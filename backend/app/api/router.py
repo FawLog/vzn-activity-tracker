@@ -246,7 +246,12 @@ def create_api_router(settings: Settings) -> APIRouter:
         if alliance is None:
             raise _not_found("Alliance not found in selected group")
         try:
-            aid = confirmed_aid(payload.preview_token, state_id=str(alliance["state_id"]), tag=str(alliance["tag"]))
+            aid = confirmed_aid(
+                payload.preview_token,
+                state_id=str(alliance["state_id"]),
+                tag=str(alliance["tag"]),
+                expected_aid=str(alliance["whiteoutstats_alliance_id"]) if alliance["whiteoutstats_alliance_id"] else None,
+            )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         connected = groups.connect_whiteoutstats_alliance(

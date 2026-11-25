@@ -29,6 +29,40 @@ class FakeFetcher:
         return self.responses.pop(0)
 
 
+def test_provider_client_sends_identifying_user_agent(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        status = 200
+        headers: dict[str, str] = {}
+
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"ok": true, "alliance": {"aid": "a1"}}'
+
+    def fake_urlopen(request: object, *, timeout: int) -> Response:
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(whiteoutstats, "urlopen", fake_urlopen)
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+
+    response = whiteoutstats.WhiteoutStatsClient(configured).fetch_info("4284", "VZN")
+
+    request = captured["request"]
+    assert response.status_code == 200
+    assert captured["timeout"] == configured.whiteoutstats_timeout_seconds
+    assert getattr(request, "full_url") == "https://api.whiteoutstats.com/v1/alliances/4284/VZN?include=info"
+    assert getattr(request, "get_header")("User-agent") == whiteoutstats.WHITEOUTSTATS_USER_AGENT
+    assert getattr(request, "get_header")("Authorization") == "Bearer test-key"
+
+
 def payload(*, cached_at: str = "2026-01-01T00:00:00Z", members: list[dict[str, Any]] | None = None, kid: str = "1001", count: int | None = None) -> dict[str, Any]:
     roster = members if members is not None else [{"fid": "101", "uid": "u101", "nick_name": "North", "power": 100, "kills": 12, "furnace_level": 30, "alliance_rank": 4, "kid": kid, "avatar_url": "https://example.test/a.png"}]
     return {"ok": True, "fresh": True, "cached_at": cached_at, "refresh": "done", "alliance": {"aid": "a1", "name": "VZN", "abbr": "VZN", "kid": kid, "power": 1000, "count": len(roster) if count is None else count, "leader_name": "North", "leader_chief_id": "101", "flag_url": "https://example.test/f.png", "power_rank": 2}, "members": roster}
@@ -374,4 +408,3 @@ def test_sync_routes_are_admin_and_csrf_protected(settings: Settings, monkeypatc
         )
         assert reassignment.status_code == 409
         assert groups.get_alliance(configured.database_path, group.json()["id"], alliance_id)["whiteoutstats_alliance_id"] == "a1"
-

@@ -25,6 +25,9 @@ from ..config import Settings
 from ..database import connection, transaction
 
 
+WHITEOUTSTATS_USER_AGENT = "VZN-Activity-Tracker/1.0 (+https://vzn.fawlog.cc)"
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -77,7 +80,14 @@ class WhiteoutStatsClient:
         if not self._settings.whiteoutstats_api_key:
             raise RuntimeError("WhiteoutStats synchronization is not configured")
         url = f"{self._settings.whiteoutstats_base_url}/alliances/{quote(state_id, safe='')}/{quote(tag, safe='')}?{urlencode(query)}"
-        request = Request(url, headers={"Authorization": f"Bearer {self._settings.whiteoutstats_api_key}", "Accept": "application/json"})
+        request = Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {self._settings.whiteoutstats_api_key}",
+                "Accept": "application/json",
+                "User-Agent": WHITEOUTSTATS_USER_AGENT,
+            },
+        )
         try:
             with urlopen(request, timeout=self._settings.whiteoutstats_timeout_seconds) as response:  # noqa: S310 - fixed provider base URL
                 raw = response.read().decode("utf-8")

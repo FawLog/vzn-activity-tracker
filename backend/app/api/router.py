@@ -21,7 +21,8 @@ from ..schemas import (
     WhiteoutStatsPreviewRequest,
 )
 from ..security import verify_password
-from ..services import records
+from ..services import records, event_editor
+from ..services.event_editor import SessionCreate, SessionSave
 from ..services import groups
 from ..services import whiteoutstats
 from ..services.sessions import (
@@ -442,6 +443,44 @@ def create_api_router(settings: Settings) -> APIRouter:
         if event is None:
             raise _not_found("Event not found in selected group")
         return event
+
+    @router.get("/groups/{group_id}/events/{event_id}/editor")
+    async def get_event_editor(request: Request, group_id: str, event_id: str):
+        require_admin(request, settings)
+        try:
+            return event_editor.read(settings.database_path, group_id, event_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
+    @router.post("/groups/{group_id}/events/{event_id}/sessions", status_code=201)
+    async def create_event_session(request: Request, group_id: str, event_id: str, payload: SessionCreate):
+        require_csrf(request, require_admin(request, settings))
+        try:
+            return event_editor.create_session(settings.database_path, group_id, event_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.put("/groups/{group_id}/events/{event_id}/sessions/{session_id}")
+    async def save_event_session(request: Request, group_id: str, event_id: str, session_id: str, payload: SessionSave):
+        require_csrf(request, require_admin(request, settings))
+        try:
+            return event_editor.save(settings.database_path, group_id, event_id, session_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/groups/{group_id}/events/{event_id}/publish")
+    async def publish_event(request: Request, group_id: str, event_id: str):
+        require_csrf(request, require_admin(request, settings))
+        try:
+            return event_editor.publish(settings.database_path, group_id, event_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/groups/{group_id}/rankings")
     async def get_rankings(request: Request, group_id: str) -> dict[str, object]:

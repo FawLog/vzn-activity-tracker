@@ -19,7 +19,7 @@ def test_manual_sessions_and_evidence(authenticated_client, settings):
     rows = [{"fid":fid,"nickname":fid,"eligibility":"confirmed","registration":"registered","role":role,"attendance":"confirmed_absent"} for fid,role in (("main","main"),("reserve","substitute"))]
     with pytest.raises(ValueError, match="complete attendance"):
         event_editor.save(path,gid,eid,sid,SessionSave(revision=0,rows=rows))
-    result = event_editor.save(path,gid,eid,sid,SessionSave(revision=0,attendance_complete=True,rows=rows))
+    result = event_editor.save(path,gid,eid,sid,SessionSave(revision=0,attendance_complete=True,roster_complete=True,rows=rows))
     assert [r["attendance"] for r in result["sessions"][0]["rows"]] == ["confirmed_absent","confirmed_absent"]
     with pytest.raises(ValueError, match="reload"):
         event_editor.save(path,gid,eid,sid,SessionSave(revision=0,rows=[]))

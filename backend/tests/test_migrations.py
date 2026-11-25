@@ -58,7 +58,9 @@ def test_applied_migration_file_cannot_disappear(
     (migration_directory / "0006_whiteoutstats_roster_completeness.sql").unlink()
     (migration_directory / "0007_normalize_whiteoutstats_avatar_hosts.sql").unlink()
 
-    with pytest.raises(RuntimeError, match="files are missing: 0006, 0007"):
+    (migration_directory / "0008_event_sessions.sql").unlink()
+
+    with pytest.raises(RuntimeError, match="files are missing: 0006, 0007, 0008"):
         database.migrate(database_path)
 
 

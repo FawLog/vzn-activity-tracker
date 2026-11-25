@@ -86,6 +86,7 @@ def read(path, group_id, event_id):
             rows = []
             for row in db.execute("SELECT * FROM event_session_roster WHERE session_id=? ORDER BY nickname COLLATE NOCASE, player_fid", (session["id"],)):
                 entry = dict(row)
+                entry.pop("session_id")
                 entry["fid"] = entry.pop("player_fid")
                 entry["metrics"] = {m["metric_key"]: m["raw_value"] for m in db.execute("SELECT metric_key, raw_value FROM event_session_metrics WHERE session_id=? AND player_fid=?", (session["id"], entry["fid"]))}
                 rows.append(entry)
@@ -121,11 +122,13 @@ def save(path, group_id, event_id, session_id, payload):
             seen.add(row.fid)
             if not db.execute("SELECT 1 FROM player_group_profiles WHERE player_fid=? AND group_id=?", (row.fid, group_id)).fetchone():
                 raise ValueError("Player does not belong to selected group")
+            if row.registered_by and row.registration != "registered":
+                raise ValueError("Registration author requires registration")
             if row.role and (event["event_type"] not in {"foundry", "canyon"} or row.registration != "registered"):
                 raise ValueError("Role requires battle registration")
-            if row.attendance == "confirmed_absent" and (row.eligibility != "confirmed" or not payload.attendance_complete):
-                raise ValueError("Absence requires confirmed eligibility and complete attendance evidence")
-            if row.registration == "not_registered" and (row.eligibility != "confirmed" or not payload.registration_complete):
+            if row.attendance == "confirmed_absent" and (row.eligibility != "confirmed" or not payload.attendance_complete or not payload.roster_complete):
+                raise ValueError("Absence requires confirmed eligibility and complete attendance evidence and roster")
+            if row.registration == "not_registered" and (row.eligibility != "confirmed" or not payload.registration_complete or not payload.roster_complete):
                 raise ValueError("Non-registration requires confirmed eligibility and complete registration evidence")
             if any(k not in METRICS[event["event_type"]] or v < 0 or v > 9007199254740991 or (k == "rank" and v == 0) for k,v in row.metrics.items()):
                 raise ValueError("Invalid metric")

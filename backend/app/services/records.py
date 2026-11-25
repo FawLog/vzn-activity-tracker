@@ -73,7 +73,7 @@ def overview(database_path: str, group_id: str, alliance_id: str | None = None) 
         recent = database.execute(
             """
             SELECT e.id, e.alliance_id, a.name AS alliance_name, e.event_type, e.occurred_on,
-                   e.status, e.created_at, e.updated_at, COUNT(ep.id) AS participant_count
+                   e.status, e.created_at, e.updated_at, (SELECT COUNT(*) FROM (SELECT player_fid FROM event_participants WHERE event_id=e.id UNION SELECT r.player_fid FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id WHERE s.event_id=e.id)) AS participant_count
             FROM events e
             JOIN alliances a ON a.id = e.alliance_id
             LEFT JOIN event_participants ep ON ep.event_id = e.id
@@ -305,7 +305,7 @@ def list_events(
         rows = database.execute(
             f"""
             SELECT e.id, e.alliance_id, e.event_type, e.occurred_on, e.status,
-                   e.created_at, e.updated_at, COUNT(ep.id) AS participant_count
+                   e.created_at, e.updated_at, (SELECT COUNT(*) FROM (SELECT player_fid FROM event_participants WHERE event_id=e.id UNION SELECT r.player_fid FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id WHERE s.event_id=e.id)) AS participant_count
             FROM events e LEFT JOIN event_participants ep ON ep.event_id = e.id
             WHERE e.alliance_id = ?
             GROUP BY e.id
@@ -354,6 +354,8 @@ def get_event(database_path: str, group_id: str, event_id: str) -> dict[str, Any
 
 
 def create_event(database_path: str, group_id: str, alliance_id: str, payload: EventCreate) -> dict[str, Any]:
+    if payload.event_type.value in {"alliance_mobilization", "alliance_championship", "foundry", "canyon", "bear_trap"} and payload.status.value != "draft":
+        raise ValueError("Create a draft and publish reviewed results through the editor")
     event_id = uuid.uuid4().hex
     with transaction(database_path) as database:
         group_status = _group_status(database, group_id)

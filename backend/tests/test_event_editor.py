@@ -43,13 +43,13 @@ def test_session_http_save_contract(authenticated_client):
     assert "event_id" not in session
     assert session["roster_complete"] is False
     sid = session["id"]
-    payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at")}
+    payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at","host_alliance_id")}
     payload["rows"] = [{"fid":"bear-player","nickname":"Bear Player","metrics":{"damage":4500000000}}]
     saved = client.put(root+"/sessions/"+sid, json=payload)
     assert saved.status_code == 200, saved.text
     session = saved.json()["sessions"][0]
     assert session["rows"][0]["metrics"]["damage"] == 4500000000
-    payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at")}
+    payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at","host_alliance_id")}
     assert client.put(root+"/sessions/"+sid, json=payload).status_code == 200
     assert client.get(root+"/editor").json()["sessions"][0]["revision"] == 2
 

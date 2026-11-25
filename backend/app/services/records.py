@@ -307,12 +307,12 @@ def list_events(
             SELECT e.id, e.alliance_id, e.event_type, e.occurred_on, e.status,
                    e.created_at, e.updated_at, (SELECT COUNT(*) FROM (SELECT player_fid FROM event_participants WHERE event_id=e.id UNION SELECT r.player_fid FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id WHERE s.event_id=e.id)) AS participant_count
             FROM events e LEFT JOIN event_participants ep ON ep.event_id = e.id
-            WHERE e.alliance_id = ?
+            WHERE (e.alliance_id = ? OR (e.event_type=\'bear_trap\' AND e.alliance_id IN (SELECT a.id FROM alliances a WHERE a.group_id=(SELECT group_id FROM alliances WHERE id=?))))
             GROUP BY e.id
             ORDER BY {sort_column} {sort_direction}, e.created_at DESC
             LIMIT 100
             """,
-            (alliance_id,),
+            (alliance_id,alliance_id),
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -371,6 +371,13 @@ def create_event(database_path: str, group_id: str, alliance_id: str, payload: E
             raise LookupError("Alliance not found in selected group")
         if alliance["status"] != "active":
             raise ValueError("Cannot create an event in an archived alliance")
+        if payload.event_type.value == "bear_trap":
+            primary = database.execute("SELECT id FROM alliances WHERE group_id=? AND alliance_type=\'primary\' AND status=\'active\'", (group_id,)).fetchone()
+            if primary is None:
+                raise ValueError("An active primary alliance is required for a group Bear cycle")
+            alliance_id = primary["id"]
+            if database.execute("SELECT 1 FROM events e JOIN alliances a ON a.id=e.alliance_id WHERE a.group_id=? AND e.event_type=\'bear_trap\' AND e.occurred_on=?", (group_id,payload.occurred_on.isoformat())).fetchone():
+                raise ValueError("A Bear cycle already exists on this date; add traps to it instead")
         database.execute(
             """
             INSERT INTO events(id, alliance_id, event_type, occurred_on, status)
@@ -379,8 +386,8 @@ def create_event(database_path: str, group_id: str, alliance_id: str, payload: E
             (event_id, alliance_id, payload.event_type.value, payload.occurred_on.isoformat(), payload.status.value),
         )
         if payload.event_type.value in {"alliance_mobilization", "alliance_championship"}:
-            database.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at) VALUES (?,?,?,?)",
-                             (uuid.uuid4().hex,event_id,"main",payload.occurred_on.isoformat()+"T00:00:00+00:00"))
+            database.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
+                             (uuid.uuid4().hex,event_id,"main",payload.occurred_on.isoformat()+"T00:00:00+00:00",alliance_id))
         database.execute(
             """
             INSERT INTO audit_log(action, entity_type, entity_id, actor)

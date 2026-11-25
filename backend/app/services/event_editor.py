@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 import uuid
+import re
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 from ..database import connection, transaction
@@ -26,6 +27,7 @@ class SessionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_key: str
     started_at: datetime
+    host_alliance_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("started_at")
     @classmethod
@@ -82,7 +84,7 @@ def read(path, group_id, event_id):
         event = _event(db, group_id, event_id)
         sessions = []
         for session in db.execute("SELECT * FROM event_sessions WHERE event_id=? ORDER BY session_key", (event_id,)):
-            item = {key: session[key] for key in ('id', 'session_key', 'started_at', 'revision')}
+            item = {key: session[key] for key in ('id', 'session_key', 'started_at', 'revision', 'host_alliance_id')}
             item.update({key: bool(session[key]) for key in ('roster_complete', 'registration_complete', 'attendance_complete', 'results_complete')})
             rows = []
             for row in db.execute("SELECT * FROM event_session_roster WHERE session_id=? ORDER BY nickname COLLATE NOCASE, player_fid", (session["id"],)):
@@ -93,17 +95,24 @@ def read(path, group_id, event_id):
                 rows.append(entry)
             item["rows"] = rows
             sessions.append(item)
-        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "sessions": sessions}
+        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions}
 
 
 def create_session(path, group_id, event_id, payload):
     with transaction(path) as db:
         event = _event(db, group_id, event_id, editable=True)
-        if payload.session_key not in SESSION_KEYS[event["event_type"]]:
+        if not (re.fullmatch(r"trap_(?:[1-9]|[12][0-9]|30)", payload.session_key) if event["event_type"] == "bear_trap" else payload.session_key in SESSION_KEYS[event["event_type"]]):
             raise ValueError("Invalid session for event type")
         if db.execute("SELECT 1 FROM event_sessions WHERE event_id=? AND session_key=?", (event_id, payload.session_key)).fetchone():
             raise ValueError("Session already exists")
-        db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at) VALUES (?,?,?,?)", (uuid.uuid4().hex, event_id, payload.session_key, payload.started_at.isoformat()))
+        host = payload.host_alliance_id or event["alliance_id"]
+        if event["event_type"] != "bear_trap" and host != event["alliance_id"]:
+            raise ValueError("Only Bear Hunt supports cross-alliance sessions")
+        if not db.execute("SELECT 1 FROM alliances WHERE id=? AND group_id=? AND status='active'", (host,group_id)).fetchone():
+            raise ValueError("Host alliance must be active in the selected group")
+        db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)", (uuid.uuid4().hex, event_id, payload.session_key, payload.started_at.isoformat(),host))
+        if event["event_type"] == "bear_trap":
+            db.execute("UPDATE events SET bear_cycle_complete=0 WHERE id=?", (event_id,))
         _audit(db, event_id, "session_created")
     return read(path, group_id, event_id)
 
@@ -149,13 +158,13 @@ def save(path, group_id, event_id, session_id, payload):
     return read(path, group_id, event_id)
 
 
-def publish(path, group_id, event_id):
+def publish(path, group_id, event_id, bear_cycle_complete=False):
     with transaction(path) as db:
-        _event(db, group_id, event_id, editable=True)
+        event = _event(db, group_id, event_id, editable=True)
         sessions = db.execute("SELECT id FROM event_sessions WHERE event_id=?", (event_id,)).fetchall()
         if not sessions or any(not db.execute("SELECT 1 FROM event_session_roster WHERE session_id=?", (s["id"],)).fetchone() for s in sessions):
             raise ValueError("Every session needs reviewed player records before publication")
-        db.execute("UPDATE events SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
+        db.execute("UPDATE events SET status='published',bear_cycle_complete=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (int(bear_cycle_complete and event["event_type"] == "bear_trap"), event_id))
         _audit(db, event_id, "published")
     return read(path, group_id, event_id)
 
@@ -181,7 +190,7 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
         if action == "reopen":
             if event["status"] != "published":
                 raise ValueError("Only published events can be reopened")
-            db.execute("UPDATE events SET status='draft',updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
+            db.execute("UPDATE events SET status='draft',bear_cycle_complete=0,updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
             db.execute("UPDATE event_sessions SET revision=revision+1 WHERE event_id=?", (event_id,))
         elif action == "date":
             if event["status"] != "draft" or occurred_on is None:

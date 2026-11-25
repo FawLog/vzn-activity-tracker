@@ -29,6 +29,28 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   }
   await page.screenshot({ path: testInfo.outputPath("group-overview.png"), fullPage: true });
 
+  await page.goto("/players");
+  await expect(page.getByRole("heading", { name: "Players" })).toBeVisible();
+  const rosterPlayer = page.getByRole("button", { name: "Roster Scout" });
+  if (await rosterPlayer.count() === 0) {
+    await page.goto("/admin?mode=players");
+    await page.getByLabel("FID").fill("e2e-roster-fid");
+    await page.getByLabel("Nickname").fill("Roster Scout");
+    await page.getByRole("button", { name: "Add player" }).click();
+    await expect(page.getByText("Player record created in the selected group.")).toBeVisible();
+    await page.goto("/players");
+  }
+  await expect(rosterPlayer).toBeVisible();
+  await expect(page.getByText("Unconfirmed", { exact: true })).toBeVisible();
+  const affiliation = page.getByLabel("Roster affiliation");
+  await affiliation.selectOption("unconfirmed");
+  await expect(rosterPlayer).toBeVisible();
+  await affiliation.selectOption({ label: "Primary alliance · WZN" });
+  await expect(page.getByText("No players in this view")).toBeVisible();
+  await affiliation.selectOption("all");
+  await expect(rosterPlayer).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("player-affiliation-filter.png"), fullPage: true });
+
   await page.goto("/groups");
   await expect(page.getByRole("heading", { name: "Alliance groups" })).toBeVisible();
   await expect(page.getByRole("button", { name: "WZN WZN" })).toBeVisible();

@@ -51,9 +51,9 @@ export const api = {
   createAlliance: (groupId: string, payload: AlliancePayload) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances`, { method: "POST", body: JSON.stringify(payload) }),
   updateAlliance: (groupId: string, allianceId: string, payload: Partial<AllianceUpdatePayload>) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
   overview: (groupId: string) => request<OverviewData>(`/api/v1/groups/${encodeURIComponent(groupId)}/overview`),
-  players: (groupId: string, query = "", sort = "nickname", direction = "asc", allianceId?: string) =>
+  players: (groupId: string, query = "", sort = "nickname", direction = "asc", filter: PlayerAffiliationFilter = { mode: "all" }) =>
     request<{ items: Player[] }>(
-      `/api/v1/groups/${encodeURIComponent(groupId)}/players?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}&direction=${direction}${allianceId ? `&alliance_id=${encodeURIComponent(allianceId)}` : ""}`,
+      `/api/v1/groups/${encodeURIComponent(groupId)}/players?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}&direction=${direction}&affiliation=${filter.mode}${filter.mode === "alliance" ? `&alliance_id=${encodeURIComponent(filter.allianceId)}` : ""}`,
     ),
   player: (groupId: string, fid: string) => request<Player>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}`),
   createPlayer: (groupId: string, payload: { fid: string; nickname: string }) =>
@@ -71,6 +71,10 @@ export const api = {
 };
 
 export interface AlliancePayload { name: string; tag: string; state_id: string; }
+export type PlayerAffiliationFilter =
+  | { mode: "all" }
+  | { mode: "unconfirmed" }
+  | { mode: "alliance"; allianceId: string };
 export interface AllianceUpdatePayload extends AlliancePayload { status: "active" | "archived"; confirm_archive: boolean; }
 export interface GroupPayload {
   name: string;

@@ -77,6 +77,7 @@ def list_players(
     group_id: str,
     *,
     alliance_id: str | None = None,
+    affiliation: str | None = None,
     query: str = "",
     sort: str = "nickname",
     direction: str = "asc",
@@ -84,16 +85,34 @@ def list_players(
     sort_column = PLAYER_SORT_COLUMNS.get(sort, "pno.nickname")
     sort_direction = "DESC" if direction == "desc" else "ASC"
     pattern = f"%{query.strip()}%"
+    filter_mode = affiliation or ("alliance" if alliance_id else "all")
+    if filter_mode not in {"all", "alliance", "unconfirmed"}:
+        raise ValueError("Unknown player affiliation filter")
     with connection(database_path) as database:
         if not _group_exists(database, group_id):
             return None
-        if alliance_id and not _alliance_in_group(database, group_id, alliance_id):
+        if filter_mode == "alliance" and not alliance_id:
+            raise ValueError("Alliance filter requires an alliance")
+        if filter_mode == "alliance" and not _alliance_in_group(database, group_id, alliance_id):
             raise ValueError("Alliance does not belong to this group")
+        affiliation_condition = {
+            "all": "1 = 1",
+            "alliance": "pgp.primary_alliance_id = ?",
+            "unconfirmed": "pgp.primary_alliance_id IS NULL",
+        }[filter_mode]
+        parameters: list[str | None] = [group_id]
+        if filter_mode == "alliance":
+            parameters.append(alliance_id)
+        parameters.extend([query.strip(), pattern, pattern])
         rows = database.execute(
             f"""
             SELECT pgp.player_fid AS fid, pno.nickname, pgp.created_at, pgp.updated_at,
-                   pgp.status AS group_status, pgp.primary_alliance_id
+                   pgp.status AS group_status, pgp.primary_alliance_id,
+                   primary_alliance.name AS primary_alliance_name
             FROM player_group_profiles pgp
+            LEFT JOIN alliances primary_alliance
+              ON primary_alliance.id = pgp.primary_alliance_id
+             AND primary_alliance.group_id = pgp.group_id
             LEFT JOIN player_nickname_observations pno ON pno.id = (
                 SELECT observation.id
                 FROM player_nickname_observations observation
@@ -103,12 +122,12 @@ def list_players(
                 LIMIT 1
             )
             WHERE pgp.group_id = ?
-              AND (? IS NULL OR pgp.primary_alliance_id = ?)
+              AND {affiliation_condition}
               AND (? = '' OR pgp.player_fid LIKE ? OR pno.nickname LIKE ?)
             ORDER BY {sort_column} {sort_direction}, pgp.player_fid ASC
             LIMIT 100
             """,
-            (group_id, alliance_id, alliance_id, query.strip(), pattern, pattern),
+            parameters,
         ).fetchall()
     return [dict(row) for row in rows]
 

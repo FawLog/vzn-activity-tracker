@@ -178,6 +178,7 @@ def create_api_router(settings: Settings) -> APIRouter:
         request: Request,
         group_id: str,
         alliance_id: str | None = Query(default=None, max_length=64),
+        affiliation: str | None = Query(default=None, pattern="^(all|alliance|unconfirmed)$"),
         q: str = Query(default="", max_length=80),
         sort: str = Query(default="nickname"),
         direction: str = Query(default="asc", pattern="^(asc|desc)$"),
@@ -185,7 +186,13 @@ def create_api_router(settings: Settings) -> APIRouter:
         require_admin(request, settings)
         try:
             players = records.list_players(
-                settings.database_path, group_id, alliance_id=alliance_id, query=q, sort=sort, direction=direction
+                settings.database_path,
+                group_id,
+                alliance_id=alliance_id,
+                affiliation=affiliation,
+                query=q,
+                sort=sort,
+                direction=direction,
             )
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error

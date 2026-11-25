@@ -178,8 +178,34 @@ def test_player_history_is_scoped_and_legacy_history_is_not_disclosed(
             "updated_at": second_profile.json()["updated_at"],
             "group_status": "unconfirmed",
             "primary_alliance_id": None,
+            "primary_alliance_name": None,
         }
     ]
+
+
+def test_manual_players_are_listed_as_unconfirmed_in_their_own_group(authenticated_client: TestClient) -> None:
+    first = create_onboarded_group(authenticated_client)
+    first_id = str(first["id"])
+    second = authenticated_client.post("/api/v1/groups", json=group_payload("ABC")).json()
+    second_id = str(second["id"])
+    assert authenticated_client.post(
+        f"/api/v1/groups/{first_id}/players", json={"fid": "manual-fid", "nickname": "WZN Manual"}
+    ).status_code == 201
+    first_all = authenticated_client.get(f"/api/v1/groups/{first_id}/players?affiliation=all").json()["items"]
+    first_unconfirmed = authenticated_client.get(f"/api/v1/groups/{first_id}/players?affiliation=unconfirmed").json()["items"]
+    primary_id = authenticated_client.get(f"/api/v1/groups/{first_id}/alliances").json()["items"][0]["id"]
+    first_primary = authenticated_client.get(
+        f"/api/v1/groups/{first_id}/players?affiliation=alliance&alliance_id={primary_id}"
+    ).json()["items"]
+    assert [(player["fid"], player["nickname"]) for player in first_all] == [("manual-fid", "WZN Manual")]
+    assert [(player["fid"], player["nickname"]) for player in first_unconfirmed] == [("manual-fid", "WZN Manual")]
+    assert first_primary == []
+    assert authenticated_client.post(
+        f"/api/v1/groups/{second_id}/players", json={"fid": "manual-fid", "nickname": "ABC Manual"}
+    ).status_code == 201
+    second_unconfirmed = authenticated_client.get(f"/api/v1/groups/{second_id}/players?affiliation=unconfirmed").json()["items"]
+    assert [(player["fid"], player["nickname"]) for player in second_unconfirmed] == [("manual-fid", "ABC Manual")]
+    assert authenticated_client.get(f"/api/v1/groups/{first_id}/players/manual-fid").json()["nickname"] == "WZN Manual"
 
 
 def test_sqlite_rejects_cross_group_alliance_references(

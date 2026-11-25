@@ -40,7 +40,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 h1, h2, h3, p { margin-top: 0; }
 
 .app-shell { min-height: 100vh; display: grid; grid-template-columns: var(--sidebar-width) minmax(0, 1fr); }
-.workspace { min-width: 0; min-height: 100vh; display: grid; grid-template-rows: 58px 1fr 36px; }
+.workspace { min-width: 0; min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 58px 1fr 36px; }
 
 .sidebar {
   position: sticky;
@@ -547,3 +547,48 @@ td strong { color: var(--text); font-weight: 650; }
 .manual-editor td input[type=checkbox] { width:auto; min-width:16px; accent-color:var(--cyan-bright); }
 .manual-review p { font-size:12px; color:var(--text-soft); }
 .manual-review label { align-items:flex-start; }
+
+/* Player profile: scoped surfaces, balanced stats, responsive history. */
+.player-profile .profile-header { align-items:center; gap:16px; }
+.player-profile .profile-avatar { width:64px; height:64px; flex:0 0 64px; border-radius:10px; }
+.player-profile .profile-identity { min-width:0; overflow-wrap:anywhere; }
+.player-profile .profile-layout { align-items:start; }
+.player-profile .profile-empty-stack { min-width:0; align-content:start; }
+.player-profile .section-header { min-height:0; padding:16px 18px; align-items:center; }
+.player-profile .section-header h2 { margin:0; }
+.player-profile .section-header p { margin-top:5px; }
+.player-profile .section-header > svg { flex-shrink:0; color:var(--muted); }
+.profile-stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.profile-stats > div { min-width:0; display:grid; align-content:start; gap:5px; padding:14px 18px; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.profile-stats > div:nth-child(odd) { border-right:1px solid var(--line); }
+.profile-stats > div:nth-last-child(-n+2) { border-bottom:0; }
+.profile-stats small { color:var(--muted); font-size:12px; }
+.profile-stats strong { font-size:16px; font-variant-numeric:tabular-nums; }
+.player-profile .history-list > div { min-width:0; align-items:flex-start; padding:14px 18px; gap:8px 18px; }
+.player-profile .history-list strong,.player-profile .history-list span { min-width:0; overflow-wrap:anywhere; line-height:1.5; }
+.player-profile .history-list span { text-align:right; }
+@media(max-width:620px) {
+  .player-profile .profile-header { padding:16px; gap:12px; }
+  .player-profile .profile-avatar { width:56px; height:56px; flex-basis:56px; }
+  .player-profile .profile-header h1 { font-size:24px; }
+  .player-profile .section-header { padding:14px 16px; }
+  .profile-stats > div { padding:12px 16px; }
+  .player-profile .history-list > div { flex-direction:column; padding:12px 16px; gap:4px; }
+  .player-profile .history-list span { text-align:left; font-size:11px; }
+}
+
+/* Keep desktop workspace within its allocated grid track; shrink search before controls. */
+@media (min-width:821px) {
+  .topbar { min-width:0; gap:12px; }
+  .topbar__workspace-tools { flex:1 1 0; min-width:0; }
+  .topbar__workspace-tools .global-search { flex:1 1 0; width:auto; min-width:0; }
+  .topbar__workspace-tools .context-select { min-width:0; flex:0 1 auto; }
+  .topbar__workspace-tools .context-select select { min-width:0; }
+  .topbar__actions { flex:0 0 auto; }
+  .global-search > svg,.global-search > kbd { flex-shrink:0; }
+}
+.player-profile { min-width:0; max-width:100%; }
+.player-profile .profile-empty-stack { grid-template-columns:minmax(0,1fr); }
+.player-profile .principle-rail { min-width:0; }
+.player-profile .principle-rail > span { min-width:0; overflow-wrap:anywhere; }
+.player-profile .principle-rail > svg { flex-shrink:0; }

@@ -145,7 +145,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByRole("button",{name:"Load group players"}).click();
   await page.getByRole("button",{name:"Add Roster Scout",exact:true}).click();
   await page.getByLabel("Roster Scout Personal points").fill("4500000000");
-  await page.getByRole("button",{name:"Save draft"}).click();
+  const [saveResponse] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === "PUT" && /\/events\/[^/]+\/sessions\/[^/]+$/.test(response.url())),
+    page.getByRole("button",{name:"Save draft"}).click(),
+  ]);
+  expect(saveResponse.status(), await saveResponse.text()).toBe(200);
   await expect(page.getByText("Draft saved.",{exact:true})).toBeVisible();
   await page.reload();
   await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");

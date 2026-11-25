@@ -82,7 +82,8 @@ def read(path, group_id, event_id):
         event = _event(db, group_id, event_id)
         sessions = []
         for session in db.execute("SELECT * FROM event_sessions WHERE event_id=? ORDER BY session_key", (event_id,)):
-            item = dict(session)
+            item = {key: session[key] for key in ('id', 'session_key', 'started_at', 'revision')}
+            item.update({key: bool(session[key]) for key in ('roster_complete', 'registration_complete', 'attendance_complete', 'results_complete')})
             rows = []
             for row in db.execute("SELECT * FROM event_session_roster WHERE session_id=? ORDER BY nickname COLLATE NOCASE, player_fid", (session["id"],)):
                 entry = dict(row)

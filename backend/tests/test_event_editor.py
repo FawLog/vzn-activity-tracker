@@ -28,3 +28,27 @@ def test_manual_sessions_and_evidence(authenticated_client, settings):
     assert event_editor.publish(path,gid,eid)["status"] == "published"
     with pytest.raises(ValueError,match="draft"):
         event_editor.save(path,gid,eid,sid,SessionSave(revision=1,rows=[]))
+
+
+def test_session_http_save_contract(authenticated_client):
+    client = authenticated_client
+    gid = create_onboarded_group(client)["id"]
+    aid = client.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    assert client.post(f"/api/v1/groups/{gid}/players", json={"fid":"bear-player","nickname":"Bear Player"}).status_code == 201
+    eid = client.post(f"/api/v1/groups/{gid}/alliances/{aid}/events", json={"event_type":"bear_trap","occurred_on":"2026-11-15"}).json()["id"]
+    root = f"/api/v1/groups/{gid}/events/{eid}"
+    response = client.post(root+"/sessions", json={"session_key":"trap_1","started_at":"2026-11-15T17:00:00Z"})
+    assert response.status_code == 201, response.text
+    session = response.json()["sessions"][0]
+    assert "event_id" not in session
+    assert session["roster_complete"] is False
+    sid = session["id"]
+    payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at")}
+    payload["rows"] = [{"fid":"bear-player","nickname":"Bear Player","metrics":{"damage":4500000000}}]
+    saved = client.put(root+"/sessions/"+sid, json=payload)
+    assert saved.status_code == 200, saved.text
+    session = saved.json()["sessions"][0]
+    assert session["rows"][0]["metrics"]["damage"] == 4500000000
+    payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at")}
+    assert client.put(root+"/sessions/"+sid, json=payload).status_code == 200
+    assert client.get(root+"/editor").json()["sessions"][0]["revision"] == 2

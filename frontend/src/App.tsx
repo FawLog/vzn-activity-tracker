@@ -3,6 +3,7 @@ import { AppShell } from "./components/AppShell";
 import { LoadingState } from "./components/Feedback";
 import { useAuth } from "./lib/auth";
 import { navigate, useLocation } from "./lib/router";
+import { ActivityPage } from "./pages/ActivityPage";
 import { AdminPage } from "./pages/AdminPage";
 import { CreateGroupPage } from "./pages/CreateGroupPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
@@ -46,6 +47,7 @@ export default function App() {
   else if (path.startsWith("/players/")) content = <Protected><PlayerProfilePage fid={decodeURIComponent(path.slice(9))} /></Protected>;
   else if (path === "/events") content = <Protected><EventsPage /></Protected>;
   else if (path.startsWith("/events/")) content = <Protected><EventDetailPage id={decodeURIComponent(path.slice(8))} /></Protected>;
+  else if (path === "/activity") content = <Protected><ActivityPage /></Protected>;
   else if (path === "/rankings") content = <Protected><RankingsPage /></Protected>;
   else if (path === "/admin") content = <Protected><AdminPage /></Protected>;
   else content = <NotFoundPage />;

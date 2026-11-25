@@ -534,6 +534,16 @@ def create_api_router(settings: Settings) -> APIRouter:
         except vision_ocr.OcrError as error:
             raise HTTPException(status_code=error.status, detail=str(error)) from None
 
+    @router.get("/groups/{group_id}/analytics")
+    async def group_analytics(request: Request, group_id: str, start: date, end: date, alliance_id: str | None = None):
+        require_admin(request, settings)
+        try:
+            return await asyncio.to_thread(analytics.report, settings.database_path, group_id, alliance_id, start, end)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @router.get("/groups/{group_id}/alliances/{alliance_id}/analytics")
     async def alliance_analytics(request: Request, group_id: str, alliance_id: str, start: date, end: date):
         require_admin(request, settings)

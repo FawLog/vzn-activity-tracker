@@ -1,4 +1,4 @@
-"""Versioned HTTP API."""
+"""Versioned HTTP API and group-scoped authorization boundaries."""
 
 from __future__ import annotations
 
@@ -6,9 +6,18 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from ..config import Settings
 from ..database import database_is_ready
-from ..schemas import EventCreate, LoginRequest, PlayerCreate
+from ..schemas import (
+    AllianceCreate,
+    AllianceUpdate,
+    EventCreate,
+    GroupCreate,
+    GroupUpdate,
+    LoginRequest,
+    PlayerCreate,
+)
 from ..security import verify_password
 from ..services import records
+from ..services import groups
 from ..services.sessions import (
     clear_login_failures,
     create_session,
@@ -20,6 +29,10 @@ from ..services.sessions import (
     require_csrf,
     rotate_authenticated_session,
 )
+
+
+def _not_found(message: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=message)
 
 
 def create_api_router(settings: Settings) -> APIRouter:
@@ -42,10 +55,7 @@ def create_api_router(settings: Settings) -> APIRouter:
     @router.get("/auth/session")
     async def session_status(request: Request) -> dict[str, object]:
         session = load_session(request, settings)
-        return {
-            "authenticated": bool(session and session.is_authenticated),
-            "csrf_token": session.csrf_token if session else None,
-        }
+        return {"authenticated": bool(session and session.is_authenticated), "csrf_token": session.csrf_token if session else None}
 
     @router.post("/auth/login")
     async def login(request: Request, response: Response, payload: LoginRequest) -> dict[str, object]:
@@ -70,64 +80,188 @@ def create_api_router(settings: Settings) -> APIRouter:
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
 
-    @router.get("/overview")
-    async def get_overview(request: Request) -> dict[str, object]:
+    @router.get("/onboarding")
+    async def get_onboarding(request: Request) -> dict[str, object]:
         require_admin(request, settings)
-        return records.overview(settings.database_path)
+        return groups.onboarding_status(settings.database_path)
 
-    @router.get("/players")
+    @router.post("/onboarding/groups", status_code=status.HTTP_201_CREATED)
+    async def post_onboarding_group(request: Request, payload: GroupCreate) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return groups.create_group(settings.database_path, payload, onboarding=True)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/groups")
+    async def get_groups(request: Request) -> dict[str, object]:
+        require_admin(request, settings)
+        return {"items": groups.list_groups(settings.database_path)}
+
+    @router.post("/groups", status_code=status.HTTP_201_CREATED)
+    async def post_group(request: Request, payload: GroupCreate) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return groups.create_group(settings.database_path, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/groups/{group_id}")
+    async def get_group(request: Request, group_id: str) -> dict[str, object]:
+        require_admin(request, settings)
+        group = groups.get_group(settings.database_path, group_id)
+        if group is None:
+            raise _not_found("Group not found")
+        return group
+
+    @router.patch("/groups/{group_id}")
+    async def patch_group(request: Request, group_id: str, payload: GroupUpdate) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            group = groups.update_group(settings.database_path, group_id, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if group is None:
+            raise _not_found("Group not found")
+        return group
+
+    @router.get("/groups/{group_id}/alliances")
+    async def get_alliances(request: Request, group_id: str) -> dict[str, object]:
+        require_admin(request, settings)
+        alliances = groups.list_alliances(settings.database_path, group_id)
+        if alliances is None:
+            raise _not_found("Group not found")
+        return {"items": alliances}
+
+    @router.post("/groups/{group_id}/alliances", status_code=status.HTTP_201_CREATED)
+    async def post_alliance(request: Request, group_id: str, payload: AllianceCreate) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            alliance = groups.create_additional_alliance(settings.database_path, group_id, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if alliance is None:
+            raise _not_found("Group not found")
+        return alliance
+
+    @router.patch("/groups/{group_id}/alliances/{alliance_id}")
+    async def patch_alliance(
+        request: Request,
+        group_id: str,
+        alliance_id: str,
+        payload: AllianceUpdate,
+    ) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            alliance = groups.update_alliance(settings.database_path, group_id, alliance_id, payload)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if alliance is None:
+            raise _not_found("Alliance not found in selected group")
+        return alliance
+
+    @router.get("/groups/{group_id}/overview")
+    async def get_overview(request: Request, group_id: str) -> dict[str, object]:
+        require_admin(request, settings)
+        overview = records.overview(settings.database_path, group_id)
+        if overview is None:
+            raise _not_found("Group not found")
+        return overview
+
+    @router.get("/groups/{group_id}/players")
     async def get_players(
         request: Request,
+        group_id: str,
+        alliance_id: str | None = Query(default=None, max_length=64),
+        affiliation: str | None = Query(default=None, pattern="^(all|alliance|unconfirmed)$"),
         q: str = Query(default="", max_length=80),
         sort: str = Query(default="nickname"),
         direction: str = Query(default="asc", pattern="^(asc|desc)$"),
     ) -> dict[str, object]:
         require_admin(request, settings)
-        return {"items": records.list_players(settings.database_path, query=q, sort=sort, direction=direction)}
+        try:
+            players = records.list_players(
+                settings.database_path,
+                group_id,
+                alliance_id=alliance_id,
+                affiliation=affiliation,
+                query=q,
+                sort=sort,
+                direction=direction,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if players is None:
+            raise _not_found("Group not found")
+        return {"items": players}
 
-    @router.post("/players", status_code=status.HTTP_201_CREATED)
-    async def post_player(request: Request, payload: PlayerCreate) -> dict[str, object]:
+    @router.post("/groups/{group_id}/players", status_code=status.HTTP_201_CREATED)
+    async def post_player(request: Request, group_id: str, payload: PlayerCreate) -> dict[str, object]:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
-            return records.create_player(settings.database_path, payload)
+            return records.create_player(settings.database_path, group_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
-    @router.get("/players/{fid}")
-    async def get_player(request: Request, fid: str) -> dict[str, object]:
+    @router.get("/groups/{group_id}/players/{fid}")
+    async def get_player(request: Request, group_id: str, fid: str) -> dict[str, object]:
         require_admin(request, settings)
-        player = records.get_player(settings.database_path, fid)
+        player = records.get_player(settings.database_path, group_id, fid)
         if player is None:
-            raise HTTPException(status_code=404, detail="Player not found")
+            raise _not_found("Player not found in selected group")
         return player
 
-    @router.get("/events")
+    @router.get("/groups/{group_id}/alliances/{alliance_id}/events")
     async def get_events(
         request: Request,
+        group_id: str,
+        alliance_id: str,
         sort: str = Query(default="occurred_on"),
         direction: str = Query(default="desc", pattern="^(asc|desc)$"),
     ) -> dict[str, object]:
         require_admin(request, settings)
-        return {"items": records.list_events(settings.database_path, sort=sort, direction=direction)}
+        events = records.list_events(settings.database_path, group_id, alliance_id, sort=sort, direction=direction)
+        if events is None:
+            raise _not_found("Alliance not found in selected group")
+        return {"items": events}
 
-    @router.post("/events", status_code=status.HTTP_201_CREATED)
-    async def post_event(request: Request, payload: EventCreate) -> dict[str, object]:
+    @router.post("/groups/{group_id}/alliances/{alliance_id}/events", status_code=status.HTTP_201_CREATED)
+    async def post_event(
+        request: Request,
+        group_id: str,
+        alliance_id: str,
+        payload: EventCreate,
+    ) -> dict[str, object]:
         session = require_admin(request, settings)
         require_csrf(request, session)
-        return records.create_event(settings.database_path, payload)
+        try:
+            return records.create_event(settings.database_path, group_id, alliance_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
-    @router.get("/events/{event_id}")
-    async def get_event(request: Request, event_id: str) -> dict[str, object]:
+    @router.get("/groups/{group_id}/events/{event_id}")
+    async def get_event(request: Request, group_id: str, event_id: str) -> dict[str, object]:
         require_admin(request, settings)
-        event = records.get_event(settings.database_path, event_id)
+        event = records.get_event(settings.database_path, group_id, event_id)
         if event is None:
-            raise HTTPException(status_code=404, detail="Event not found")
+            raise _not_found("Event not found in selected group")
         return event
 
-    @router.get("/rankings")
-    async def get_rankings(request: Request) -> dict[str, object]:
+    @router.get("/groups/{group_id}/rankings")
+    async def get_rankings(request: Request, group_id: str) -> dict[str, object]:
         require_admin(request, settings)
+        if groups.get_group(settings.database_path, group_id) is None:
+            raise _not_found("Group not found")
         return {
             "categories": [
                 {"id": "contribution", "status": "unavailable"},

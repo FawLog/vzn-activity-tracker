@@ -1,6 +1,7 @@
 import { ArrowLeft, History, ShieldCheck, TrendingUp } from "lucide-react";
 import { useEffect, useState } from "react";
-import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
+import { PlayerActivity } from "../components/PlayerActivity";
+import { ErrorState, LoadingState } from "../components/Feedback";
 import { PlayerAvatar } from "../components/PlayerAvatar";
 import { api } from "../lib/api";
 import { useGroupContext } from "../lib/group-context";
@@ -62,11 +63,12 @@ export function PlayerProfilePage({ fid }: { fid: string }) {
             <div className="section-header"><div><h2>Membership observations</h2></div></div>
             <div className="history-list">{player.membership_history.map(entry => <div key={entry.alliance_tag + "-" + entry.observed_at}><strong>{entry.alliance_name}</strong><span>{formatTimestamp(entry.observed_at)}</span></div>)}</div>
           </section>}
-          <EmptyState compact title="No event history" description="Verified event records for this player will appear here." />
+          
           <div className="principle-rail"><TrendingUp /><span><strong>Separate dimensions</strong><small>Contribution, attendance, and reliability are never collapsed into one score.</small></span></div>
           <div className="principle-rail"><ShieldCheck /><span><strong>Unknown stays unknown</strong><small>Missing from a partial leaderboard never becomes zero.</small></span></div>
         </div>
       </div>
+      <PlayerActivity key={selectedGroup.id+":"+fid} groupId={selectedGroup.id} fid={fid} />
     </div>
   );
 }

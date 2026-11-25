@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Activity,
   CalendarDays,
   LogIn,
   LogOut,
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/players", label: "Players", icon: Users },
   { href: "/events", label: "Events", icon: CalendarDays },
+  { href: "/activity", label: "Activity", icon: Activity },
   { href: "/rankings", label: "Rankings", icon: BarChart3 },
   { href: "/groups", label: "Groups", icon: Layers },
   { href: "/admin", label: "Admin", icon: Settings },

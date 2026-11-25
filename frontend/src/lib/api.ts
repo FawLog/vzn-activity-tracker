@@ -1,3 +1,4 @@
+import type { AnalyticsReport } from "./analytics";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
@@ -37,6 +38,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
 
 export const api = {
+  analytics: (groupId:string,allianceId:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/analytics?`+new URLSearchParams({start,end,...(allianceId?{alliance_id:allianceId}:{})})),
+  playerActivity: (groupId:string,fid:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}/activity?`+new URLSearchParams({start,end})),
   ocrStatus: () => request<{configured:boolean;provider:string;max_image_bytes:number}>("/api/v1/ocr/status"),
   ocrPreview: (groupId:string,eventId:string,sessionId:string,image:Blob) => request<OcrPreview>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(eventId)}/sessions/${encodeURIComponent(sessionId)}/ocr/preview`, {method:"POST",headers:{"Content-Type":image.type},body:image}),
   csrf: () => request<{ csrf_token: string; authenticated: boolean }>("/api/v1/auth/csrf"),

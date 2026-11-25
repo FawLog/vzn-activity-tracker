@@ -121,6 +121,10 @@ class AllianceUpdate(BaseModel):
         return normalized
 
 
+class AllianceSyncSettingsUpdate(BaseModel):
+    sync_enabled: bool
+
+
 class EventCreate(BaseModel):
     event_type: EventType
     occurred_on: date

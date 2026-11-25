@@ -4,7 +4,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PageHeader, SectionHeader } from "../components/Page";
 import { api } from "../lib/api";
 import { useGroupContext } from "../lib/group-context";
-import { eventLabel, formatDate } from "../lib/format";
+import { eventLabel, formatDate, formatTimestamp } from "../lib/format";
 import { navigate } from "../lib/router";
 import type { OverviewData } from "../lib/types";
 
@@ -15,8 +15,8 @@ export function OverviewPage() {
 
   useEffect(() => {
     if (!selectedGroup) return;
-    api.overview(selectedGroup.id).then(setData).catch((requestError) => setError(requestError.message));
-  }, [selectedGroup]);
+    api.overview(selectedGroup.id, selectedAlliance?.id).then(setData).catch((requestError) => setError(requestError.message));
+  }, [selectedGroup, selectedAlliance]);
 
   if (!selectedGroup) return <div className="page"><PageHeader title="Operational overview" description="Set up an alliance group before viewing scoped records." /><EmptyState title="No active group" description="Create the first primary alliance to start the evidence record." action={<button className="button button--primary" onClick={() => navigate("/onboarding")}>Start setup</button>} /></div>;
 
@@ -27,6 +27,18 @@ export function OverviewPage() {
         description="A verified record of alliance participation, contribution, and reliability."
       />
       <div className="evidence-line"><CheckCircle2 size={18} /><strong>Evidence status:</strong><span>{data?.published_events ? `${data.published_events} published event${data.published_events === 1 ? "" : "s"}` : "No published data yet"}</span></div>
+
+      {data?.alliance ? <section className="data-panel alliance-intelligence"><SectionHeader title="Alliance intelligence" description="External WhiteoutStats observations are separate from local administrative settings." />
+        <div className="stats-grid">
+          {data.alliance.flag_url ? <img className="alliance-flag" src={data.alliance.flag_url} alt="" /> : null}
+          <div><small>Alliance</small><strong>{data.alliance.external_name ?? selectedAlliance?.name} {data.alliance.external_tag ? `· ${data.alliance.external_tag}` : ""}</strong></div>
+          <div><small>State</small><strong>{data.alliance.state_id ?? "—"}</strong></div>
+          <div><small>Total power</small><strong>{data.alliance.power?.toLocaleString() ?? "—"}{data.alliance.power_change !== null ? <em> {data.alliance.power_change >= 0 ? "+" : ""}{data.alliance.power_change.toLocaleString()}</em> : null}</strong></div>
+          <div><small>Members</small><strong>{data.alliance.member_count ?? "—"}</strong></div>
+          <div><small>State power rank</small><strong>{data.alliance.power_rank ? `#${data.alliance.power_rank}` : "—"}</strong></div>
+          <div><small>Leader</small><strong>{data.alliance.leader_name ?? "—"}</strong></div>
+          <div><small>Observed</small><strong>{formatTimestamp(data.alliance.source_observed_at)}</strong></div>
+        </div></section> : selectedAlliance ? <EmptyState compact title="No alliance statistics yet" description="Run WhiteoutStats Sync once configured; no external values are inferred." /> : null}
 
       <section className="foundation-banner">
         <div className="foundation-banner__content">

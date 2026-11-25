@@ -29,6 +29,10 @@ class Settings:
     session_ttl_seconds: int
     login_window_seconds: int
     login_max_attempts: int
+    whiteoutstats_api_key: str | None = None
+    whiteoutstats_base_url: str = "https://api.whiteoutstats.com/v1"
+    whiteoutstats_timeout_seconds: int = 75
+    whiteoutstats_sync_interval_minutes: int = 720
 
     @property
     def is_production(self) -> bool:
@@ -62,6 +66,14 @@ def load_settings() -> Settings:
     if min(session_ttl_seconds, login_window_seconds, login_max_attempts) < 1:
         raise RuntimeError("Session and login security limits must be positive")
 
+    whiteoutstats_timeout_seconds = int(os.getenv("WHITEOUTSTATS_TIMEOUT_SECONDS", "75"))
+    whiteoutstats_sync_interval_minutes = int(os.getenv("WHITEOUTSTATS_SYNC_INTERVAL_MINUTES", "720"))
+    if not 5 <= whiteoutstats_timeout_seconds <= 90:
+        raise RuntimeError("WHITEOUTSTATS_TIMEOUT_SECONDS must be between 5 and 90")
+    if whiteoutstats_sync_interval_minutes != 720:
+        raise RuntimeError("WHITEOUTSTATS_SYNC_INTERVAL_MINUTES is fixed at 720")
+    whiteoutstats_api_key = os.getenv("WHITEOUTSTATS_API_KEY", "").strip() or None
+
     return Settings(
         app_name=os.getenv("APP_NAME", "VZN Activity Tracker"),
         environment=environment,
@@ -74,4 +86,8 @@ def load_settings() -> Settings:
         session_ttl_seconds=session_ttl_seconds,
         login_window_seconds=login_window_seconds,
         login_max_attempts=login_max_attempts,
+        whiteoutstats_api_key=whiteoutstats_api_key,
+        whiteoutstats_base_url=os.getenv("WHITEOUTSTATS_BASE_URL", "https://api.whiteoutstats.com/v1").rstrip("/"),
+        whiteoutstats_timeout_seconds=whiteoutstats_timeout_seconds,
+        whiteoutstats_sync_interval_minutes=whiteoutstats_sync_interval_minutes,
     )

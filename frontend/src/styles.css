@@ -475,3 +475,42 @@ td strong { color: var(--text); font-weight: 650; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+/* Provider observations remain compact, table-first operational data. */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  background: var(--line, #d5dce0);
+  margin-top: 14px;
+}
+
+.stats-grid > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  background: var(--surface, #fff);
+}
+
+.stats-grid small,
+.sync-panel small {
+  color: var(--muted, #63717a);
+}
+
+.alliance-flag {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  align-self: center;
+  margin: 10px;
+}
+
+.sync-panel {
+  display: grid;
+  gap: 7px;
+  padding: 14px 0;
+  border-top: 1px solid var(--line, #d5dce0);
+}
+
+@media (max-width: 600px) {
+  .sync-panel .button { width: 100%; }
+}

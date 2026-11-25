@@ -13,6 +13,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .api.router import create_api_router
 from .config import Settings, load_settings
 from .database import migrate
+from .services.whiteoutstats import WhiteoutStatsScheduler
 
 logger = logging.getLogger("vzn.api")
 
@@ -23,7 +24,12 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         migrate(settings.database_path)
-        yield
+        scheduler = WhiteoutStatsScheduler(settings.database_path, settings)
+        await scheduler.start()
+        try:
+            yield
+        finally:
+            await scheduler.stop()
 
     app = FastAPI(
         title=settings.app_name,

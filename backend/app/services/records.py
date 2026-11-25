@@ -13,6 +13,7 @@ PLAYER_SORT_COLUMNS = {
     "fid": "pgp.player_fid",
     "nickname": "pno.nickname",
     "created_at": "pgp.created_at",
+    "power": "wsp.power",
 }
 EVENT_SORT_COLUMNS = {"occurred_on": "e.occurred_on", "event_type": "e.event_type", "status": "e.status"}
 
@@ -34,10 +35,18 @@ def _alliance_in_group(database: sqlite3.Connection, group_id: str, alliance_id:
     )
 
 
-def overview(database_path: str, group_id: str) -> dict[str, Any] | None:
+def overview(database_path: str, group_id: str, alliance_id: str | None = None) -> dict[str, Any] | None:
     with connection(database_path) as database:
         if not _group_exists(database, group_id):
             return None
+        selected_alliance = alliance_id
+        if selected_alliance and not _alliance_in_group(database, group_id, selected_alliance):
+            raise ValueError("Alliance does not belong to this group")
+        if selected_alliance is None:
+            primary = database.execute(
+                "SELECT id FROM alliances WHERE group_id = ? AND alliance_type = 'primary'", (group_id,)
+            ).fetchone()
+            selected_alliance = str(primary["id"]) if primary else None
         players = database.execute(
             "SELECT COUNT(*) FROM player_group_profiles WHERE group_id = ?", (group_id,)
         ).fetchone()[0]
@@ -69,7 +78,26 @@ def overview(database_path: str, group_id: str) -> dict[str, Any] | None:
             """,
             (group_id,),
         ).fetchall()
-    return {"players": players, "events": events, "published_events": published, "recent_events": [dict(row) for row in recent]}
+        snapshot = None
+        previous_snapshot = None
+        if selected_alliance:
+            snapshot = database.execute(
+                """SELECT external_name, external_tag, state_id, power, member_count, power_rank, leader_name,
+                          flag_url, source_observed_at, received_at
+                   FROM alliance_stat_snapshots WHERE alliance_id = ?
+                   ORDER BY source_observed_at DESC, id DESC LIMIT 1""",
+                (selected_alliance,),
+            ).fetchone()
+            previous_snapshot = database.execute(
+                """SELECT power FROM alliance_stat_snapshots WHERE alliance_id = ?
+                   ORDER BY source_observed_at DESC, id DESC LIMIT 1 OFFSET 1""",
+                (selected_alliance,),
+            ).fetchone()
+    alliance_stats = dict(snapshot) if snapshot else None
+    if alliance_stats:
+        alliance_stats["power_change"] = (alliance_stats["power"] - previous_snapshot["power"]
+                                          if previous_snapshot and alliance_stats["power"] is not None and previous_snapshot["power"] is not None else None)
+    return {"players": players, "events": events, "published_events": published, "recent_events": [dict(row) for row in recent], "alliance": alliance_stats}
 
 
 def list_players(
@@ -81,7 +109,9 @@ def list_players(
     query: str = "",
     sort: str = "nickname",
     direction: str = "asc",
-) -> list[dict[str, Any]] | None:
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any] | None:
     sort_column = PLAYER_SORT_COLUMNS.get(sort, "pno.nickname")
     sort_direction = "DESC" if direction == "desc" else "ASC"
     pattern = f"%{query.strip()}%"
@@ -104,11 +134,23 @@ def list_players(
         if filter_mode == "alliance":
             parameters.append(alliance_id)
         parameters.extend([query.strip(), pattern, pattern])
+        total = database.execute(
+            f"""SELECT COUNT(*) FROM player_group_profiles pgp
+            LEFT JOIN player_nickname_observations pno ON pno.id = (
+                SELECT observation.id FROM player_nickname_observations observation
+                WHERE observation.player_fid = pgp.player_fid AND observation.group_id = pgp.group_id
+                ORDER BY observation.observed_at DESC, observation.id DESC LIMIT 1)
+            WHERE pgp.group_id = ? AND {affiliation_condition}
+              AND (? = '' OR pgp.player_fid LIKE ? OR pno.nickname LIKE ?)""",
+            parameters,
+        ).fetchone()[0]
         rows = database.execute(
             f"""
             SELECT pgp.player_fid AS fid, pno.nickname, pgp.created_at, pgp.updated_at,
                    pgp.status AS group_status, pgp.primary_alliance_id,
-                   primary_alliance.name AS primary_alliance_name
+                   primary_alliance.name AS primary_alliance_name,
+                   wsp.power, wsp.kills, wsp.furnace_level, wsp.alliance_rank, wsp.state_id,
+                   source_alliance.name AS observed_alliance_name
             FROM player_group_profiles pgp
             LEFT JOIN alliances primary_alliance
               ON primary_alliance.id = pgp.primary_alliance_id
@@ -121,15 +163,26 @@ def list_players(
                 ORDER BY observation.observed_at DESC, observation.id DESC
                 LIMIT 1
             )
+            LEFT JOIN player_whiteoutstats_profiles wsp
+              ON wsp.player_fid = pgp.player_fid AND wsp.group_id = pgp.group_id
+            LEFT JOIN alliances source_alliance ON source_alliance.id = wsp.source_alliance_id
             WHERE pgp.group_id = ?
               AND {affiliation_condition}
               AND (? = '' OR pgp.player_fid LIKE ? OR pno.nickname LIKE ?)
             ORDER BY {sort_column} {sort_direction}, pgp.player_fid ASC
-            LIMIT 100
+            LIMIT ? OFFSET ?
             """,
-            parameters,
+            (*parameters, limit, offset),
         ).fetchall()
-    return [dict(row) for row in rows]
+    items: list[dict[str, Any]] = []
+    external_fields = {"power", "kills", "furnace_level", "alliance_rank", "state_id", "observed_alliance_name"}
+    for row in rows:
+        item = dict(row)
+        for field in external_fields:
+            if item[field] is None:
+                item.pop(field)
+        items.append(item)
+    return {"items": items, "total": int(total), "limit": limit, "offset": offset}
 
 
 def get_player(database_path: str, group_id: str, fid: str) -> dict[str, Any] | None:
@@ -137,7 +190,9 @@ def get_player(database_path: str, group_id: str, fid: str) -> dict[str, Any] | 
         profile = database.execute(
             """
             SELECT pgp.player_fid AS fid, pno.nickname, pgp.created_at, pgp.updated_at, pgp.status AS group_status,
-                   pgp.primary_alliance_id, a.name AS primary_alliance_name
+                   pgp.primary_alliance_id, a.name AS primary_alliance_name,
+                   wsp.uid, wsp.power, wsp.kills, wsp.furnace_level, wsp.alliance_rank, wsp.state_id,
+                   wsp.avatar_url, wsp.observed_at AS stats_observed_at, observed.name AS observed_alliance_name
             FROM player_group_profiles pgp
             LEFT JOIN alliances a ON a.id = pgp.primary_alliance_id AND a.group_id = pgp.group_id
             LEFT JOIN player_nickname_observations pno ON pno.id = (
@@ -148,6 +203,8 @@ def get_player(database_path: str, group_id: str, fid: str) -> dict[str, Any] | 
                 ORDER BY observation.observed_at DESC, observation.id DESC
                 LIMIT 1
             )
+            LEFT JOIN player_whiteoutstats_profiles wsp ON wsp.player_fid = pgp.player_fid AND wsp.group_id = pgp.group_id
+            LEFT JOIN alliances observed ON observed.id = wsp.source_alliance_id
             WHERE pgp.group_id = ? AND pgp.player_fid = ?
             """,
             (group_id, fid),
@@ -163,8 +220,22 @@ def get_player(database_path: str, group_id: str, fid: str) -> dict[str, Any] | 
             """,
             (fid, group_id),
         ).fetchall()
+        statistics = database.execute(
+            """SELECT power, kills, furnace_level, alliance_rank, state_id, source_observed_at, received_at, alliance_id
+               FROM player_game_stat_snapshots WHERE player_fid = ? AND group_id = ?
+               ORDER BY source_observed_at DESC, id DESC LIMIT 90""",
+            (fid, group_id),
+        ).fetchall()
+        memberships = database.execute(
+            """SELECT mo.observed_at, mo.confidence, a.name AS alliance_name, a.tag AS alliance_tag
+               FROM player_membership_observations mo JOIN alliances a ON a.id = mo.alliance_id
+               WHERE mo.player_fid = ? AND mo.group_id = ? ORDER BY mo.observed_at DESC, mo.id DESC LIMIT 90""",
+            (fid, group_id),
+        ).fetchall()
     result = dict(profile)
     result["nickname_history"] = [dict(row) for row in nicknames]
+    result["stat_history"] = [dict(row) for row in statistics]
+    result["membership_history"] = [dict(row) for row in memberships]
     return result
 
 

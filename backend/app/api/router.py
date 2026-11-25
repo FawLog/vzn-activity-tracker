@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
 from ..config import Settings
 from ..database import database_is_ready
 from ..schemas import (
     AllianceCreate,
+    AllianceSyncSettingsUpdate,
     AllianceUpdate,
     EventCreate,
     GroupCreate,
@@ -18,6 +21,7 @@ from ..schemas import (
 from ..security import verify_password
 from ..services import records
 from ..services import groups
+from ..services import whiteoutstats
 from ..services.sessions import (
     clear_login_failures,
     create_session,
@@ -90,9 +94,21 @@ def create_api_router(settings: Settings) -> APIRouter:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
-            return groups.create_group(settings.database_path, payload, onboarding=True)
+            group = groups.create_group(
+                settings.database_path, payload, onboarding=True, sync_enabled=bool(settings.whiteoutstats_api_key)
+            )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        primary = groups.list_alliances(settings.database_path, str(group["id"]))
+        if settings.whiteoutstats_api_key and primary:
+            group["initial_sync"] = (
+                await asyncio.to_thread(
+                    whiteoutstats.sync_alliance, settings.database_path, settings, str(group["id"]), str(primary[0]["id"]), trigger_type="initial"
+                )
+            ).payload()
+        else:
+            group["initial_sync"] = {"status": "not_configured", "message": "Synchronization is not configured"}
+        return group
 
     @router.get("/groups")
     async def get_groups(request: Request) -> dict[str, object]:
@@ -104,7 +120,7 @@ def create_api_router(settings: Settings) -> APIRouter:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
-            return groups.create_group(settings.database_path, payload)
+            return groups.create_group(settings.database_path, payload, sync_enabled=bool(settings.whiteoutstats_api_key))
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -141,11 +157,21 @@ def create_api_router(settings: Settings) -> APIRouter:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
-            alliance = groups.create_additional_alliance(settings.database_path, group_id, payload)
+            alliance = groups.create_additional_alliance(
+                settings.database_path, group_id, payload, sync_enabled=bool(settings.whiteoutstats_api_key)
+            )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         if alliance is None:
             raise _not_found("Group not found")
+        if settings.whiteoutstats_api_key:
+            alliance["initial_sync"] = (
+                await asyncio.to_thread(
+                    whiteoutstats.sync_alliance, settings.database_path, settings, group_id, str(alliance["id"]), trigger_type="initial"
+                )
+            ).payload()
+        else:
+            alliance["initial_sync"] = {"status": "not_configured", "message": "Synchronization is not configured"}
         return alliance
 
     @router.patch("/groups/{group_id}/alliances/{alliance_id}")
@@ -165,10 +191,48 @@ def create_api_router(settings: Settings) -> APIRouter:
             raise _not_found("Alliance not found in selected group")
         return alliance
 
-    @router.get("/groups/{group_id}/overview")
-    async def get_overview(request: Request, group_id: str) -> dict[str, object]:
+    @router.get("/groups/{group_id}/alliances/{alliance_id}/sync")
+    async def get_alliance_sync(request: Request, group_id: str, alliance_id: str) -> dict[str, object]:
         require_admin(request, settings)
-        overview = records.overview(settings.database_path, group_id)
+        result = whiteoutstats.sync_status(
+            settings.database_path, group_id, alliance_id, configured=bool(settings.whiteoutstats_api_key)
+        )
+        if result is None:
+            raise _not_found("Alliance not found in selected group")
+        return result
+
+    @router.patch("/groups/{group_id}/alliances/{alliance_id}/sync")
+    async def patch_alliance_sync(
+        request: Request, group_id: str, alliance_id: str, payload: AllianceSyncSettingsUpdate
+    ) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            result = whiteoutstats.update_sync_settings(
+                settings.database_path, group_id, alliance_id, enabled=payload.sync_enabled, configured=bool(settings.whiteoutstats_api_key)
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if result is None:
+            raise _not_found("Alliance not found in selected group")
+        return result
+
+    @router.post("/groups/{group_id}/alliances/{alliance_id}/sync")
+    async def post_alliance_sync(request: Request, group_id: str, alliance_id: str) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        result = await asyncio.to_thread(
+            whiteoutstats.sync_alliance, settings.database_path, settings, group_id, alliance_id, trigger_type="manual"
+        )
+        return result.payload()
+
+    @router.get("/groups/{group_id}/overview")
+    async def get_overview(request: Request, group_id: str, alliance_id: str | None = Query(default=None, max_length=64)) -> dict[str, object]:
+        require_admin(request, settings)
+        try:
+            overview = records.overview(settings.database_path, group_id, alliance_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
         if overview is None:
             raise _not_found("Group not found")
         return overview
@@ -182,6 +246,8 @@ def create_api_router(settings: Settings) -> APIRouter:
         q: str = Query(default="", max_length=80),
         sort: str = Query(default="nickname"),
         direction: str = Query(default="asc", pattern="^(asc|desc)$"),
+        limit: int = Query(default=100, ge=1, le=250),
+        offset: int = Query(default=0, ge=0),
     ) -> dict[str, object]:
         require_admin(request, settings)
         try:
@@ -193,12 +259,14 @@ def create_api_router(settings: Settings) -> APIRouter:
                 query=q,
                 sort=sort,
                 direction=direction,
+                limit=limit,
+                offset=offset,
             )
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         if players is None:
             raise _not_found("Group not found")
-        return {"items": players}
+        return players
 
     @router.post("/groups/{group_id}/players", status_code=status.HTTP_201_CREATED)
     async def post_player(request: Request, group_id: str, payload: PlayerCreate) -> dict[str, object]:

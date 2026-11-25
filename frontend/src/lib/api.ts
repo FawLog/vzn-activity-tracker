@@ -1,4 +1,4 @@
-import type { Alliance, AllianceGroup, AuditRecord, EventRecord, OverviewData, Player } from "./types";
+import type { Alliance, AllianceGroup, AuditRecord, EventRecord, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
   error?: { message?: string };
@@ -50,10 +50,13 @@ export const api = {
   alliances: (groupId: string) => request<{ items: Alliance[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances`),
   createAlliance: (groupId: string, payload: AlliancePayload) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances`, { method: "POST", body: JSON.stringify(payload) }),
   updateAlliance: (groupId: string, allianceId: string, payload: Partial<AllianceUpdatePayload>) => request<Alliance>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}`, { method: "PATCH", body: JSON.stringify(payload) }),
-  overview: (groupId: string) => request<OverviewData>(`/api/v1/groups/${encodeURIComponent(groupId)}/overview`),
-  players: (groupId: string, query = "", sort = "nickname", direction = "asc", filter: PlayerAffiliationFilter = { mode: "all" }) =>
-    request<{ items: Player[] }>(
-      `/api/v1/groups/${encodeURIComponent(groupId)}/players?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}&direction=${direction}&affiliation=${filter.mode}${filter.mode === "alliance" ? `&alliance_id=${encodeURIComponent(filter.allianceId)}` : ""}`,
+  allianceSync: (groupId: string, allianceId: string) => request<SyncStatus>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`),
+  updateAllianceSync: (groupId: string, allianceId: string, sync_enabled: boolean) => request<SyncStatus>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`, { method: "PATCH", body: JSON.stringify({ sync_enabled }) }),
+  syncAllianceNow: (groupId: string, allianceId: string) => request<{ status: string; found_count: number; added_count: number; updated_count: number; message?: string | null }>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`, { method: "POST" }),
+  overview: (groupId: string, allianceId?: string) => request<OverviewData>(`/api/v1/groups/${encodeURIComponent(groupId)}/overview${allianceId ? `?alliance_id=${encodeURIComponent(allianceId)}` : ""}`),
+  players: (groupId: string, query = "", sort = "nickname", direction = "asc", filter: PlayerAffiliationFilter = { mode: "all" }, limit = 100, offset = 0) =>
+    request<{ items: Player[]; total: number; limit: number; offset: number }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/players?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}&direction=${direction}&affiliation=${filter.mode}&limit=${limit}&offset=${offset}${filter.mode === "alliance" ? `&alliance_id=${encodeURIComponent(filter.allianceId)}` : ""}`,
     ),
   player: (groupId: string, fid: string) => request<Player>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}`),
   createPlayer: (groupId: string, payload: { fid: string; nickname: string }) =>

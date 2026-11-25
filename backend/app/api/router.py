@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
+from typing import Literal
+from pydantic import BaseModel, ConfigDict
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 
@@ -36,6 +39,14 @@ from ..services.sessions import (
     require_csrf,
     rotate_authenticated_session,
 )
+
+
+class EventManagement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["delete","reopen","date","delete_session"]
+    confirmed: bool
+    occurred_on: date | None = None
+    session_id: str | None = None
 
 
 def _not_found(message: str) -> HTTPException:
@@ -443,6 +454,17 @@ def create_api_router(settings: Settings) -> APIRouter:
         if event is None:
             raise _not_found("Event not found in selected group")
         return event
+
+    @router.post("/groups/{group_id}/events/{event_id}/manage")
+    async def manage_event(request: Request, group_id: str, event_id: str, payload: EventManagement):
+        require_csrf(request, require_admin(request, settings))
+        try:
+            event_editor.manage_event(settings.database_path, group_id, event_id, payload.action, payload.confirmed, payload.occurred_on, payload.session_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {"status":"ok"}
 
     @router.get("/groups/{group_id}/events/{event_id}/editor")
     async def get_event_editor(request: Request, group_id: str, event_id: str):

@@ -165,3 +165,38 @@ def check_ocr_scope(path, group_id, event_id, session_id):
         _event(db, group_id, event_id, editable=True)
         if not db.execute("SELECT 1 FROM event_sessions WHERE id=? AND event_id=?", (session_id, event_id)).fetchone():
             raise LookupError("Session not found")
+
+
+def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, session_id=None):
+    if not confirmed:
+        raise ValueError("Explicit confirmation required")
+    with transaction(path) as db:
+        event = _event(db, group_id, event_id)
+        if event["alliance_status"] != "active" or event["group_status"] != "active":
+            raise ValueError("Only active groups and alliances can be edited")
+        if action == "delete":
+            _audit(db,event_id,"event_deleted")
+            db.execute("DELETE FROM events WHERE id=?", (event_id,))
+            return
+        if action == "reopen":
+            if event["status"] != "published":
+                raise ValueError("Only published events can be reopened")
+            db.execute("UPDATE events SET status='draft',updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
+            db.execute("UPDATE event_sessions SET revision=revision+1 WHERE event_id=?", (event_id,))
+        elif action == "date":
+            if event["status"] != "draft" or occurred_on is None:
+                raise ValueError("Reopen the event before changing its date")
+            if db.execute("SELECT 1 FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id WHERE s.event_id=?",(event_id,)).fetchone() or db.execute("SELECT 1 FROM event_participants WHERE event_id=?",(event_id,)).fetchone():
+                raise ValueError("Cannot change date after recording results; create a corrected event")
+            db.execute("UPDATE events SET occurred_on=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (occurred_on.isoformat(),event_id))
+            db.execute("UPDATE event_sessions SET started_at=? || substr(started_at,11), revision=revision+1 WHERE event_id=?", (occurred_on.isoformat(),event_id))
+        elif action == "delete_session":
+            if event["status"] != "draft":
+                raise ValueError("Reopen event before removing a session")
+            if event["event_type"] in {"alliance_championship","alliance_mobilization"}:
+                raise ValueError("Delete the event instead of its only results section")
+            if not db.execute("DELETE FROM event_sessions WHERE id=? AND event_id=?", (session_id,event_id)).rowcount:
+                raise LookupError("Session not found")
+        else:
+            raise ValueError("Unsupported action")
+        _audit(db,event_id,"event_"+action)

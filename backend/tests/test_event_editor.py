@@ -52,3 +52,30 @@ def test_session_http_save_contract(authenticated_client):
     payload = {key:value for key,value in session.items() if key not in ("id","session_key","started_at")}
     assert client.put(root+"/sessions/"+sid, json=payload).status_code == 200
     assert client.get(root+"/editor").json()["sessions"][0]["revision"] == 2
+
+
+def test_event_management_lifecycle(authenticated_client):
+    client = authenticated_client
+    gid = create_onboarded_group(client)["id"]
+    aid = client.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    assert client.post(f"/api/v1/groups/{gid}/players",json={"fid":"p1","nickname":"Player"}).status_code == 201
+    event = client.post(f"/api/v1/groups/{gid}/alliances/{aid}/events",json={"event_type":"alliance_championship","occurred_on":"2026-11-25"}).json()
+    root = f"/api/v1/groups/{gid}/events/{event['id']}"
+    sessions = client.get(root+"/editor").json()["sessions"]
+    assert len(sessions)==1 and sessions[0]["session_key"]=="main"
+    sid=sessions[0]["id"]
+    assert client.post(root+"/manage",json={"action":"delete","confirmed":False}).status_code==409
+    assert client.post(root+"/manage",json={"action":"date","confirmed":True,"occurred_on":"2026-11-26"}).status_code==200
+    assert client.get(root).json()["occurred_on"]=="2026-11-26"
+    session=client.get(root+"/editor").json()["sessions"][0]
+    assert session["started_at"].startswith("2026-11-26")
+    assert client.put(root+"/sessions/"+sid,json={"revision":session["revision"],"rows":[{"fid":"p1","nickname":"Player","registration":"registered"}]}).status_code==200
+    assert client.post(root+"/manage",json={"action":"date","confirmed":True,"occurred_on":"2026-11-27"}).status_code==409
+    assert client.post(root+"/publish").status_code==200
+    assert client.post(root+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
+    assert client.get(root).json()["status"]=="draft"
+    assert client.get(root+"/editor").json()["sessions"][0]["rows"][0]["fid"]=="p1"
+    assert client.post(root+"/manage",json={"action":"delete","confirmed":True},headers={"X-CSRF-Token":"invalid"}).status_code==403
+    assert client.post(root+"/manage",json={"action":"delete","confirmed":True}).status_code==200
+    assert client.get(root).status_code==404
+    assert client.get(f"/api/v1/groups/{gid}/players/p1").status_code==200

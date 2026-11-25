@@ -171,7 +171,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.goto("/events");
   await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
-  await page.getByRole("button",{name:"Add session"}).click();
+  await page.getByRole("button",{name:"Add Legion 1"}).click();
   await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
   await page.route("**/ocr/preview", async route=>{
     expect(route.request().headers()["content-type"]).toBe("image/png");
@@ -204,4 +204,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.reload();
   await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");
   await page.screenshot({ path: testInfo.outputPath("alliance-event.png"), fullPage: true });
+  page.once("dialog", dialog=>dialog.accept());
+  await page.getByRole("button",{name:"Delete event",exact:true}).click();
+  await expect(page).toHaveURL(/\/events$/);
 });

@@ -23,6 +23,7 @@ const choices = {
 
 export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;record:EventRecord;onPublished:()=>void}) {
   const definition=definitions[record.event_type];
+  const single=definition.keys.length===1;
   const [editor,setEditor]=useState<ManualEvent|null>(null);
   const [selected,setSelected]=useState("");
   const [draft,setDraft]=useState<ManualSession|null>(null);
@@ -161,10 +162,10 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     {error&&<div className="notice notice--error" role="alert">{error}</div>}{message&&<div className="notice notice--success" role="status">{message}</div>}
     {!editor&&!error&&<p className="manual-help">Loading editor…</p>}
     {editor&&<><div className="manual-controls">
-      {editor.sessions.map(s=><button key={s.id} className="button button--quiet" disabled={busy||dirty} aria-pressed={selected===s.id} onClick={()=>{setSelected(s.id);setDraft(s);setConfirmPublish(false);setReview(false);setPaste("")}}>{title(s.session_key)}</button>)}
-      {editable&&available.length>0&&<><label>Session<select value={available.includes(sessionKey)?sessionKey:available[0]} onChange={e=>setSessionKey(e.target.value)}>{available.map(k=><option key={k} value={k}>{title(k)}</option>)}</select></label><label>Start UTC<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label><button className="button button--secondary" disabled={busy||dirty||!time} onClick={()=>void run(async()=>{const k=available.includes(sessionKey)?sessionKey:available[0];const v=await api.createEventSession(groupId,record.id,k,time+":00Z");apply(v,v.sessions.find(s=>s.session_key===k)?.id)})}>Add session</button></>}
+      {!single&&editor.sessions.map(s=><button key={s.id} className="button button--quiet" disabled={busy||dirty} aria-pressed={selected===s.id} onClick={()=>{setSelected(s.id);setDraft(s);setConfirmPublish(false);setReview(false);setPaste("")}}>{title(s.session_key)}</button>)}
+      {editable&&available.length>0&&<><label>{single?"Results":"Trap / Legion"}<select value={available.includes(sessionKey)?sessionKey:available[0]} onChange={e=>setSessionKey(e.target.value)}>{available.map(k=><option key={k} value={k}>{title(k)}</option>)}</select></label><label>Start UTC<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label><button className="button button--secondary" disabled={busy||dirty||!time} onClick={()=>void run(async()=>{const k=available.includes(sessionKey)?sessionKey:available[0];const v=await api.createEventSession(groupId,record.id,k,time+":00Z");apply(v,v.sessions.find(s=>s.session_key===k)?.id)})}>{single?"Initialize results":"Add "+title(available.includes(sessionKey)?sessionKey:available[0])}</button></>}
     </div>
-    {draft&&<><p className="manual-help">{draft.started_at.slice(0,16).replace("T"," ")} UTC · {visibleRows.length} players{!loaded&&editable?" · Loading roster…":""}</p>
+    {draft&&<>{editable&&!single&&<button className="button button--quiet" disabled={busy||dirty} onClick={()=>{if(window.confirm("Delete this "+title(draft.session_key)+" and all its results?"))void run(async()=>{await api.manageEvent(groupId,record.id,{action:"delete_session",confirmed:true,session_id:draft.id});apply(await api.eventEditor(groupId,record.id))})}}>Delete {title(draft.session_key)}</button>}<p className="manual-help">{draft.started_at.slice(0,16).replace("T"," ")} UTC · {visibleRows.length} players{!loaded&&editable?" · Loading roster…":""}</p>
     {editable&&<><div className="manual-controls">
       <label>Find player<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Name or ID"/></label>
       <label>Sort<select value={sort} onChange={e=>setSort(e.target.value)}><option value="nickname">Name</option>{definition.metrics.map(([key,label])=><option key={key} value={key}>{label} (highest first)</option>)}</select></label>

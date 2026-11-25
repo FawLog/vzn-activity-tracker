@@ -378,6 +378,9 @@ def create_event(database_path: str, group_id: str, alliance_id: str, payload: E
             """,
             (event_id, alliance_id, payload.event_type.value, payload.occurred_on.isoformat(), payload.status.value),
         )
+        if payload.event_type.value in {"alliance_mobilization", "alliance_championship"}:
+            database.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at) VALUES (?,?,?,?)",
+                             (uuid.uuid4().hex,event_id,"main",payload.occurred_on.isoformat()+"T00:00:00+00:00"))
         database.execute(
             """
             INSERT INTO audit_log(action, entity_type, entity_id, actor)

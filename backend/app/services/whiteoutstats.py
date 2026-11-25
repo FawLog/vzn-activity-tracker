@@ -111,6 +111,11 @@ def _set_terminal_result(
     retry_at: str | None = None,
 ) -> SyncResult:
     now = _timestamp()
+    # ``alliance_sync_settings`` predates explicit rate-limit outcomes and its
+    # check constraint permits success/failed/partial only.  Keep the richer
+    # outcome in the immutable run record while exposing it as a retryable
+    # partial attempt in the legacy settings row.
+    settings_status = "partial" if result.status == "rate_limited" else result.status
     with transaction(database_path) as database:
         database.execute(
             """
@@ -120,7 +125,7 @@ def _set_terminal_result(
                 last_updated_count = ?, updated_at = CURRENT_TIMESTAMP
             WHERE alliance_id = ?
             """,
-            (retry_at, result.status, result.message, result.found_count, result.added_count, result.updated_count, alliance_id),
+            (retry_at, settings_status, result.message, result.found_count, result.added_count, result.updated_count, alliance_id),
         )
         database.execute(
             """

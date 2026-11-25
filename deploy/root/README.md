@@ -58,7 +58,7 @@ sudo -n /usr/local/sbin/vzn-deploy
 
 ## Обновление существующей VZN-инсталляции
 
-Владелец сначала сверяет digest новой версии `stage-vzn-artifacts` из reviewed deployment artifact и обновляет только root-owned helper. Затем helper создаёт отдельный root-owned update staging и устанавливает `vzn-update`; исходный staging первой установки не изменяется.
+Владелец сначала сверяет digest новой версии `stage-vzn-artifacts` из reviewed deployment artifact и обновляет только root-owned helper. Затем helper создаёт отдельный root-owned update staging, устанавливает `vzn-update` и обновляет root-owned helper управления sudoers; исходный staging первой установки не изменяется.
 
 ```sh
 sudo install -o root -g root -m 0755 \
@@ -66,6 +66,14 @@ sudo install -o root -g root -m 0755 \
   /usr/local/sbin/vzn-stage-vzn-artifacts
 sudo /usr/local/sbin/vzn-stage-vzn-artifacts --update /absolute/private/path/to/artifacts
 sudo /usr/local/sbin/vzn-update
+```
+
+Для временного запуска update без интерактивного пароля доступна отдельная узкая пара команд. Она разрешает только digest-pinned `vzn-update` без аргументов и собственный отзыв этого правила; Docker-доступ и произвольные root-команды не выдаются:
+
+```sh
+sudo /usr/local/sbin/vzn-manage-sudoers grant-update
+sudo -n /usr/local/sbin/vzn-update
+sudo -n /usr/local/sbin/vzn-manage-sudoers revoke-update
 ```
 
 `vzn-update` не принимает аргументы и не меняет Nginx. Он создаёт проверенную online-backup SQLite до запуска новой версии. При неуспехе он восстанавливает backup через SQLite Backup API и предыдущие `.env`, Compose и frontend release; при неустранимом прерывании оставляет marker для ручного review вместо небезопасного автоматического продолжения. Полная процедура восстановления приведена в `DEPLOYMENT.md`.

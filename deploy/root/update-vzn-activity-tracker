@@ -14,7 +14,7 @@ readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly HOST_CONFIG="/etc/vzn-activity-tracker/deploy.conf"
 readonly CONTAINER_NAME="vzn-activity-tracker-backend"
 readonly HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
-readonly MINIMUM_RESERVE_BYTES=2147483648
+readonly MINIMUM_RESERVE_BYTES=536870912
 readonly UPDATE_OVERHEAD_BYTES=268435456
 readonly HTTPS_HEALTH_MAX_ATTEMPTS=15
 readonly HTTPS_CONNECT_TIMEOUT_SECONDS=3
@@ -285,10 +285,10 @@ data_bytes="$(du -sb -- "${APP_ROOT}/data" | awk '{print $1}')"
   fail "Unable to determine disk usage"
 estimated_peak_bytes=$((backend_payload_bytes * 3 + frontend_payload_bytes + source_bytes + data_bytes + UPDATE_OVERHEAD_BYTES))
 required_available_bytes=$((MINIMUM_RESERVE_BYTES + estimated_peak_bytes))
-printf 'Update disk preflight: available=%s bytes, conservative peak=%s bytes, required=%s bytes (includes verified database backup and 2 GiB reserve).\n' \
+printf 'Update disk preflight: available=%s bytes, conservative peak=%s bytes, required=%s bytes (includes verified database backup and 512 MiB reserve).\n' \
   "${available_bytes}" "${estimated_peak_bytes}" "${required_available_bytes}"
 (( available_bytes >= required_available_bytes )) || \
-  fail "Insufficient disk space for the conservative update peak and 2 GiB post-update reserve"
+  fail "Insufficient disk space for the conservative update peak and 512 MiB post-update reserve"
 
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
 release_root="${APP_ROOT}/releases/${release_id}"

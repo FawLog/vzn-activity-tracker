@@ -158,8 +158,6 @@ staging_temp=""
 if [[ "${mode}" == "install" ]]; then
   install -o root -g root -m 0755 \
     "${staging_root}/source/deploy/root/install-vzn-activity-tracker" "${INSTALLED_DEPLOYER}"
-  install -o root -g root -m 0755 \
-    "${staging_root}/source/deploy/root/manage-vzn-sudoers" "${INSTALLED_SUDOERS_HELPER}"
   printf 'Staged first-install commit %s. Root-owned deployer: %s\n' "${commit}" "${INSTALLED_DEPLOYER}"
   printf 'Deployer SHA-256: '
   sha256sum "${INSTALLED_DEPLOYER}" | awk '{print $1}'
@@ -170,6 +168,8 @@ else
   printf 'Updater SHA-256: '
   sha256sum "${INSTALLED_UPDATER}" | awk '{print $1}'
 fi
+install -o root -g root -m 0755 \
+  "${staging_root}/source/deploy/root/manage-vzn-sudoers" "${INSTALLED_SUDOERS_HELPER}"
 install -d -o root -g root -m 0755 /usr/local/lib/vzn-activity-tracker
 install -o root -g root -m 0755 \
   "${staging_root}/source/deploy/root/healthcheck.sh" "${INSTALLED_HEALTHCHECK_HELPER}"

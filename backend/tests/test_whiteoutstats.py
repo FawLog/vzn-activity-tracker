@@ -246,8 +246,8 @@ def test_preview_confirmation_connects_before_initial_import(settings: Settings)
     database.migrate(configured.database_path)
     preview = whiteoutstats.preview_alliance(configured, "1001", "VZN", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, payload())))
     assert preview["status"] == "success" and preview["alliance"]["aid"] == "a1"
-    with sqlite3.connect(configured.database_path) as database:
-        assert database.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 0
+    with sqlite3.connect(configured.database_path) as sqlite_database:
+        assert sqlite_database.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 0
     aid = whiteoutstats.confirmed_preview_aid(
         configured,
         str(preview["confirmation_token"]),

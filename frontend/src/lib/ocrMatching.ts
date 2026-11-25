@@ -1,7 +1,7 @@
 import type { Player } from "./types";
 import { normalizeName } from "./ocrParser";
 type Candidate = Pick<Player,"fid"|"nickname">;
-const compact = (s:string) => normalizeName(s).normalize("NFKD").replace(/\p{M}/gu,"").replace(/[^\p{L}\p{N}]/gu,"");
+const compact = (s:string) => normalizeName(s).normalize("NFKD").toLowerCase().replace(/\p{M}/gu,"").replace(/[^\p{L}\p{N}]/gu,"");
 function distance(a:string,b:string):number {
  const x=Array.from(a),y=Array.from(b);let prev=y.map((_,i)=>i+1);prev.unshift(0);
  for(let i=0;i<x.length;i++){const next=[i+1];for(let j=0;j<y.length;j++)next.push(Math.min(next[j]+1,prev[j+1]+1,prev[j]+(x[i]===y[j]?0:1)));prev=next}

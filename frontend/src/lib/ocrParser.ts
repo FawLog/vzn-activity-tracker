@@ -57,7 +57,7 @@ export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:s
     const all=lines.flatMap(l=>l.words).filter(w=>w.y>(header?.y??-1));
     // Use each rank's own coordinates, not the baseline of a nearby OCR word.
     // Adjacent rank anchors bound the row, so a missing name cannot borrow its neighbour.
-    const isRank=(w:Word)=>/^[RР]\\s*[1-5]$/iu.test(w.text);
+    const isRank=(w:Word)=>/^[RР]\s*[1-5]$/iu.test(w.text);
     const ranks=all.filter(isRank).sort((a,b)=>a.y-b.y);
     for(let i=0;i<ranks.length;i++){
       const rank=ranks[i],previous=ranks[i-1],next=ranks[i+1];
@@ -69,7 +69,7 @@ export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:s
       const right=scores.length?Math.min(...scores.map(w=>w.x)):rank.x+rank.height*14;
       const nameWords=region.filter(w=>w.y<rank.y-rank.height*.4&&w.x>=left&&w.right<right&&!isRank(w));
       // Preserve offset decorations when they share the same nickname baseline.
-      const base=nameWords.filter(w=>/\\p{L}|\\p{N}/u.test(w.text)).sort((a,b)=>b.height-a.height||a.y-b.y)[0];
+      const base=nameWords.filter(w=>/\p{L}|\p{N}/u.test(w.text)).sort((a,b)=>b.height-a.height||a.y-b.y)[0];
       const name=base?nameWords.filter(w=>Math.abs(w.y-base.y)<=Math.max(w.height,base.height)*.95).sort((a,b)=>a.x-b.x).map(w=>w.text).join(" ").trim():"";
       if(!name||scores.length!==1){
         warnings.push("Skipped registration row near y="+Math.round(rank.y)+": "+(name||"(nickname unreadable)")+"; "+(!name?"no nickname":scores.length?"ambiguous right-hand value":"no readable right-hand value")+".");

@@ -26,7 +26,8 @@ def test_published_analytics_scope_and_bear_cycles(authenticated_client,settings
         for fid in ("present","absent","partial","unknown"):
             db.execute("INSERT INTO player_primary_alliance_history(player_fid,group_id,alliance_id,effective_observed_at,source_type) VALUES (?,?,?,?,?)",(fid,gid,aid,"2026-11-01T00:00:00Z","manual"))
     assert c.get(url).json()["published_events"]==0
-    event_editor.publish(settings.database_path,gid,eid,True)
+    published=event_editor.publish(settings.database_path,gid,eid,True)
+    assert published["bear_cycle_complete"] is True
     r=c.get(url)
     assert r.status_code==200,r.text
     result=r.json()
@@ -38,7 +39,10 @@ def test_published_analytics_scope_and_bear_cycles(authenticated_client,settings
     assert c.get(root+"/analytics?start=2025-01-01&end=2026-11-30").status_code==422
     assert c.get(f"/api/v1/groups/other/alliances/{aid}/analytics?start=2026-11-01&end=2026-11-30").status_code==404
     event_editor.manage_event(settings.database_path,gid,eid,"reopen",True)
+    assert event_editor.read(settings.database_path,gid,eid)["bear_cycle_complete"] is False
     assert c.get(url).json()["published_events"]==0
+    event_editor.publish(settings.database_path,gid,eid)
+    assert c.get(url).json()["events"][0]["metrics"]["attendance"]["negative"]==0
 
 def test_known_registration_and_substitute_reliability():
     session={"roster_complete":True,"registration_complete":True,"attendance_complete":True}

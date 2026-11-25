@@ -164,7 +164,7 @@ def publish(path, group_id, event_id, bear_cycle_complete=False):
         sessions = db.execute("SELECT id FROM event_sessions WHERE event_id=?", (event_id,)).fetchall()
         if not sessions or any(not db.execute("SELECT 1 FROM event_session_roster WHERE session_id=?", (s["id"],)).fetchone() for s in sessions):
             raise ValueError("Every session needs reviewed player records before publication")
-        db.execute("UPDATE events SET status='published',updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
+        db.execute("UPDATE events SET status='published',bear_cycle_complete=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (int(bear_cycle_complete and event["event_type"] == "bear_trap"), event_id))
         _audit(db, event_id, "published")
     return read(path, group_id, event_id)
 

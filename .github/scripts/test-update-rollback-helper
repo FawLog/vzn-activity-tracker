@@ -1,6 +1,8 @@
 #!/bin/bash
 set -Eeuo pipefail
 
+grep -Fqx 'readonly MINIMUM_RESERVE_BYTES=536870912' deploy/root/update-vzn-activity-tracker
+
 # Exercise updater failure paths without touching a real application or Docker
 # daemon. The fixture covers both a failed image load before switching backend and
 # a failed backend switch after the staged version may have changed SQLite.

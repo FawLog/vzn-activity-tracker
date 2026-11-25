@@ -66,7 +66,9 @@ cmp deploy/root/install-vzn-activity-tracker "${INSTALLED_DEPLOYER}"
 sudo "${INSTALLED_STAGER}" --update "${artifact_root}"
 [[ "$(stat --format='%U:%G:%a' /var/lib/vzn-update-staging)" == "root:root:750" ]]
 [[ "$(stat --format='%U:%G:%a' "${INSTALLED_UPDATER}")" == "root:root:755" ]]
+[[ "$(stat --format='%U:%G:%a' "${INSTALLED_SUDOERS_HELPER}")" == "root:root:755" ]]
 cmp deploy/root/update-vzn-activity-tracker "${INSTALLED_UPDATER}"
+cmp deploy/root/manage-vzn-sudoers "${INSTALLED_SUDOERS_HELPER}"
 
 printf 'tampered after staging\n' > "${frontend_archive}"
 expected_frontend_digest="$(awk '{print $1}' "${frontend_archive}.sha256")"

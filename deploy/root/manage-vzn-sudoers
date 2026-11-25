@@ -6,6 +6,7 @@ export PATH="/usr/sbin:/usr/bin:/sbin:/bin"
 unset BASH_ENV CDPATH ENV PYTHONHOME PYTHONPATH
 
 readonly DEPLOYER="/usr/local/sbin/vzn-deploy"
+readonly UPDATER="/usr/local/sbin/vzn-update"
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -13,7 +14,7 @@ fail() {
 }
 
 [[ "${EUID}" -eq 0 ]] || fail "Run this helper as root"
-[[ "$#" -eq 1 ]] || fail "Usage: manage-vzn-sudoers grant|revoke"
+[[ "$#" -eq 1 ]] || fail "Usage: manage-vzn-sudoers grant|revoke|grant-update|revoke-update"
 requesting_user="${SUDO_USER:-}"
 [[ "${requesting_user}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail "A valid invoking SUDO_USER is required"
 id "${requesting_user}" >/dev/null 2>&1 || fail "Invoking user does not exist"
@@ -41,13 +42,37 @@ case "$1" in
     fi
     printf 'Granted temporary no-argument VZN deploy permission with SHA-256 %s.\n' "${digest}"
     ;;
-  revoke)
+  grant-update)
+    [[ -f "${UPDATER}" ]] || fail "Root-owned updater is missing"
+    [[ "$(stat --format='%U:%G:%a' "${UPDATER}")" == "root:root:755" ]] || fail "Unexpected updater ownership or mode"
+    [[ "$(stat --format='%U:%G:%a' "$0")" == "root:root:755" ]] || fail "Unexpected sudoers helper ownership or mode"
+    [[ ! -e "${RULE}" ]] || fail "Temporary sudoers rule already exists"
+    updater_digest="$(sha256sum "${UPDATER}" | awk '{print $1}')"
+    helper_digest="$(sha256sum "$0" | awk '{print $1}')"
+    temporary_rule="$(mktemp "/etc/sudoers.d/.vzn-deploy-${requesting_user}.XXXXXX")"
+    trap 'rm -f "${temporary_rule}"' EXIT
+    printf '%s ALL=(root) NOPASSWD: sha256:%s %s "", sha256:%s %s "revoke-update"\n' \
+      "${requesting_user}" "${updater_digest}" "${UPDATER}" \
+      "${helper_digest}" "$0" > "${temporary_rule}"
+    chown root:root "${temporary_rule}"
+    chmod 0440 "${temporary_rule}"
+    visudo --check --file "${temporary_rule}"
+    mv "${temporary_rule}" "${RULE}"
+    trap - EXIT
+    if ! visudo --check; then
+      rm -f "${RULE}"
+      visudo --check || true
+      fail "Global sudoers validation failed; the temporary rule was removed"
+    fi
+    printf 'Granted temporary no-argument VZN update permission with SHA-256 %s.\n' "${updater_digest}"
+    ;;
+  revoke|revoke-update)
     [[ -e "${RULE}" ]] || fail "Temporary sudoers rule is not installed"
     rm -f "${RULE}"
     visudo --check
     printf 'Revoked temporary VZN deploy permission.\n'
     ;;
   *)
-    fail "Usage: manage-vzn-sudoers grant|revoke"
+    fail "Usage: manage-vzn-sudoers grant|revoke|grant-update|revoke-update"
     ;;
 esac

@@ -9,6 +9,7 @@ test("protected group workspace redirects anonymous visitors", async ({ page }, 
 });
 
 test("administrator onboards and manages a linked academy", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
   const password = process.env.E2E_ADMIN_PASSWORD;
   if (!password) throw new Error("E2E_ADMIN_PASSWORD is required for the authenticated flow");
 
@@ -54,15 +55,24 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(page.getByText("No players in this view")).toBeVisible();
   await affiliation.selectOption("all");
   await expect(rosterPlayer).toBeVisible();
-  for (const column of ["Power", "Rank", "Furnace", "Kills"]) {
-    const header = page.getByRole("columnheader", { name: column, exact: true });
-    await header.getByRole("button").click();
-    await expect(header).toHaveAttribute("aria-sort", "descending");
-    await header.getByRole("button").click();
-    await expect(header).toHaveAttribute("aria-sort", "ascending");
+  for (const [label, column] of [["Power", "power"], ["Rank", "alliance_rank"], ["Furnace", "furnace_level"], ["Kills", "kills"], ["Nickname", "nickname"]]) {
+    await test.step(`Sort roster by ${label}`, async () => {
+      const header = page.getByRole("columnheader", { name: label, exact: true });
+      const button = header.getByRole("button");
+      for (const direction of label === "Nickname" ? ["asc"] : ["desc", "asc"]) {
+        await button.scrollIntoViewIfNeeded({ timeout: 8_000 });
+        await Promise.all([
+          page.waitForResponse((response) => {
+            const url = new URL(response.url());
+            return url.pathname.endsWith("/players") && url.searchParams.get("sort") === column && url.searchParams.get("direction") === direction && response.ok();
+          }, { timeout: 8_000 }),
+          button.click({ timeout: 8_000 }),
+        ]);
+        await expect(header).toHaveAttribute("aria-sort", direction === "asc" ? "ascending" : "descending");
+        await expect(page.locator("section.data-panel--page")).toHaveAttribute("aria-busy", "false");
+      }
+    });
   }
-  await page.getByRole("columnheader", { name: "Nickname", exact: true }).getByRole("button").click();
-  await expect(page.getByRole("columnheader", { name: "Nickname", exact: true })).toHaveAttribute("aria-sort", "ascending");
   await page.screenshot({ path: testInfo.outputPath("player-affiliation-filter.png"), fullPage: true });
 
   await page.goto("/groups");

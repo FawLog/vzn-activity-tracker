@@ -32,6 +32,8 @@ export function PlayersPage() {
   const [error, setError] = useState("");
   const [loadingMore, setLoadingMore] = useState(false);
   const requestVersion = useRef(0);
+  const previousScope = useRef("");
+  const [refreshing, setRefreshing] = useState(false);
 
   const effectiveSelection = selectionGroupId === selectedGroup?.id && (
     selection === "all" || selection === "unconfirmed" || alliances.some((alliance) => `alliance:${alliance.id}` === selection)
@@ -47,14 +49,19 @@ export function PlayersPage() {
 
   useEffect(() => {
     const version = ++requestVersion.current;
-    setPlayers(null);
+    const scope = JSON.stringify([selectedGroup?.id, submittedQuery, playerFilter]);
+    if (scope !== previousScope.current) setPlayers(null);
+    previousScope.current = scope;
     setLoadingMore(false);
     setError("");
-    if (!selectedGroup) return;
+    if (!selectedGroup) { setRefreshing(false); return; }
+    setRefreshing(true);
     api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter).then((result) => {
       if (requestVersion.current === version) { setPlayers(result.items); setTotal(result.total); }
     }).catch((requestError) => {
       if (requestVersion.current === version) setError(requestError.message);
+    }).finally(() => {
+      if (requestVersion.current === version) setRefreshing(false);
     });
     return () => { requestVersion.current++; };
   }, [selectedGroup, submittedQuery, sort, direction, playerFilter]);
@@ -72,7 +79,7 @@ export function PlayersPage() {
   };
 
   const loadMore = async () => {
-    if (!selectedGroup || !players || loadingMore) return;
+    if (!selectedGroup || !players || loadingMore || refreshing) return;
     const version = requestVersion.current;
     setLoadingMore(true);
     try {
@@ -113,9 +120,9 @@ export function PlayersPage() {
       {error ? <ErrorState message={error} /> : !players ? <LoadingState label="Loading roster" /> : players.length === 0 ? (
         <EmptyState title={submittedQuery ? "No matching players" : "No players in this view"} description={submittedQuery ? "Try a different FID or nickname." : effectiveSelection === "unconfirmed" ? "No profiles without a confirmed primary alliance are available." : "Add the first FID-based roster record from Administration."} action={!submittedQuery && effectiveSelection === "all" && <button className="button button--primary" onClick={() => navigate("/admin?mode=players")}>Add player</button>} />
       ) : (
-        <section className="data-panel data-panel--page">
+        <section className="data-panel data-panel--page" aria-busy={refreshing}>
           <div className="table-wrap"><table><thead><tr>{sortHeader("nickname", "Nickname")}{sortHeader("fid", "FID")}{sortHeader("power", "Power")}{sortHeader("kills", "Kills")}{sortHeader("furnace_level", "Furnace")}{sortHeader("alliance_rank", "Rank")}<th>Alliance</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td><button className="table-link" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}>{player.nickname ?? "Nickname unconfirmed"}</button></td><td className="mono">{player.fid}</td><td className="number-cell">{player.power?.toLocaleString() ?? "—"}</td><td className="number-cell">{player.kills?.toLocaleString() ?? "—"}</td><td>{player.furnace_level ?? "—"}</td><td>{player.alliance_rank ?? "—"}</td><td>{player.observed_alliance_name ?? player.primary_alliance_name ?? <span className="status status--draft">Unconfirmed</span>}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
-          {players.length < total ? <button className="button button--quiet" disabled={loadingMore} onClick={() => void loadMore()}>Load more ({players.length} of {total})</button> : null}
+          {players.length < total ? <button className="button button--quiet" disabled={loadingMore || refreshing} onClick={() => void loadMore()}>Load more ({players.length} of {total})</button> : null}
         </section>
       )}
     </div>

@@ -15,7 +15,11 @@ it("does not guess collisions or short names",()=>{
 
 it("suggests observed OCR variations without silently confirming",()=>{
  for(const [ocr,name] of [["Piro e","꧁ Piro ꧂"],["DarksideAMK","Darksideᴬᴹᴷ"],["M & R","M&R"],["CHALS","༄CHALSシ"],["Basel","Basel梦"],["Sora # 29.07","Sora #2 ʕ•ᴥ•ʔ"]]){
- expect(matchPlayer(ocr,[p("1",name),p("2","Ultron")])).toEqual({fid:"1",match:"suggested"});
+ expect(matchPlayer(ocr,[p("1",name),p("2","Ultron")]),ocr+" → "+name).toEqual({fid:"1",match:"suggested"});
  }
  expect(matchPlayer("Piro e",[p("1","Piro"),p("2","Pirox")]).match).toBe("unknown");
+});
+
+it("keeps competing decorated prefixes unresolved",()=>{
+ expect(matchPlayer("Sora # 29.07",[p("1","Sora #2 ʕ•ᴥ•ʔ"),p("2","Sora #29")]).match).toBe("unknown");
 });

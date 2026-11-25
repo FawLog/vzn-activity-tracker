@@ -17,7 +17,7 @@ function score(name:string,other:string):number {
  // Only propose a distinctive shared prefix; never treat it as an exact match.
  const x=Array.from(a),y=Array.from(b);let prefix=0;
  while(prefix<Math.min(x.length,y.length)&&x[prefix]===y[prefix])prefix++;
- const shared=prefix>=4&&prefix/Math.min(x.length,y.length)>=.8&&prefix/length>=.5?.83:0;
+ const shared=prefix>=4&&prefix/Math.min(x.length,y.length)>=.6&&prefix/length>=.5?.83:0;
  return Math.max(edit,shared);
 }
 function ranked<T extends Candidate>(name:string,players:T[]){return players.map(p=>({p,score:score(name,p.nickname??"")})).sort((a,b)=>b.score-a.score||(a.p.nickname??"").localeCompare(b.p.nickname??"")||a.p.fid.localeCompare(b.p.fid))}

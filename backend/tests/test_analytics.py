@@ -33,6 +33,7 @@ def test_published_analytics_scope_and_bear_cycles(authenticated_client,settings
     result=r.json()
     assert result["events"][0]["metrics"]["attendance"]=={"positive":1,"negative":1,"excused":0,"unknown":2,"known":2,"eligible_unknown":2,"rate":50.0}
     assert result["events"][0]["metrics"]["damage"]["total"]=="9000000000"
+    assert result["events"][0]["activity_cells"]=={"present":"positive","absent":"negative","partial":"unknown","unknown":"unknown"}
     p=c.get(f"/api/v1/groups/{gid}/players/present/activity?start=2026-11-01&end=2026-11-30").json()
     assert len(p["players"][0]["history"])==1
     assert p["players"][0]["metrics"]["bear_trap"]["attendance"]["positive"]==1

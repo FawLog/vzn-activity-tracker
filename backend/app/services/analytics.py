@@ -144,7 +144,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             histories[f].append(entry)
         event_reports.append({**event,"session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
             "evidence":[{k:s[k] for k in ("session_key","host_alliance_id","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],
-            "metrics":aggregate(entries,kind)})
+            "metrics":aggregate(entries,kind), "activity_cells": {e["fid"]: activity_cell(e) for e in entries}})
     players=[]
     for f in sorted(included,key=lambda f:((profiles[f]["nickname"] or f).casefold(),f)):
         history=histories[f]
@@ -154,6 +154,25 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             "published_events":len(events),"events":event_reports,"players":players,
             "coverage":{"events_with_sessions":sum(bool(sessions[e["id"]]) for e in events),"events_without_sessions":sum(not sessions[e["id"]] for e in events)},
             "semantics":{"rates":"known positive / (known positive + known negative); unknown and excused excluded","population":"recorded evidence only; no inferred historical eligibility","bear":"one event is one cycle","legacy":"no session evidence means no analytics","metric_total":"decimal string"}}
+
+
+def activity_cell(entry):
+    kind=entry["event_type"]
+    if kind=="bear_trap":
+        return entry["cycle_attendance"]
+    if kind=="alliance_championship":
+        values=[s["registration_outcome"] for s in entry["sessions"]]
+    elif kind in ("foundry","canyon"):
+        values=[s["attendance_outcome"] for s in entry["sessions"]]
+    elif kind=="alliance_mobilization":
+        return "recorded" if any("points" in s["metrics"] or "missions_completed" in s["metrics"] for s in entry["sessions"]) else "unknown"
+    else:
+        return "unknown"
+    # Preserve conflicting session evidence rather than hiding a no-show behind presence.
+    known=set(values)
+    if len(known)==1:
+        return values[0]
+    return "mixed" if len(known-{"unknown"})>1 else "unknown"
 
 
 def aggregate(entries, kind):

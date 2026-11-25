@@ -38,14 +38,14 @@ def attendance(row, session):
     return "unknown"
 
 
-def bear_cycle(sessions):
+def bear_cycle(sessions, expected_keys=None):
     by_key = {s["session_key"]: s["attendance_outcome"] for s in sessions}
-    values = [by_key.get(k, "unknown") for k in ("trap_1", "trap_2")]
+    values = [by_key.get(k, "unknown") for k in (expected_keys or ("trap_1", "trap_2"))]
     if "positive" in values:
         return "positive"
-    if values == ["negative", "negative"]:
+    if len(values) >= 2 and all(v in ("negative","excused") for v in values) and "negative" in values:
         return "negative"
-    if values == ["excused", "excused"]:
+    if len(values) >= 2 and all(v == "excused" for v in values):
         return "excused"
     return "unknown"
 
@@ -70,14 +70,14 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         events = [dict(r) for r in db.execute("""
             SELECT e.id,e.event_type,e.occurred_on,e.alliance_id,a.name AS alliance_name
             FROM events e JOIN alliances a ON a.id=e.alliance_id
-            WHERE a.group_id=? AND (? IS NULL OR a.id=?) AND e.status='published'
+            WHERE a.group_id=? AND (? IS NULL OR a.id=? OR e.event_type=\'bear_trap\') AND e.status='published'
               AND e.occurred_on BETWEEN ? AND ?
             ORDER BY e.occurred_on,e.id
         """,(group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat()))]
         sessions = defaultdict(list)
         for r in db.execute("""
             SELECT s.* FROM event_sessions s JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
-            WHERE a.group_id=? AND (? IS NULL OR a.id=?) AND e.status='published' AND e.occurred_on BETWEEN ? AND ?
+            WHERE a.group_id=? AND (? IS NULL OR a.id=? OR e.event_type=\'bear_trap\') AND e.status='published' AND e.occurred_on BETWEEN ? AND ?
             ORDER BY s.session_key
         """,(group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat())):
             item=dict(r);item["rows"]={};sessions[r["event_id"]].append(item)
@@ -86,14 +86,14 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             SELECT r.* FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id
             JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
             JOIN player_group_profiles p ON p.player_fid=r.player_fid AND p.group_id=a.group_id
-            WHERE a.group_id=? AND (? IS NULL OR a.id=?) AND e.status='published' AND e.occurred_on BETWEEN ? AND ?
+            WHERE a.group_id=? AND (? IS NULL OR a.id=? OR e.event_type=\'bear_trap\') AND e.status='published' AND e.occurred_on BETWEEN ? AND ?
               AND (? IS NULL OR r.player_fid=?)
         """,(group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat(),fid,fid)):
             row=dict(r);row["metrics"]={};session_by_id[r["session_id"]]["rows"][r["player_fid"]]=row
         for m in db.execute("""
             SELECT m.* FROM event_session_metrics m JOIN event_sessions s ON s.id=m.session_id
             JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
-            WHERE a.group_id=? AND (? IS NULL OR a.id=?) AND e.status='published' AND e.occurred_on BETWEEN ? AND ?
+            WHERE a.group_id=? AND (? IS NULL OR a.id=? OR e.event_type=\'bear_trap\') AND e.status='published' AND e.occurred_on BETWEEN ? AND ?
               AND (? IS NULL OR m.player_fid=?)
         """,(group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat(),fid,fid)):
             row=session_by_id[m["session_id"]]["rows"].get(m["player_fid"])
@@ -107,9 +107,12 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             FROM player_group_profiles p WHERE p.group_id=? AND (? IS NULL OR p.player_fid=?)
         """,(group_id,fid,fid)):
             profiles[p["fid"]]=dict(p)
+        home_history=defaultdict(list)
+        for h in db.execute("SELECT player_fid,alliance_id,effective_observed_at,ended_observed_at FROM player_primary_alliance_history WHERE group_id=? AND (? IS NULL OR player_fid=?)",(group_id,fid,fid)):
+            home_history[h["player_fid"]].append(dict(h))
     # Every historical participant is retained, plus current alliance roster for context.
-    observed={f for ss in sessions.values() for s in ss for f in s["rows"]}
-    included={f for f,p in profiles.items() if f in observed or (fid is not None or (p["group_status"]=="active" and (alliance_id is None or p["primary_alliance_id"]==alliance_id)))}
+    observed=set()
+    included={f for f,p in profiles.items() if fid is not None or (p["group_status"]=="active" and (alliance_id is None or p["primary_alliance_id"]==alliance_id))}
     histories=defaultdict(list)
     event_reports=[]
     for event in events:
@@ -117,23 +120,30 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         ss=sessions[event["id"]]
         fids={f for s in ss for f in s["rows"]}
         entries=[]
+        unknown_home=0
         for f in sorted(fids):
+            homes={h["alliance_id"] for h in home_history[f] if h["effective_observed_at"][:10] <= event["occurred_on"] and (h["ended_observed_at"] is None or h["ended_observed_at"][:10] > event["occurred_on"])}
+            home=next(iter(homes)) if len(homes)==1 else None
+            if kind=="bear_trap":
+                if home is None: unknown_home+=1
+                if alliance_id is not None and home!=alliance_id: continue
+            included.add(f)
             evidence=[]
             for s in ss:
                 row=s["rows"].get(f)
                 if row is None:
                     continue
-                evidence.append({"session_id":s["id"],"session_key":s["session_key"],"started_at":s["started_at"],
+                evidence.append({"session_id":s["id"],"session_key":s["session_key"],"started_at":s["started_at"],"host_alliance_id":s["host_alliance_id"],
                     "nickname":row["nickname"],"eligibility":row["eligibility"],"registration":row["registration"],
                     "attendance":row["attendance"],"role":row["role"],"registered_by":row["registered_by"],
                     "registration_outcome":registration(row,s),"attendance_outcome":attendance(row,s),"metrics":row["metrics"]})
-            entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"sessions":evidence}
+            entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"home_alliance_id":home,"sessions":evidence}
             if kind=="bear_trap":
-                entry["cycle_attendance"]=bear_cycle(evidence)
+                entry["cycle_attendance"]=bear_cycle(evidence, sorted({"trap_1","trap_2"} | {s["session_key"] for s in ss}))
             entries.append(entry)
             histories[f].append(entry)
-        event_reports.append({**event,"session_count":len(ss),"recorded_players":len(fids),
-            "evidence":[{k:s[k] for k in ("session_key","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],
+        event_reports.append({**event,"session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
+            "evidence":[{k:s[k] for k in ("session_key","host_alliance_id","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],
             "metrics":aggregate(entries,kind)})
     players=[]
     for f in sorted(included,key=lambda f:((profiles[f]["nickname"] or f).casefold(),f)):

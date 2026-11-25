@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { ReviewRow } from "../lib/ocrReview";
 import { ScreenshotImport } from "./ScreenshotImport";
-import type { EventRecord, ManualEvent, ManualRow, ManualSession, Player } from "../lib/types";
+import type { Alliance, EventRecord, ManualEvent, ManualRow, ManualSession, Player } from "../lib/types";
 
 const definitions: Record<string, { keys: string[]; metrics: [string,string][]; registration?: boolean; battle?: boolean; attendance?: boolean }> = {
   alliance_mobilization: {keys:["main"],metrics:[["missions_completed","Completed"],["points","Points"]]},
@@ -34,6 +34,9 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const [error,setError]=useState("");
   const [time,setTime]=useState(record.occurred_on+"T00:00");
   const [sessionKey,setSessionKey]=useState(definition.keys[0]);
+  const [hosts,setHosts]=useState<Alliance[]>([]);
+  const [host,setHost]=useState(record.alliance_id);
+  useEffect(()=>{if(record.event_type==="bear_trap")api.alliances(groupId).then(v=>setHosts(v.items.filter(a=>a.status==="active"))).catch(e=>setError(String(e.message)))},[groupId,record.event_type]);
   const [candidates,setCandidates]=useState<Player[]>([]);
   const [query,setQuery]=useState("");
   const [loaded,setLoaded]=useState(false);
@@ -82,7 +85,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     return ()=>{active=false};
   },[groupId]);
   const blank=(p:Player):ManualRow=>({fid:p.fid,nickname:p.nickname??p.fid,eligibility:"unknown",registration:"unknown",role:null,registered_by:null,attendance:"unknown",metrics:{}});
-  const currentRoster=candidates.filter(p=>p.primary_alliance_id===record.alliance_id&&p.group_status==="active");
+  const currentRoster=candidates.filter(p=>p.primary_alliance_id===(draft?.host_alliance_id??record.alliance_id)&&p.group_status==="active");
   const visibleRows=draft?[...draft.rows,...(editable&&!draft.roster_complete?currentRoster.filter(p=>!draft.rows.some(r=>r.fid===p.fid)).map(blank):[])]:[];
   const materialize=(rows:ManualRow[])=>{if(draft)change({...draft,rows})};
   const patchVisible=(fid:string,patch:Partial<ManualRow>)=>{
@@ -187,7 +190,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
       apply(result,draft.id);setConfirmPublish(false);setMessage("Imported "+seen.size+" players and saved draft. Review before publishing.");
     }finally{setBusy(false)}
   };
-  const available=definition.keys.filter(k=>!editor?.sessions.some(s=>s.session_key===k));
+  const available=(record.event_type==="bear_trap"?Array.from({length:30},(_,i)=>"trap_"+(i+1)):definition.keys).filter(k=>!editor?.sessions.some(s=>s.session_key===k));
   const selectField=(row:ManualRow,field:keyof typeof choices)=><select aria-label={row.nickname+" "+title(field)} value={row[field]??""} disabled={!editable||busy} onChange={e=>{
     const value=e.target.value;
     const patch={ [field]:value||null } as Partial<ManualRow>;
@@ -202,8 +205,8 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     {error&&<div className="notice notice--error" role="alert">{error}</div>}{message&&<div className="notice notice--success" role="status">{message}</div>}
     {!editor&&!error&&<p className="manual-help">Loading editor…</p>}
     {editor&&<><div className="manual-controls">
-      {!single&&editor.sessions.map(s=><button key={s.id} className="button button--quiet" disabled={busy||dirty} aria-pressed={selected===s.id} onClick={()=>{setSelected(s.id);setDraft(s);setConfirmPublish(false);setReview(false);setPaste("")}}>{title(s.session_key)}</button>)}
-      {editable&&available.length>0&&<><label>{single?"Results":"Trap / Legion"}<select value={available.includes(sessionKey)?sessionKey:available[0]} onChange={e=>setSessionKey(e.target.value)}>{available.map(k=><option key={k} value={k}>{title(k)}</option>)}</select></label><label>Start UTC<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label><button className="button button--secondary" disabled={busy||dirty||!time} onClick={()=>void run(async()=>{const k=available.includes(sessionKey)?sessionKey:available[0];const v=await api.createEventSession(groupId,record.id,k,time+":00Z");apply(v,v.sessions.find(s=>s.session_key===k)?.id)})}>{single?"Initialize results":"Add "+title(available.includes(sessionKey)?sessionKey:available[0])}</button></>}
+      {!single&&editor.sessions.map(s=><button key={s.id} className="button button--quiet" disabled={busy||dirty} aria-pressed={selected===s.id} onClick={()=>{setSelected(s.id);setDraft(s);setConfirmPublish(false);setReview(false);setPaste("")}}>{title(s.session_key)}{record.event_type==="bear_trap"&&" · "+(hosts.find(a=>a.id===s.host_alliance_id)?.tag??"")}</button>)}
+      {editable&&available.length>0&&<><label>{single?"Results":"Trap / Legion"}<select value={available.includes(sessionKey)?sessionKey:available[0]} onChange={e=>setSessionKey(e.target.value)}>{available.map(k=><option key={k} value={k}>{title(k)}</option>)}</select></label>{record.event_type==="bear_trap"&&<label>Host alliance<select value={host} onChange={e=>setHost(e.target.value)}>{hosts.map(a=><option key={a.id} value={a.id}>{a.tag} · {a.name}</option>)}</select></label>}<label>Start UTC<input type="datetime-local" value={time} onChange={e=>setTime(e.target.value)}/></label><button className="button button--secondary" disabled={busy||dirty||!time||(record.event_type==="bear_trap"&&!hosts.some(a=>a.id===host))} onClick={()=>void run(async()=>{const k=available.includes(sessionKey)?sessionKey:available[0];const v=await api.createEventSession(groupId,record.id,k,time+":00Z",record.event_type==="bear_trap"?host:undefined);apply(v,v.sessions.find(s=>s.session_key===k)?.id)})}>{single?"Initialize results":"Add "+title(available.includes(sessionKey)?sessionKey:available[0])}</button></>}
     </div>
     {draft&&<>{editable&&!single&&<button className="button button--quiet" disabled={busy||dirty} onClick={()=>{if(window.confirm("Delete this "+title(draft.session_key)+" and all its results?"))void run(async()=>{await api.manageEvent(groupId,record.id,{action:"delete_session",confirmed:true,session_id:draft.id});apply(await api.eventEditor(groupId,record.id))})}}>Delete {title(draft.session_key)}</button>}<p className="manual-help">{draft.started_at.slice(0,16).replace("T"," ")} UTC · {visibleRows.length} players{!loaded&&editable?" · Loading roster…":""}</p>
     {editable&&<><div className="manual-controls">

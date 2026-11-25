@@ -76,7 +76,7 @@ export const api = {
     request<EventRecord>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/events`, { method: "POST", body: JSON.stringify(payload) }),
   manageEvent: (groupId:string,id:string,payload:{action:"delete"|"reopen"|"date"|"delete_session";confirmed:boolean;occurred_on?:string;session_id?:string}) => request<{status:string}>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/manage`,{method:"POST",body:JSON.stringify(payload)}),
   eventEditor: (groupId: string, id: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/editor`),
-  createEventSession: (groupId: string, id: string, session_key: string, started_at: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/sessions`, {method:"POST",body:JSON.stringify({session_key,started_at})}),
+  createEventSession: (groupId: string, id: string, session_key: string, started_at: string, host_alliance_id?: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/sessions`, {method:"POST",body:JSON.stringify({session_key,started_at,host_alliance_id})}),
   saveEventSession: (groupId: string, id: string, sessionId: string, payload: ManualSessionSave) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`, {method:"PUT",body:JSON.stringify(payload)}),
   publishEvent: (groupId: string, id: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/publish`, {method:"POST"}),
   rankings: (groupId: string) =>

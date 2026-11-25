@@ -21,6 +21,10 @@ def test_published_analytics_scope_and_bear_cycles(authenticated_client,settings
             rows.append({"fid":"partial","nickname":"partial","eligibility":"confirmed","attendance":"confirmed_absent"})
         event_editor.save(settings.database_path,gid,eid,sid,SessionSave(revision=0,roster_complete=True,attendance_complete=True,rows=rows))
     url=root+"/analytics?start=2026-11-01&end=2026-11-30"
+    from app.database import transaction
+    with transaction(settings.database_path) as db:
+        for fid in ("present","absent","partial","unknown"):
+            db.execute("INSERT INTO player_primary_alliance_history(player_fid,group_id,alliance_id,effective_observed_at,source_type) VALUES (?,?,?,?,?)",(fid,gid,aid,"2026-11-01T00:00:00Z","manual"))
     assert c.get(url).json()["published_events"]==0
     event_editor.publish(settings.database_path,gid,eid)
     r=c.get(url)

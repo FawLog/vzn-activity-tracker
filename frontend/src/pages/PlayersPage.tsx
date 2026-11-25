@@ -1,11 +1,14 @@
-import { Search, UserPlus } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Search, UserPlus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PageHeader } from "../components/Page";
 import { api, type PlayerAffiliationFilter } from "../lib/api";
 import { useGroupContext } from "../lib/group-context";
 import { navigate } from "../lib/router";
 import type { Player } from "../lib/types";
+
+type SortColumn = "nickname" | "fid" | "power" | "kills" | "furnace_level" | "alliance_rank";
+type SortDirection = "asc" | "desc";
 
 type AffiliationSelection = "all" | "unconfirmed" | `alliance:${string}`;
 
@@ -20,13 +23,15 @@ export function PlayersPage() {
   const initialQuery = new URLSearchParams(window.location.search).get("q") ?? "";
   const [query, setQuery] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
-  const [sort, setSort] = useState("nickname");
-  const [direction, setDirection] = useState("asc");
+  const [sort, setSort] = useState<SortColumn>("nickname");
+  const [direction, setDirection] = useState<SortDirection>("asc");
   const [selection, setSelection] = useState<AffiliationSelection>("all");
   const [selectionGroupId, setSelectionGroupId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const requestVersion = useRef(0);
 
   const effectiveSelection = selectionGroupId === selectedGroup?.id && (
     selection === "all" || selection === "unconfirmed" || alliances.some((alliance) => `alliance:${alliance.id}` === selection)
@@ -41,10 +46,17 @@ export function PlayersPage() {
   }, [selectedGroup?.id]);
 
   useEffect(() => {
+    const version = ++requestVersion.current;
     setPlayers(null);
+    setLoadingMore(false);
     setError("");
     if (!selectedGroup) return;
-    api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter).then((result) => { setPlayers(result.items); setTotal(result.total); }).catch((requestError) => setError(requestError.message));
+    api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter).then((result) => {
+      if (requestVersion.current === version) { setPlayers(result.items); setTotal(result.total); }
+    }).catch((requestError) => {
+      if (requestVersion.current === version) setError(requestError.message);
+    });
+    return () => { requestVersion.current++; };
   }, [selectedGroup, submittedQuery, sort, direction, playerFilter]);
 
   if (!selectedGroup) return <div className="page"><EmptyState title="No active group" description="Set up a group before viewing its roster." action={<button className="button button--primary" onClick={() => navigate("/onboarding")}>Start setup</button>} /></div>;
@@ -60,10 +72,35 @@ export function PlayersPage() {
   };
 
   const loadMore = async () => {
-    if (!selectedGroup || !players) return;
-    const result = await api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter, 100, players.length);
-    setPlayers([...players, ...result.items]);
-    setTotal(result.total);
+    if (!selectedGroup || !players || loadingMore) return;
+    const version = requestVersion.current;
+    setLoadingMore(true);
+    try {
+      const result = await api.players(selectedGroup.id, submittedQuery, sort, direction, playerFilter, 100, players.length);
+      if (requestVersion.current === version) {
+        setPlayers([...players, ...result.items]);
+        setTotal(result.total);
+      }
+    } catch (requestError) {
+      if (requestVersion.current === version) setError(requestError instanceof Error ? requestError.message : "Unable to load more players");
+    } finally {
+      if (requestVersion.current === version) setLoadingMore(false);
+    }
+  };
+
+  const sortHeader = (column: SortColumn, label: string) => {
+    const active = sort === column;
+    const Icon = active ? (direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+    return (
+      <th scope="col" aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : undefined}>
+        <button type="button" className="roster-sort" onClick={() => {
+          setSort(column);
+          setDirection(active ? (direction === "asc" ? "desc" : "asc") : (column === "nickname" || column === "fid" ? "asc" : "desc"));
+        }}>
+          {label}<Icon size={12} aria-hidden="true" />
+        </button>
+      </th>
+    );
   };
 
   return (
@@ -72,14 +109,13 @@ export function PlayersPage() {
       <div className="toolbar roster-toolbar">
         <form className="filter-search" onSubmit={submit}><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search FID or nickname" aria-label="Search players" /></form>
         <label className="select-control"><span>Affiliation</span><select aria-label="Roster affiliation" value={effectiveSelection} onChange={(event) => selectAffiliation(event.target.value as AffiliationSelection)}><option value="all">All players</option><option value="unconfirmed">Unconfirmed affiliation</option>{alliances.map((alliance) => <option key={alliance.id} value={`alliance:${alliance.id}`}>{alliance.alliance_type === "primary" ? "Primary alliance" : "Additional alliance"} · {alliance.name}</option>)}</select></label>
-        <label className="select-control"><span>Sort</span><select value={`${sort}:${direction}`} onChange={(event) => { const [nextSort, nextDirection] = event.target.value.split(":"); setSort(nextSort); setDirection(nextDirection); }}><option value="nickname:asc">Nickname A–Z</option><option value="nickname:desc">Nickname Z–A</option><option value="fid:asc">FID ascending</option><option value="created_at:desc">Newest first</option></select></label>
       </div>
       {error ? <ErrorState message={error} /> : !players ? <LoadingState label="Loading roster" /> : players.length === 0 ? (
         <EmptyState title={submittedQuery ? "No matching players" : "No players in this view"} description={submittedQuery ? "Try a different FID or nickname." : effectiveSelection === "unconfirmed" ? "No profiles without a confirmed primary alliance are available." : "Add the first FID-based roster record from Administration."} action={!submittedQuery && effectiveSelection === "all" && <button className="button button--primary" onClick={() => navigate("/admin?mode=players")}>Add player</button>} />
       ) : (
         <section className="data-panel data-panel--page">
-          <div className="table-wrap"><table><thead><tr><th>Nickname</th><th>FID</th><th>Power</th><th>Kills</th><th>Furnace</th><th>Rank</th><th>Alliance</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td><button className="table-link" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}>{player.nickname ?? "Nickname unconfirmed"}</button></td><td className="mono">{player.fid}</td><td className="number-cell">{player.power?.toLocaleString() ?? "—"}</td><td className="number-cell">{player.kills?.toLocaleString() ?? "—"}</td><td>{player.furnace_level ?? "—"}</td><td>{player.alliance_rank ?? "—"}</td><td>{player.observed_alliance_name ?? player.primary_alliance_name ?? <span className="status status--draft">Unconfirmed</span>}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
-          {players.length < total ? <button className="button button--quiet" onClick={() => void loadMore()}>Load more ({players.length} of {total})</button> : null}
+          <div className="table-wrap"><table><thead><tr>{sortHeader("nickname", "Nickname")}{sortHeader("fid", "FID")}{sortHeader("power", "Power")}{sortHeader("kills", "Kills")}{sortHeader("furnace_level", "Furnace")}{sortHeader("alliance_rank", "Rank")}<th>Alliance</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td><button className="table-link" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}>{player.nickname ?? "Nickname unconfirmed"}</button></td><td className="mono">{player.fid}</td><td className="number-cell">{player.power?.toLocaleString() ?? "—"}</td><td className="number-cell">{player.kills?.toLocaleString() ?? "—"}</td><td>{player.furnace_level ?? "—"}</td><td>{player.alliance_rank ?? "—"}</td><td>{player.observed_alliance_name ?? player.primary_alliance_name ?? <span className="status status--draft">Unconfirmed</span>}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
+          {players.length < total ? <button className="button button--quiet" disabled={loadingMore} onClick={() => void loadMore()}>Load more ({players.length} of {total})</button> : null}
         </section>
       )}
     </div>

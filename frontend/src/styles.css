@@ -256,6 +256,8 @@ tbody tr:last-child td { border-bottom: 0; }
 td strong { color: var(--text); font-weight: 650; }
 .table-link { padding: 0; border: 0; background: transparent; color: var(--text); font-size: inherit; font-weight: 650; cursor: pointer; text-align: left; }
 .table-link:hover { color: var(--cyan); }
+.roster-sort { display: inline-flex; align-items: center; gap: 5px; min-height: 39px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.roster-sort:hover, th[aria-sort] .roster-sort { color: var(--cyan); }
 .clickable-row { cursor: pointer; transition: background-color .14s ease; }
 .clickable-row:hover { background: var(--surface-hover); }
 .number-cell { text-align: right; font-variant-numeric: tabular-nums; }

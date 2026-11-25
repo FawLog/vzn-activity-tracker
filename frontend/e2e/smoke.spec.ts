@@ -54,6 +54,15 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(page.getByText("No players in this view")).toBeVisible();
   await affiliation.selectOption("all");
   await expect(rosterPlayer).toBeVisible();
+  for (const column of ["Power", "Rank", "Furnace", "Kills"]) {
+    const header = page.getByRole("columnheader", { name: column, exact: true });
+    await header.getByRole("button").click();
+    await expect(header).toHaveAttribute("aria-sort", "descending");
+    await header.getByRole("button").click();
+    await expect(header).toHaveAttribute("aria-sort", "ascending");
+  }
+  await page.getByRole("columnheader", { name: "Nickname", exact: true }).getByRole("button").click();
+  await expect(page.getByRole("columnheader", { name: "Nickname", exact: true })).toHaveAttribute("aria-sort", "ascending");
   await page.screenshot({ path: testInfo.outputPath("player-affiliation-filter.png"), fullPage: true });
 
   await page.goto("/groups");

@@ -63,6 +63,25 @@ export interface Alliance {
   last_found_count?: number;
   last_added_count?: number;
   last_updated_count?: number;
+  whiteoutstats_alliance_id?: string | null;
+  initial_sync?: InitialSyncResult;
+}
+
+export interface AlliancePreview {
+  status: "success" | "failed" | "not_configured";
+  message?: string;
+  confirmation_token?: string;
+  alliance?: {
+    aid: string;
+    name: string | null;
+    tag: string | null;
+    state_id: string | null;
+    leader_name: string | null;
+    member_count: number | null;
+    power: number | null;
+    power_rank: number | null;
+    flag_url: string | null;
+  };
 }
 
 export interface EventRecord {
@@ -122,6 +141,7 @@ export interface SyncStatus {
   last_found_count: number;
   last_added_count: number;
   last_updated_count: number;
+  whiteoutstats_alliance_id: string | null;
   runs: Array<{ requested_at: string; completed_at: string | null; trigger_type: string; status: string; found_count: number; added_count: number; updated_count: number; message: string | null }>;
 }
 

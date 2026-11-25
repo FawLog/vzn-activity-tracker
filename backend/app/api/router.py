@@ -17,6 +17,8 @@ from ..schemas import (
     GroupUpdate,
     LoginRequest,
     PlayerCreate,
+    WhiteoutStatsConnectionConfirm,
+    WhiteoutStatsPreviewRequest,
 )
 from ..security import verify_password
 from ..services import records
@@ -58,6 +60,17 @@ def create_api_router(settings: Settings) -> APIRouter:
                 trigger_type="initial",
             )
         ).payload()
+
+    def confirmed_aid(token: str | None, *, state_id: str, tag: str, expected_aid: str | None = None) -> str | None:
+        if not settings.whiteoutstats_api_key:
+            return None
+        return whiteoutstats.confirmed_preview_aid(
+            settings,
+            token,
+            state_id=state_id,
+            tag=tag,
+            expected_aid=expected_aid,
+        )
 
     @router.get("/health")
     async def health() -> dict[str, object]:
@@ -111,8 +124,17 @@ def create_api_router(settings: Settings) -> APIRouter:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
+            aid = confirmed_aid(
+                payload.whiteoutstats_preview_token,
+                state_id=payload.primary_alliance_state_id,
+                tag=payload.primary_alliance_tag,
+            )
             group = groups.create_group(
-                settings.database_path, payload, onboarding=True, sync_enabled=bool(settings.whiteoutstats_api_key)
+                settings.database_path,
+                payload,
+                onboarding=True,
+                sync_enabled=bool(settings.whiteoutstats_api_key),
+                whiteoutstats_alliance_id=aid,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -129,7 +151,17 @@ def create_api_router(settings: Settings) -> APIRouter:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
-            group = groups.create_group(settings.database_path, payload, sync_enabled=bool(settings.whiteoutstats_api_key))
+            aid = confirmed_aid(
+                payload.whiteoutstats_preview_token,
+                state_id=payload.primary_alliance_state_id,
+                tag=payload.primary_alliance_tag,
+            )
+            group = groups.create_group(
+                settings.database_path,
+                payload,
+                sync_enabled=bool(settings.whiteoutstats_api_key),
+                whiteoutstats_alliance_id=aid,
+            )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         group["initial_sync"] = await initial_sync(group)
@@ -163,13 +195,27 @@ def create_api_router(settings: Settings) -> APIRouter:
             raise _not_found("Group not found")
         return {"items": alliances}
 
+    @router.post("/whiteoutstats/alliances/preview")
+    async def post_whiteoutstats_preview(
+        request: Request,
+        payload: WhiteoutStatsPreviewRequest,
+    ) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        return await asyncio.to_thread(whiteoutstats.preview_alliance, settings, payload.state_id, payload.tag)
+
     @router.post("/groups/{group_id}/alliances", status_code=status.HTTP_201_CREATED)
     async def post_alliance(request: Request, group_id: str, payload: AllianceCreate) -> dict[str, object]:
         session = require_admin(request, settings)
         require_csrf(request, session)
         try:
+            aid = confirmed_aid(payload.whiteoutstats_preview_token, state_id=payload.state_id, tag=payload.tag)
             alliance = groups.create_additional_alliance(
-                settings.database_path, group_id, payload, sync_enabled=bool(settings.whiteoutstats_api_key)
+                settings.database_path,
+                group_id,
+                payload,
+                sync_enabled=bool(settings.whiteoutstats_api_key),
+                whiteoutstats_alliance_id=aid,
             )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -185,6 +231,50 @@ def create_api_router(settings: Settings) -> APIRouter:
             alliance["initial_sync"] = {"status": "not_configured", "message": "Synchronization is not configured"}
         return alliance
 
+    @router.post("/groups/{group_id}/alliances/{alliance_id}/whiteoutstats/connect")
+    async def post_alliance_connection(
+        request: Request,
+        group_id: str,
+        alliance_id: str,
+        payload: WhiteoutStatsConnectionConfirm,
+    ) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        if not settings.whiteoutstats_api_key:
+            raise HTTPException(status_code=409, detail="WhiteoutStats API key is not configured on the backend")
+        alliance = groups.get_alliance(settings.database_path, group_id, alliance_id)
+        if alliance is None:
+            raise _not_found("Alliance not found in selected group")
+        try:
+            aid = confirmed_aid(
+                payload.preview_token,
+                state_id=str(alliance["state_id"]),
+                tag=str(alliance["tag"]),
+                expected_aid=str(alliance["whiteoutstats_alliance_id"]) if alliance["whiteoutstats_alliance_id"] else None,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        connected = groups.connect_whiteoutstats_alliance(
+            settings.database_path,
+            group_id,
+            alliance_id,
+            str(aid),
+            sync_enabled=bool(settings.whiteoutstats_api_key),
+        )
+        if connected is None:
+            raise _not_found("Alliance not found in selected group")
+        connected["initial_sync"] = (
+            await asyncio.to_thread(
+                whiteoutstats.sync_alliance,
+                settings.database_path,
+                settings,
+                group_id,
+                alliance_id,
+                trigger_type="initial",
+            )
+        ).payload()
+        return connected
+
     @router.patch("/groups/{group_id}/alliances/{alliance_id}")
     async def patch_alliance(
         request: Request,
@@ -194,6 +284,23 @@ def create_api_router(settings: Settings) -> APIRouter:
     ) -> dict[str, object]:
         session = require_admin(request, settings)
         require_csrf(request, session)
+        existing = groups.get_alliance(settings.database_path, group_id, alliance_id)
+        if existing is None:
+            raise _not_found("Alliance not found in selected group")
+        new_tag = payload.tag if payload.tag is not None else str(existing["tag"])
+        new_state_id = payload.state_id if payload.state_id is not None else str(existing["state_id"])
+        if existing["whiteoutstats_alliance_id"] and (new_tag != existing["tag"] or new_state_id != existing["state_id"]):
+            if not settings.whiteoutstats_api_key:
+                raise HTTPException(status_code=409, detail="WhiteoutStats API key is required to verify a State ID or tag change")
+            try:
+                confirmed_aid(
+                    payload.whiteoutstats_preview_token,
+                    state_id=new_state_id,
+                    tag=new_tag,
+                    expected_aid=str(existing["whiteoutstats_alliance_id"]),
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
         try:
             alliance = groups.update_alliance(settings.database_path, group_id, alliance_id, payload)
         except ValueError as error:

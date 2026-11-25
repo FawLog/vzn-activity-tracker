@@ -6,11 +6,12 @@ import sqlite3
 from typing import Any
 
 from fastapi.testclient import TestClient
+import pytest
 
 from app.config import Settings
 from app import database
 from app.factory import create_app
-from app.schemas import AllianceCreate, GroupCreate, PlayerCreate
+from app.schemas import AllianceCreate, AllianceUpdate, GroupCreate, PlayerCreate
 from app.services import groups, records, whiteoutstats
 
 
@@ -23,6 +24,10 @@ class FakeFetcher:
         self.calls.append((state_id, tag, wait))
         return self.responses.pop(0)
 
+    def fetch_info(self, state_id: str, tag: str) -> whiteoutstats.ProviderResponse:
+        self.calls.append((state_id, tag, 0))
+        return self.responses.pop(0)
+
 
 def payload(*, cached_at: str = "2026-01-01T00:00:00Z", members: list[dict[str, Any]] | None = None, kid: str = "1001", count: int | None = None) -> dict[str, Any]:
     roster = members if members is not None else [{"fid": "101", "uid": "u101", "nick_name": "North", "power": 100, "kills": 12, "furnace_level": 30, "alliance_rank": 4, "kid": kid, "avatar_url": "https://example.test/a.png"}]
@@ -33,7 +38,24 @@ def setup_alliance(settings: Settings, *, name: str = "VZN", state: str = "1001"
     database.migrate(settings.database_path)
     group = groups.create_group(settings.database_path, GroupCreate(name=name, primary_alliance_name=name, primary_alliance_tag=name, primary_alliance_state_id=state), onboarding=onboarding, sync_enabled=True)
     alliance = groups.list_alliances(settings.database_path, str(group["id"]))[0]
+    groups.connect_whiteoutstats_alliance(
+        settings.database_path,
+        str(group["id"]),
+        str(alliance["id"]),
+        "a1",
+        sync_enabled=True,
+    )
     return str(group["id"]), str(alliance["id"])
+
+
+def connect_alliance(settings: Settings, group_id: str, alliance_id: str, aid: str = "a1") -> None:
+    assert groups.connect_whiteoutstats_alliance(
+        settings.database_path,
+        group_id,
+        alliance_id,
+        aid,
+        sync_enabled=True,
+    ) is not None
 
 
 def synced(settings: Settings, group_id: str, alliance_id: str, response: dict[str, Any], *, trigger: str = "scheduled") -> whiteoutstats.SyncResult:
@@ -127,6 +149,7 @@ def test_older_source_snapshot_does_not_replace_current_profile_or_membership(se
     group_id, primary_id = setup_alliance(configured)
     academy = groups.create_additional_alliance(configured.database_path, group_id, AllianceCreate(name="Academy", tag="ACA", state_id="1001"), sync_enabled=True)
     assert academy is not None
+    connect_alliance(configured, group_id, str(academy["id"]))
     newer = payload(cached_at="2026-01-02T00:00:00Z", members=[{"fid": "101", "nick_name": "New North", "power": 200, "kills": 20, "furnace_level": 31, "alliance_rank": 3, "kid": "1001"}])
     older = payload(cached_at="2026-01-01T00:00:00Z", members=[{"fid": "101", "nick_name": "Old North", "power": 100, "kills": 10, "furnace_level": 30, "alliance_rank": 4, "kid": "1001"}])
     assert synced(configured, group_id, primary_id, newer).status == "success"
@@ -143,6 +166,7 @@ def test_temporary_then_permanent_transfer_after_48_hours(settings: Settings) ->
     group_id, primary_id = setup_alliance(configured)
     additional = groups.create_additional_alliance(configured.database_path, group_id, AllianceCreate(name="Academy", tag="ACA", state_id="1001"), sync_enabled=True)
     assert additional is not None
+    connect_alliance(configured, group_id, str(additional["id"]))
     academy_id = str(additional["id"])
     assert synced(configured, group_id, primary_id, payload(cached_at="2026-01-01T00:00:00Z")).status == "success"
     assert synced(configured, group_id, academy_id, payload(cached_at="2026-01-02T00:00:00Z")).status == "success"
@@ -161,6 +185,7 @@ def test_return_closes_temporary_transition_before_a_later_new_departure(setting
     group_id, primary_id = setup_alliance(configured)
     academy = groups.create_additional_alliance(configured.database_path, group_id, AllianceCreate(name="Academy", tag="ACA", state_id="1001"), sync_enabled=True)
     assert academy is not None
+    connect_alliance(configured, group_id, str(academy["id"]))
     academy_id = str(academy["id"])
     assert synced(configured, group_id, primary_id, payload(cached_at="2026-01-01T00:00:00Z")).status == "success"
     assert synced(configured, group_id, academy_id, payload(cached_at="2026-01-02T00:00:00Z")).status == "success"
@@ -177,6 +202,7 @@ def test_state_change_confirms_transfer_immediately_and_groups_stay_isolated(set
     group_id, primary_id = setup_alliance(configured)
     moved = groups.create_additional_alliance(configured.database_path, group_id, AllianceCreate(name="Moved", tag="MOV", state_id="1002"), sync_enabled=True)
     assert moved is not None
+    connect_alliance(configured, group_id, str(moved["id"]))
     assert synced(configured, group_id, primary_id, payload()).status == "success"
     assert synced(configured, group_id, str(moved["id"]), payload(cached_at="2026-01-01T01:00:00Z", kid="1002")).status == "success"
     other_group, other_alliance = setup_alliance(configured, name="OTHER", onboarding=False)
@@ -215,6 +241,103 @@ def test_scheduler_uses_backoff_for_failures_and_limits_transient_followups(sett
     assert whiteoutstats._parse_timestamp(retry) >= whiteoutstats._parse_timestamp(attempt) + timedelta(minutes=719)
 
 
+def test_preview_confirmation_connects_before_initial_import(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    database.migrate(configured.database_path)
+    preview = whiteoutstats.preview_alliance(configured, "1001", "VZN", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, payload())))
+    assert preview["status"] == "success" and preview["alliance"]["aid"] == "a1"
+    with sqlite3.connect(configured.database_path) as sqlite_database:
+        assert sqlite_database.execute("SELECT COUNT(*) FROM players").fetchone()[0] == 0
+    aid = whiteoutstats.confirmed_preview_aid(
+        configured,
+        str(preview["confirmation_token"]),
+        state_id="1001",
+        tag="VZN",
+    )
+    group = groups.create_group(
+        configured.database_path,
+        GroupCreate(name="VZN", primary_alliance_name="VZN", primary_alliance_tag="VZN", primary_alliance_state_id="1001"),
+        onboarding=True,
+        sync_enabled=True,
+        whiteoutstats_alliance_id=aid,
+    )
+    alliance_id = str(groups.list_alliances(configured.database_path, str(group["id"]))[0]["id"])
+    assert synced(configured, str(group["id"]), alliance_id, payload()).status == "success"
+    assert records.list_players(configured.database_path, str(group["id"]), limit=10)["total"] == 1
+
+
+def test_preview_rejection_or_missing_aid_does_not_connect_or_import(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    not_found = whiteoutstats.preview_alliance(configured, "9999", "MISSING", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(404, {})))
+    assert not_found == {"status": "failed", "message": "WhiteoutStats returned HTTP 404"}
+    group_id, alliance_id = setup_alliance(configured)
+    with sqlite3.connect(configured.database_path) as database:
+        database.execute("UPDATE alliance_sync_settings SET whiteoutstats_alliance_id = NULL WHERE alliance_id = ?", (alliance_id,))
+    preview = whiteoutstats.preview_alliance(configured, "1001", "VZN", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, {"alliance": {}})))
+    assert preview["status"] == "failed"
+    assert synced(configured, group_id, alliance_id, payload()).message == "WhiteoutStats alliance is not connected"
+    assert records.list_players(configured.database_path, group_id, limit=10)["total"] == 0
+
+
+def test_existing_local_alliance_connects_after_explicit_confirmation(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    database.migrate(configured.database_path)
+    group = groups.create_group(
+        configured.database_path,
+        GroupCreate(name="Local", primary_alliance_name="Local", primary_alliance_tag="LOC", primary_alliance_state_id="1001"),
+        onboarding=True,
+    )
+    alliance_id = str(groups.list_alliances(configured.database_path, str(group["id"]))[0]["id"])
+    preview = whiteoutstats.preview_alliance(configured, "1001", "LOC", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, payload())))
+    aid = whiteoutstats.confirmed_preview_aid(configured, str(preview["confirmation_token"]), state_id="1001", tag="LOC")
+    connected = groups.connect_whiteoutstats_alliance(configured.database_path, str(group["id"]), alliance_id, aid, sync_enabled=True)
+    assert connected is not None and connected["whiteoutstats_alliance_id"] == "a1"
+    assert synced(configured, str(group["id"]), alliance_id, payload()).status == "success"
+
+
+def test_identity_mismatch_never_imports_scheduled_or_manual_data(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, alliance_id = setup_alliance(configured)
+    wrong = payload()
+    wrong["alliance"]["aid"] = "other-aid"
+    for trigger in ("scheduled", "manual"):
+        result = whiteoutstats.sync_alliance(
+            configured.database_path,
+            configured,
+            group_id,
+            alliance_id,
+            trigger_type=trigger,
+            fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, wrong)),
+        )
+        assert result.status == "failed" and "Alliance identity mismatch: expected a1, received other-aid" in str(result.message)
+    with sqlite3.connect(configured.database_path) as database:
+        assert database.execute("SELECT COUNT(*) FROM player_game_stat_snapshots").fetchone()[0] == 0
+        assert database.execute("SELECT COUNT(*) FROM player_membership_observations").fetchone()[0] == 0
+
+
+def test_same_aid_allows_game_name_and_tag_update(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    group_id, alliance_id = setup_alliance(configured)
+    renamed = payload()
+    renamed["alliance"].update({"name": "VZN Renamed", "abbr": "VZ2"})
+    assert synced(configured, group_id, alliance_id, renamed).status == "success"
+    preview = whiteoutstats.preview_alliance(configured, "1001", "VZ2", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, renamed)))
+    token = str(preview["confirmation_token"])
+    current = groups.get_alliance(configured.database_path, group_id, alliance_id)
+    assert current is not None
+    assert whiteoutstats.confirmed_preview_aid(configured, token, state_id="1001", tag="VZ2", expected_aid=str(current["whiteoutstats_alliance_id"])) == "a1"
+    other = payload()
+    other["alliance"]["aid"] = "other-aid"
+    other_preview = whiteoutstats.preview_alliance(configured, "1001", "OTHER", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, other)))
+    with pytest.raises(ValueError, match="Alliance identity mismatch"):
+        whiteoutstats.confirmed_preview_aid(configured, str(other_preview["confirmation_token"]), state_id="1001", tag="OTHER", expected_aid="a1")
+    updated = groups.update_alliance(configured.database_path, group_id, alliance_id, AllianceUpdate(tag="VZ2", state_id="1001"))
+    assert updated is not None and updated["tag"] == "VZ2"
+    with sqlite3.connect(configured.database_path) as database:
+        snapshot = database.execute("SELECT external_name, external_tag FROM alliance_stat_snapshots ORDER BY id DESC LIMIT 1").fetchone()
+    assert tuple(snapshot) == ("VZN Renamed", "VZ2")
+
+
 def test_sync_routes_are_admin_and_csrf_protected(settings: Settings, monkeypatch) -> None:
     configured = replace(settings, whiteoutstats_api_key="test-key")
     monkeypatch.setattr(
@@ -228,13 +351,27 @@ def test_sync_routes_are_admin_and_csrf_protected(settings: Settings, monkeypatc
         login = client.post("/api/v1/auth/login", headers={"X-CSRF-Token": csrf}, json={"password": "a sufficiently long test password"})
         assert login.status_code == 200
         csrf = login.json()["csrf_token"]
-        group = client.post("/api/v1/onboarding/groups", headers={"X-CSRF-Token": csrf}, json={"name": "VZN", "primary_alliance_name": "VZN", "primary_alliance_tag": "VZN", "primary_alliance_state_id": "1001"})
+        preview = client.post("/api/v1/whiteoutstats/alliances/preview", headers={"X-CSRF-Token": csrf}, json={"tag": "VZN", "state_id": "1001"})
+        assert preview.status_code == 200 and preview.json()["status"] == "success"
+        group = client.post("/api/v1/onboarding/groups", headers={"X-CSRF-Token": csrf}, json={"name": "VZN", "primary_alliance_name": "VZN", "primary_alliance_tag": "VZN", "primary_alliance_state_id": "1001", "whiteoutstats_preview_token": preview.json()["confirmation_token"]})
         assert group.status_code == 201
         assert group.json()["initial_sync"]["status"] == "success"
         alliance_id = client.get(f"/api/v1/groups/{group.json()['id']}/alliances").json()["items"][0]["id"]
-        extra_group = client.post("/api/v1/groups", headers={"X-CSRF-Token": csrf}, json={"name": "OTHER", "primary_alliance_name": "OTHER", "primary_alliance_tag": "OTHER", "primary_alliance_state_id": "1001"})
+        extra_preview = client.post("/api/v1/whiteoutstats/alliances/preview", headers={"X-CSRF-Token": csrf}, json={"tag": "OTHER", "state_id": "1001"})
+        extra_group = client.post("/api/v1/groups", headers={"X-CSRF-Token": csrf}, json={"name": "OTHER", "primary_alliance_name": "OTHER", "primary_alliance_tag": "OTHER", "primary_alliance_state_id": "1001", "whiteoutstats_preview_token": extra_preview.json()["confirmation_token"]})
         assert extra_group.status_code == 201 and extra_group.json()["initial_sync"]["status"] == "success"
-        additional = client.post(f"/api/v1/groups/{group.json()['id']}/alliances", headers={"X-CSRF-Token": csrf}, json={"name": "Academy", "tag": "ACA", "state_id": "1001"})
+        additional_preview = client.post("/api/v1/whiteoutstats/alliances/preview", headers={"X-CSRF-Token": csrf}, json={"tag": "ACA", "state_id": "1001"})
+        additional = client.post(f"/api/v1/groups/{group.json()['id']}/alliances", headers={"X-CSRF-Token": csrf}, json={"name": "Academy", "tag": "ACA", "state_id": "1001", "whiteoutstats_preview_token": additional_preview.json()["confirmation_token"]})
         assert additional.status_code == 201 and additional.json()["initial_sync"]["status"] == "success"
         assert client.get(f"/api/v1/groups/{group.json()['id']}/alliances/{alliance_id}/sync").status_code == 200
         assert client.post(f"/api/v1/groups/{group.json()['id']}/alliances/{alliance_id}/sync").status_code == 403
+        # A valid signed preview for a different AID cannot replace an existing connection.
+        other_token = whiteoutstats._encode_preview_token(configured, "1001", "VZN", "other-aid")
+        reassignment = client.post(
+            f"/api/v1/groups/{group.json()['id']}/alliances/{alliance_id}/whiteoutstats/connect",
+            headers={"X-CSRF-Token": csrf},
+            json={"preview_token": other_token},
+        )
+        assert reassignment.status_code == 409
+        assert groups.get_alliance(configured.database_path, group.json()["id"], alliance_id)["whiteoutstats_alliance_id"] == "a1"
+

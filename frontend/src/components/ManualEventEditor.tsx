@@ -63,7 +63,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const change=(next:ManualSession)=>{setDraft(next);setDirty(true);setConfirmPublish(false)};
   const add=(player:Player)=>{
     if(!draft||draft.rows.some(r=>r.fid===player.fid))return;
-    materialize([...visibleRows,blank(player)]);
+    change({...draft,roster_complete:false,rows:[...visibleRows,blank(player)].map(r=>({...r,eligibility:r.eligibility==="no_duty"?"no_duty":"unknown",registration:r.registration==="not_registered"?"unknown":r.registration,attendance:r.attendance==="confirmed_absent"?"unknown":r.attendance}))});
   };
   useEffect(()=>{
     let active=true;
@@ -85,7 +85,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const patchVisible=(fid:string,patch:Partial<ManualRow>)=>{
     materialize(visibleRows.map(r=>r.fid===fid?{...r,...patch}:r));
   };
-  const regPatch=(row:ManualRow,checked:boolean):ManualRow=>({...row,registration:checked?"registered":"unknown",role:checked?row.role:null,registered_by:checked?row.registered_by:null});
+  const regPatch=(row:ManualRow,checked:boolean):ManualRow=>({...row,registration:checked?"registered":"unknown",role:checked?row.role:null,registered_by:checked?row.registered_by:null,attendance:!checked&&row.attendance==="confirmed_absent"?"unknown":row.attendance});
   const bulk=(checked:boolean)=>materialize(visibleRows.map(r=>regPatch(r,checked)));
   const metricPatch=(row:ManualRow,key:string,value:string):ManualRow=>{
     const metrics={...row.metrics};
@@ -128,7 +128,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     if(errors.length){setError(errors.join("; "));return}
     if(!updates.length){setError("Paste at least one player.");return}
     for(const row of updates)rows.set(row.fid,row);
-    materialize([...rows.values()]);setPaste("");setMessage("Imported "+updates.length+" players into draft. Review before saving.");
+    change({...draft,roster_complete:updates.some(r=>!visibleRows.some(v=>v.fid===r.fid))?false:draft.roster_complete,rows:[...rows.values()].map(r=>updates.some(u=>!visibleRows.some(v=>v.fid===u.fid))?{...r,eligibility:r.eligibility==="no_duty"?"no_duty":"unknown",registration:r.registration==="not_registered"?"unknown":r.registration,attendance:r.attendance==="confirmed_absent"?"unknown":r.attendance}:r)});setPaste("");setMessage("Imported "+updates.length+" players into draft. Review before saving.");
   };
   const confirmRoster=(checked:boolean)=>{
     if(!draft)return;
@@ -141,7 +141,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   };
   const save=async()=>{
     if(!draft)return;
-    const rows=visibleRows.map(r=>({...r,registration:definition.registration&&draft.roster_complete&&draft.registration_complete&&r.eligibility==="confirmed"&&r.registration==="unknown"?"not_registered" as const:r.registration,attendance:definition.attendance&&draft.roster_complete&&draft.attendance_complete&&r.eligibility==="confirmed"&&r.attendance==="unknown"&&(!definition.battle||r.registration==="registered")?"confirmed_absent" as const:r.attendance}));
+    const rows=visibleRows.map(r=>({...r,registration:definition.registration&&draft.roster_complete&&draft.registration_complete&&r.eligibility==="confirmed"&&r.registration==="unknown"?"not_registered" as const:r.registration,attendance:r.attendance}));
     const v=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:!!draft.roster_complete,registration_complete:!!draft.registration_complete,attendance_complete:!!draft.attendance_complete,results_complete:!!draft.results_complete,rows});
     apply(v,draft.id);setMessage("Draft saved.");
   };
@@ -149,7 +149,10 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const selectField=(row:ManualRow,field:keyof typeof choices)=><select aria-label={row.nickname+" "+title(field)} value={row[field]??""} disabled={!editable||busy} onChange={e=>{
     const value=e.target.value;
     const patch={ [field]:value||null } as Partial<ManualRow>;
+    if(field==="attendance"&&value==="confirmed_absent"&&(!draft?.roster_complete||!draft.attendance_complete||row.eligibility!=="confirmed")){setError("Confirm historical roster and attendance evidence in Review completeness before marking an absence.");return;}
+    if(field==="attendance"&&value==="confirmed_absent"&&Object.values(row.metrics).some(v=>v>0)){setError("A positive score conflicts with absence.");return;}
     if(field==="registration"&&value!=="registered"){patch.role=null;patch.registered_by=null}
+    if(field==="role"&&value)patch.registration="registered";
     patchVisible(row.fid,patch);
   }}>{choices[field].map(v=><option key={v} value={v}>{v?title(v):"—"}</option>)}</select>;
   return <section className="data-panel data-panel--page manual-editor">
@@ -175,11 +178,11 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     </div>
     {query.trim()&&<div className="manual-controls">{candidates.filter(p=>!visibleRows.some(r=>r.fid===p.fid)&&((p.nickname??"")+" "+p.fid).toLowerCase().includes(query.toLowerCase())).slice(0,15).map(p=><button className="button button--quiet" key={p.fid} disabled={busy} onClick={()=>add(p)}>Add {p.nickname??p.fid}</button>)}</div>}
     </>}
-    <div className="table-wrap"><table><thead><tr><th>Player / ID</th>{definition.registration&&<th>Registered</th>}{definition.battle&&<th>Role</th>}{definition.attendance&&definition.battle&&<th>Attendance</th>}{definition.metrics.map(([k,l])=><th key={k}>{l}</th>)}{editable&&review&&<th>Roster exception</th>}</tr></thead><tbody>
+    <div className="table-wrap"><table><thead><tr><th>Player / ID</th>{definition.registration&&<th>Registered</th>}{definition.battle&&<th>Role</th>}{definition.attendance&&(definition.battle||review||!editable)&&<th>Attendance</th>}{definition.metrics.map(([k,l])=><th key={k}>{l}</th>)}{editable&&review&&<th>Roster exception</th>}</tr></thead><tbody>
     {visibleRows.filter(r=>!query.trim()|| (r.nickname+" "+r.fid).toLowerCase().includes(query.toLowerCase())).sort((a,b)=>sort==="nickname"?a.nickname.localeCompare(b.nickname):(b.metrics[sort]??-1)-(a.metrics[sort]??-1)).map(row=><tr key={row.fid}><td>{row.nickname}<small className="table-subline mono">{row.fid}</small></td>
     {definition.registration&&<td><input type="checkbox" aria-label={row.nickname+" Registered"} checked={row.registration==="registered"} disabled={!editable||busy} onChange={e=>patchVisible(row.fid,regPatch(row,e.target.checked))}/>{row.registration==="unknown"&&!editable?" Unknown":row.registration==="excused"?" Excused":""}</td>}
     {definition.battle&&<td>{selectField(row,"role")}</td>}
-    {definition.attendance&&definition.battle&&<td>{selectField(row,"attendance")}</td>}
+    {definition.attendance&&(definition.battle||review||!editable)&&<td>{selectField(row,"attendance")}</td>}
     {definition.metrics.map(([key,label])=><td key={key}><input type="number" min={0} max={Number.MAX_SAFE_INTEGER} step={1} aria-label={row.nickname+" "+label} disabled={!editable||busy} value={row.metrics[key]??""} onChange={e=>{const next=metricPatch(row,key,e.target.value);if(definition.attendance&&Number(e.target.value)>0)next.attendance="confirmed_present";patchVisible(row.fid,next)}}/></td>)}
     {editable&&review&&<td><label><input type="checkbox" checked={row.eligibility==="no_duty"} onChange={e=>patchVisible(row.fid,{eligibility:e.target.checked?"no_duty":draft.roster_complete?"confirmed":"unknown",registration:row.registration==="not_registered"?"unknown":row.registration,attendance:row.attendance==="confirmed_absent"?"unknown":row.attendance})}/>Not eligible</label></td>}
     </tr>)}
@@ -188,9 +191,9 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     {review&&<div className="manual-review"><h3>Review before publishing</h3><p>Leave unchecked if the information is partial. Missing entries remain unknown.</p>
     <label><input type="checkbox" checked={!!draft.roster_complete} onChange={e=>confirmRoster(e.target.checked)}/>This is the full alliance roster at the time of the event (mark exceptions in the table).</label>
     {definition.registration&&<label><input type="checkbox" checked={!!draft.registration_complete} onChange={e=>complete("registration_complete",e.target.checked)}/>I entered the complete registration list.</label>}
-    {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>I verified who actually attended, not just who scored points.</label>}
+    {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>I verified who actually attended, not just who scored points. Mark confirmed absences explicitly in the table.</label>}
     {!definition.registration&&!definition.attendance&&<label><input type="checkbox" checked={!!draft.results_complete} onChange={e=>complete("results_complete",e.target.checked)}/>I entered the full results list.</label>}
-    <p>Only confirmed eligible players can be marked absent or not registered. Zero points alone are not proof of absence.</p>
+    <p>Only confirmed eligible players can be marked absent or not registered. Blank and zero scores never automatically become absences.</p>
     <button className="button button--primary" disabled={busy} onClick={()=>void run(save)}>Save reviewed draft</button></div>}</>}
     </>}
     {editable&&editor.sessions.length>0&&<div className="manual-controls"><label><input type="checkbox" checked={confirmPublish} disabled={dirty||busy} onChange={e=>setConfirmPublish(e.target.checked)}/>I reviewed all recorded sessions (unknown remains unknown)</label><button className="button button--secondary" disabled={busy||dirty||!confirmPublish} onClick={()=>void run(async()=>{apply(await api.publishEvent(groupId,record.id),selected);setConfirmPublish(false);onPublished();setMessage("Event published.")})}>Publish event</button></div>}

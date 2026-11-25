@@ -138,5 +138,16 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByLabel(/^Event date/).fill("2026-11-24");
   await page.getByRole("button", { name: "Create event" }).click();
   await expect(page.getByText("Event record created for the selected alliance.")).toBeVisible();
+  await page.goto("/events");
+  await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
+  await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
+  await page.getByRole("button",{name:"Add session"}).click();
+  await page.getByRole("button",{name:"Load group players"}).click();
+  await page.getByRole("button",{name:"Add Roster Scout",exact:true}).click();
+  await page.getByLabel("Roster Scout Personal points").fill("4500000000");
+  await page.getByRole("button",{name:"Save draft"}).click();
+  await expect(page.getByText("Draft saved.",{exact:true})).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");
   await page.screenshot({ path: testInfo.outputPath("alliance-event.png"), fullPage: true });
 });

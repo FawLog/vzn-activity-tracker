@@ -153,3 +153,27 @@ export interface AuditRecord {
   actor: string;
   created_at: string;
 }
+
+export interface ManualRow {
+  fid: string; nickname: string;
+  eligibility: "confirmed" | "unknown" | "no_duty";
+  registration: "registered" | "not_registered" | "excused" | "unknown";
+  role: "main" | "substitute" | null;
+  registered_by: "player" | "officer" | "unknown" | null;
+  attendance: "confirmed_present" | "confirmed_absent" | "excused" | "no_duty" | "unknown";
+  metrics: Record<string, number>;
+}
+export interface ManualSessionSave {
+  revision: number;
+  roster_complete: boolean;
+  registration_complete: boolean;
+  attendance_complete: boolean;
+  results_complete: boolean;
+  rows: ManualRow[];
+}
+export interface ManualSession extends ManualSessionSave {
+  id: string; session_key: string; started_at: string;
+}
+export interface ManualEvent {
+  event_id: string; event_type: string; status: EventStatus; sessions: ManualSession[];
+}

@@ -529,3 +529,14 @@ td strong { color: var(--text); font-weight: 650; }
 @media (max-width: 600px) {
   .sync-panel .button { width: 100%; }
 }
+
+.manual-editor { min-width: 0; }
+.manual-editor .manual-controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:12px; }
+.manual-editor input:not([type=checkbox]), .manual-editor select { min-height:32px; max-width:100%; color:var(--text); background:var(--surface-raised); border:1px solid var(--line); border-radius:4px; padding:4px 7px; }
+.manual-editor label { display:flex; gap:6px; align-items:center; font-size:11px; color:var(--text-soft); }
+.manual-editor .notice { margin:12px; }
+.manual-editor td input { width:125px; }
+.manual-editor td select { width:125px; }
+.manual-editor td:first-child { min-width:170px; }
+.manual-editor .manual-help { padding:0 12px; color:var(--muted); font-size:11px; }
+.manual-editor fieldset { border:0; padding:0; margin:0; min-width:0; }

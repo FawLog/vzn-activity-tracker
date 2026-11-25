@@ -1,4 +1,4 @@
-import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, OverviewData, Player, SyncStatus } from "./types";
+import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
   error?: { message?: string };
@@ -70,6 +70,10 @@ export const api = {
   event: (groupId: string, id: string) => request<EventRecord>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}`),
   createEvent: (groupId: string, allianceId: string, payload: { event_type: string; occurred_on: string; status: string }) =>
     request<EventRecord>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/events`, { method: "POST", body: JSON.stringify(payload) }),
+  eventEditor: (groupId: string, id: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/editor`),
+  createEventSession: (groupId: string, id: string, session_key: string, started_at: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/sessions`, {method:"POST",body:JSON.stringify({session_key,started_at})}),
+  saveEventSession: (groupId: string, id: string, sessionId: string, payload: ManualSessionSave) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}`, {method:"PUT",body:JSON.stringify(payload)}),
+  publishEvent: (groupId: string, id: string) => request<ManualEvent>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/publish`, {method:"POST"}),
   rankings: (groupId: string) =>
     request<{ categories: Array<{ id: string; status: string }>; message: string }>(`/api/v1/groups/${encodeURIComponent(groupId)}/rankings`),
   audit: () => request<{ items: AuditRecord[] }>("/api/v1/admin/audit"),

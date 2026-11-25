@@ -243,6 +243,7 @@ def test_scheduler_uses_backoff_for_failures_and_limits_transient_followups(sett
 
 def test_preview_confirmation_connects_before_initial_import(settings: Settings) -> None:
     configured = replace(settings, whiteoutstats_api_key="test-key")
+    database.migrate(configured.database_path)
     preview = whiteoutstats.preview_alliance(configured, "1001", "VZN", fetcher=FakeFetcher(whiteoutstats.ProviderResponse(200, payload())))
     assert preview["status"] == "success" and preview["alliance"]["aid"] == "a1"
     with sqlite3.connect(configured.database_path) as database:

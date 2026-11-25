@@ -27,6 +27,7 @@ transaction_root=""
 backup_container_path=""
 backup_host_path=""
 previous_release=""
+previous_image=""
 transaction_started=0
 update_completed=0
 
@@ -129,7 +130,7 @@ restore_database() {
   [[ -n "${backup_container_path}" ]] || return 1
   docker run --rm --user 10001:10001 \
     --volume "${APP_ROOT}/data:/data" \
-    "vzn-activity-tracker-backend:${image_tag}" \
+    "${previous_image}" \
     python -m app.backup restore "${backup_container_path}" --database /data/vzn.sqlite3 >/dev/null
 }
 
@@ -243,6 +244,14 @@ source_commit="$(tr -d '\r\n' < "${SOURCE_ROOT}/REVISION")"
 [[ "$(basename "${frontend_archive}")" == "vzn-frontend-${commit}.tar.gz" ]] || fail "Frontend artifact does not match the commit"
 [[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || fail "Backend artifact does not match the commit"
 
+previous_image_tag="$(python3 "${SOURCE_ROOT}/scripts/set_image_tag.py" read "${APP_ROOT}/.env")"
+previous_image="vzn-activity-tracker-backend:${previous_image_tag}"
+running_image="$(docker container inspect --format '{{.Config.Image}}' "${CONTAINER_NAME}")"
+[[ "${running_image}" == "${previous_image}" ]] || \
+  fail "Existing backend image does not match the configured VZN image tag"
+docker image inspect "${previous_image}" >/dev/null || \
+  fail "Configured previous VZN backend image is unavailable for rollback"
+
 available_bytes="$(df --output=avail --block-size=1 / | tail -n 1 | tr -d ' ')"
 source_bytes="$(du -sb -- "${SOURCE_ROOT}" | awk '{print $1}')"
 data_bytes="$(du -sb -- "${APP_ROOT}/data" | awk '{print $1}')"
@@ -263,7 +272,8 @@ transaction_root="$(mktemp -d "${BACKUP_ROOT}/update-${release_id}.XXXXXX")"
 chmod 0700 "${transaction_root}"
 install -o root -g root -m 0600 "${APP_ROOT}/.env" "${transaction_root}/.env"
 install -o root -g root -m 0644 "${APP_ROOT}/compose.yaml" "${transaction_root}/compose.yaml"
-printf 'COMMIT=%s\nRELEASE_ID=%s\nPREVIOUS_RELEASE=%s\n' "${commit}" "${release_id}" "${previous_release}" > "${transaction_root}/transaction"
+printf 'COMMIT=%s\nRELEASE_ID=%s\nPREVIOUS_RELEASE=%s\nPREVIOUS_IMAGE=%s\n' \
+  "${commit}" "${release_id}" "${previous_release}" "${previous_image}" > "${transaction_root}/transaction"
 chmod 0600 "${transaction_root}/transaction"
 
 backup_database

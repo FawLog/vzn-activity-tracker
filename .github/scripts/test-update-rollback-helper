@@ -1,0 +1,131 @@
+#!/bin/bash
+set -Eeuo pipefail
+
+# Exercise the updater's failure path without touching a real application or Docker
+# daemon. The mock rejects `docker load`; rollback must restore through the image
+# that was already running before the update, not the unavailable staged image.
+fixture_root="$(mktemp -d)"
+cleanup() {
+  sudo rm -rf -- "${fixture_root}"
+}
+trap cleanup EXIT
+
+old_commit="$(printf 'b%.0s' {1..40})"
+new_commit="$(printf 'c%.0s' {1..40})"
+old_image="vzn-activity-tracker-backend:ci-${old_commit}"
+staging_root="${fixture_root}/staging"
+app_root="${fixture_root}/app"
+backup_root="${fixture_root}/backups"
+host_config="${fixture_root}/deploy.conf"
+healthcheck_helper="${fixture_root}/healthcheck.sh"
+mock_bin="${fixture_root}/bin"
+mock_log="${fixture_root}/docker.log"
+updater="${fixture_root}/vzn-update"
+
+install -d "${staging_root}/source/scripts" "${staging_root}/frontend" "${staging_root}/backend" "${mock_bin}"
+printf '%s\n' "${new_commit}" > "${staging_root}/source/REVISION"
+printf 'name: test\n' > "${staging_root}/source/compose.yaml"
+install -m 0755 scripts/set_image_tag.py "${staging_root}/source/scripts/set_image_tag.py"
+install -m 0755 deploy/root/healthcheck.sh "${healthcheck_helper}"
+
+payload_root="${fixture_root}/payload"
+install -d "${payload_root}/frontend" "${payload_root}/backend"
+printf '<!doctype html>\n' > "${payload_root}/frontend/index.html"
+tar --create --gzip --file "${staging_root}/frontend/vzn-frontend-${new_commit}.tar.gz" --directory "${payload_root}/frontend" .
+(
+  cd "${staging_root}/frontend"
+  sha256sum "vzn-frontend-${new_commit}.tar.gz" > "vzn-frontend-${new_commit}.tar.gz.sha256"
+)
+printf 'new image payload\n' > "${payload_root}/backend/image.txt"
+tar --create --gzip --file "${staging_root}/backend/vzn-backend-${new_commit}.tar.gz" --directory "${payload_root}/backend" .
+(
+  cd "${staging_root}/backend"
+  sha256sum "vzn-backend-${new_commit}.tar.gz" > "vzn-backend-${new_commit}.tar.gz.sha256"
+)
+printf 'VZN_IMAGE_TAG=ci-%s\nGIT_COMMIT=%s\n' "${new_commit}" "${new_commit}" > \
+  "${staging_root}/backend/vzn-backend-${new_commit}.manifest"
+
+install -d "${app_root}/releases/previous" "${app_root}/data/backups" "${backup_root}"
+ln -s "${app_root}/releases/previous" "${app_root}/current"
+printf 'VZN_IMAGE_TAG=ci-%s\n' "${old_commit}" > "${fixture_root}/env"
+printf 'name: previous\n' > "${fixture_root}/compose.yaml"
+printf 'VZN_PUBLIC_IPV4=203.0.113.10\n' > "${fixture_root}/deploy.conf"
+
+cat > "${mock_bin}/docker" <<'MOCK_DOCKER'
+#!/bin/bash
+set -Eeuo pipefail
+
+command_line="$*"
+case "${1:-}" in
+  container)
+    if [[ "${command_line}" == *"--format"*".Config.Image"* ]]; then
+      printf '%s\n' "${MOCK_OLD_IMAGE}"
+    elif [[ "${command_line}" == *"--format"*"com.docker.compose.project"* ]]; then
+      printf '%s\n' 'vzn-activity-tracker'
+    fi
+    ;;
+  image)
+    [[ "${2:-}" == "inspect" && "${3:-}" == "${MOCK_OLD_IMAGE}" ]]
+    ;;
+  load)
+    printf 'docker load failed as requested\n' >&2
+    exit 1
+    ;;
+  run)
+    printf 'restore %s\n' "${command_line}" >> "${MOCK_LOG}"
+    [[ "${command_line}" == *"${MOCK_OLD_IMAGE}"* ]]
+    ;;
+  compose)
+    if [[ "${command_line}" == *" exec "*" app.backup create"* ]]; then
+      touch "${MOCK_APP_ROOT}/data/backups/vzn-20261125T060000Z.sqlite3"
+      printf '/data/backups/vzn-20261125T060000Z.sqlite3\n'
+    elif [[ "${command_line}" == *" stop backend"* ]]; then
+      printf 'stop\n' >> "${MOCK_LOG}"
+    elif [[ "${command_line}" == *" up --detach --no-build --force-recreate backend"* ]]; then
+      printf 'restart previous\n' >> "${MOCK_LOG}"
+    fi
+    ;;
+esac
+MOCK_DOCKER
+cat > "${mock_bin}/systemctl" <<'MOCK_SYSTEMCTL'
+#!/bin/bash
+[[ "${1:-}" == 'is-active' ]] && printf 'active\n'
+MOCK_SYSTEMCTL
+cat > "${mock_bin}/nginx" <<'MOCK_NGINX'
+#!/bin/bash
+[[ "${1:-}" == '-t' ]]
+MOCK_NGINX
+cat > "${mock_bin}/curl" <<'MOCK_CURL'
+#!/bin/bash
+printf '%s' '{"status":"ok","database":"ready","migration_version":4}'
+MOCK_CURL
+chmod 0755 "${mock_bin}/docker" "${mock_bin}/systemctl" "${mock_bin}/nginx" "${mock_bin}/curl"
+
+sed \
+  -e "s|^export PATH=.*|export PATH=\"${mock_bin}:/usr/sbin:/usr/bin:/sbin:/bin\"|" \
+  -e "s|^readonly STAGING_ROOT=.*|readonly STAGING_ROOT=\"${staging_root}\"|" \
+  -e "s|^readonly APP_ROOT=.*|readonly APP_ROOT=\"${app_root}\"|" \
+  -e "s|^readonly BACKUP_ROOT=.*|readonly BACKUP_ROOT=\"${backup_root}\"|" \
+  -e "s|^readonly HOST_CONFIG=.*|readonly HOST_CONFIG=\"${host_config}\"|" \
+  -e "s|^readonly HEALTHCHECK_HELPER=.*|readonly HEALTHCHECK_HELPER=\"${healthcheck_helper}\"|" \
+  deploy/root/update-vzn-activity-tracker > "${updater}"
+chmod 0755 "${updater}"
+
+sudo install -o root -g root -m 0600 "${fixture_root}/env" "${app_root}/.env"
+sudo install -o root -g root -m 0644 "${fixture_root}/compose.yaml" "${app_root}/compose.yaml"
+sudo install -o root -g root -m 0600 "${fixture_root}/deploy.conf" "${host_config}"
+sudo chown -R root:root "${staging_root}" "${app_root}/releases" "${backup_root}" "${healthcheck_helper}"
+sudo chmod -R go-w "${staging_root}" "${app_root}/releases" "${backup_root}" "${healthcheck_helper}"
+sudo chown 10001:10001 "${app_root}/data"
+sudo chmod 0750 "${app_root}/data"
+
+if sudo env MOCK_OLD_IMAGE="${old_image}" MOCK_APP_ROOT="${app_root}" MOCK_LOG="${mock_log}" \
+  bash "${updater}" > "${fixture_root}/updater.log" 2>&1; then
+  printf 'Expected docker load fixture failure.\n' >&2
+  exit 1
+fi
+
+grep -Fqx "stop" "${mock_log}"
+grep -Fq "restore run --rm --user 10001:10001 --volume ${app_root}/data:/data ${old_image}" "${mock_log}"
+grep -Fqx "restart previous" "${mock_log}"
+[[ "$(readlink --canonicalize-existing "${app_root}/current")" == "${app_root}/releases/previous" ]]

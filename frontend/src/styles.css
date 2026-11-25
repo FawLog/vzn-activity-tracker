@@ -601,3 +601,5 @@ td strong { color: var(--text); font-weight: 650; }
 .ocr-preview-item summary { cursor:pointer; font-size:12px; color:var(--text-soft); }
 
 .ocr-import select.ocr-match-warning { background-color: rgba(234, 179, 8, .15); border-color: #a78b42; }
+
+.ocr-import select.ocr-match-unresolved { background-color: rgba(239, 68, 68, .15); border-color: #b56565; }

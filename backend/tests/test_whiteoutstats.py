@@ -365,3 +365,13 @@ def test_sync_routes_are_admin_and_csrf_protected(settings: Settings, monkeypatc
         assert additional.status_code == 201 and additional.json()["initial_sync"]["status"] == "success"
         assert client.get(f"/api/v1/groups/{group.json()['id']}/alliances/{alliance_id}/sync").status_code == 200
         assert client.post(f"/api/v1/groups/{group.json()['id']}/alliances/{alliance_id}/sync").status_code == 403
+        # A valid signed preview for a different AID cannot replace an existing connection.
+        other_token = whiteoutstats._encode_preview_token(configured, "1001", "VZN", "other-aid")
+        reassignment = client.post(
+            f"/api/v1/groups/{group.json()['id']}/alliances/{alliance_id}/whiteoutstats/connect",
+            headers={"X-CSRF-Token": csrf},
+            json={"preview_token": other_token},
+        )
+        assert reassignment.status_code == 409
+        assert groups.get_alliance(configured.database_path, group.json()["id"], alliance_id)["whiteoutstats_alliance_id"] == "a1"
+

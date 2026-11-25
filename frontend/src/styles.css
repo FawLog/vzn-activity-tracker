@@ -540,3 +540,10 @@ td strong { color: var(--text); font-weight: 650; }
 .manual-editor td:first-child { min-width:170px; }
 .manual-editor .manual-help { padding:0 12px; color:var(--muted); font-size:11px; }
 .manual-editor fieldset { border:0; padding:0; margin:0; min-width:0; }
+
+.manual-import,.manual-review { display:grid; gap:10px; padding:14px; border-top:1px solid var(--line); }
+.manual-import textarea { width:100%; min-height:80px; resize:vertical; background:var(--surface,#102332); color:var(--text); border:1px solid var(--line,#526779); padding:8px; border-radius:4px; }
+.manual-import .button,.manual-review .button { justify-self:start; }
+.manual-editor td input[type=checkbox] { width:auto; min-width:16px; accent-color:var(--cyan-bright); }
+.manual-review p { font-size:12px; color:var(--text-soft); }
+.manual-review label { align-items:flex-start; }

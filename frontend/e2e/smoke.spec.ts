@@ -142,7 +142,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
   await page.getByRole("button",{name:"Add session"}).click();
-  await page.getByRole("button",{name:"Load group players"}).click();
+  await page.getByRole("textbox",{name:"Find player"}).fill("Roster Scout");
   await page.getByRole("button",{name:"Add Roster Scout",exact:true}).click();
   await page.getByLabel("Roster Scout Personal points").fill("4500000000");
   const [saveResponse] = await Promise.all([

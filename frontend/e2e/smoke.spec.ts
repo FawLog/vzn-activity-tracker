@@ -61,6 +61,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
       const button = header.getByRole("button");
       for (const direction of label === "Nickname" ? ["asc"] : ["desc", "asc"]) {
         await button.scrollIntoViewIfNeeded({ timeout: 8_000 });
+        if (testInfo.project.name === "mobile-390") {
+          await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+        }
         await Promise.all([
           page.waitForResponse((response) => {
             const url = new URL(response.url());

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import type { ReviewRow } from "../lib/ocrReview";
 import { ScreenshotImport } from "./ScreenshotImport";
 import type { EventRecord, ManualEvent, ManualRow, ManualSession, Player } from "../lib/types";
 
@@ -147,6 +148,45 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     const v=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:!!draft.roster_complete,registration_complete:!!draft.registration_complete,attendance_complete:!!draft.attendance_complete,results_complete:!!draft.results_complete,rows});
     apply(v,draft.id);setMessage("Draft saved.");
   };
+  const importOcr=async(imported:ReviewRow[])=>{
+    if(!draft||!editable||!loaded||busy)throw new Error("Wait for the roster and draft to finish loading.");
+    if(dirty)throw new Error("Save or discard manual changes before importing OCR results.");
+    const rows=new Map(visibleRows.map(r=>[r.fid,r]));
+    const pool=new Map(candidates.map(p=>[p.fid,blank(p)]));
+    const seen=new Set<string>();
+    let added=false,overwrites=0;
+    for(const entry of imported){
+      if(!entry.fid||seen.has(entry.fid)||!entry.include||!["exact","manual"].includes(entry.match))throw new Error("Review player matches before importing.");
+      seen.add(entry.fid);
+      const existing=rows.get(entry.fid);
+      let row=existing??pool.get(entry.fid);
+      if(!row)throw new Error("Player no longer belongs to this group.");
+      if(!existing)added=true;
+      if(record.event_type==="alliance_championship"){
+        if(row.registration==="not_registered"||row.registration==="excused")overwrites++;
+        row=regPatch(row,true);
+      }else if(record.event_type==="bear_trap"){
+        const damage=entry.damage;
+        if(damage===undefined||!Number.isSafeInteger(damage)||damage<=0)throw new Error("Invalid damage.");
+        if((row.metrics.damage!==undefined&&row.metrics.damage!==damage)||row.attendance==="confirmed_absent"||row.attendance==="excused")overwrites++;
+        row={...row,attendance:"confirmed_present",metrics:{...row.metrics,damage}};
+      }else if(record.event_type==="alliance_mobilization"){
+        const {completed,total,points}=entry;
+        if(completed===undefined||total===undefined||points===undefined||![completed,total,points].every(n=>Number.isSafeInteger(n)&&n>=0)||completed>total)throw new Error("Invalid missions or points.");
+        if((row.metrics.points!==undefined&&row.metrics.points!==points)||(row.metrics.missions_completed!==undefined&&row.metrics.missions_completed!==completed))overwrites++;
+        row={...row,metrics:{...row.metrics,missions_completed:completed,points}};
+      }else throw new Error("Automatic import is not supported for this event.");
+      rows.set(entry.fid,row);
+    }
+    if(!seen.size)throw new Error("No reviewed players to import.");
+    if(overwrites&&!window.confirm("Replace existing results or registration for "+overwrites+" players?"))throw new Error("Import cancelled; existing results unchanged.");
+    const nextRows=[...rows.values()].map(r=>added?{...r,eligibility:r.eligibility==="no_duty"?"no_duty" as const:"unknown" as const,registration:r.registration==="not_registered"?"unknown" as const:r.registration,attendance:r.attendance==="confirmed_absent"?"unknown" as const:r.attendance}:r);
+    setBusy(true);setError("");setMessage("");
+    try{
+      const result=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:added?false:draft.roster_complete,registration_complete:draft.registration_complete,attendance_complete:draft.attendance_complete,results_complete:draft.results_complete,rows:nextRows});
+      apply(result,draft.id);setConfirmPublish(false);setMessage("Imported "+seen.size+" players and saved draft. Review before publishing.");
+    }finally{setBusy(false)}
+  };
   const available=definition.keys.filter(k=>!editor?.sessions.some(s=>s.session_key===k));
   const selectField=(row:ManualRow,field:keyof typeof choices)=><select aria-label={row.nickname+" "+title(field)} value={row[field]??""} disabled={!editable||busy} onChange={e=>{
     const value=e.target.value;
@@ -171,7 +211,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
       <label>Sort<select value={sort} onChange={e=>setSort(e.target.value)}><option value="nickname">Name</option>{definition.metrics.map(([key,label])=><option key={key} value={key}>{label} (highest first)</option>)}</select></label>
       {definition.registration&&<><button className="button button--quiet" disabled={busy||!loaded} onClick={()=>bulk(true)}>Register all</button><button className="button button--quiet" disabled={busy||!loaded} onClick={()=>bulk(false)}>Clear registrations</button><span>{visibleRows.filter(r=>r.registration==="registered").length} registered</span></>}
     </div>
-    <ScreenshotImport key={groupId+":"+record.id+":"+draft.id} groupId={groupId} eventId={record.id} sessionId={draft.id} disabled={busy} onBusy={setBusy} eventType={record.event_type} sessionKey={draft.session_key} players={candidates} onPaste={text=>{setPaste(text);setMessage("Reviewed OCR rows copied to Paste a list. Click Import list to apply to the draft.")}} />
+    <ScreenshotImport key={groupId+":"+record.id+":"+draft.id} groupId={groupId} eventId={record.id} sessionId={draft.id} disabled={busy||!loaded||dirty} onBusy={setBusy} eventType={record.event_type} sessionKey={draft.session_key} players={candidates} onImport={importOcr} />
     <div className="manual-import">
       <h3>Paste a list</h3>
       {definition.battle&&<label>List type<select value={pasteKind} onChange={e=>setPasteKind(e.target.value)}><option value="registration">Registered players</option><option value="main">Main players</option><option value="substitute">Substitutes</option><option value="metrics">Personal points</option></select></label>}

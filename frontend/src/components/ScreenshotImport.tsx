@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type OcrPreview } from "../lib/api";
-import { parseScreenshot, normalizeName, type ParsedRow } from "../lib/ocrParser";
+import { parseScreenshot, normalizeName } from "../lib/ocrParser";
 import { matchPlayer, rankedPlayers } from "../lib/ocrMatching";
+import { summarizeReview, type ReviewRow } from "../lib/ocrReview";
 import type { Player } from "../lib/types";
 
 type Item = { id: number; file: File; status: "pending" | "running" | "done" | "error"; result?: OcrPreview; error?: string };
@@ -33,7 +34,7 @@ async function prepare(file: File, limit: number): Promise<Blob> {
   } finally { bitmap.close(); }
 }
 
-export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,eventType,sessionKey,players,onPaste}:{groupId:string;eventId:string;sessionId:string;disabled:boolean;onBusy:(busy:boolean)=>void;eventType:string;sessionKey:string;players:Player[];onPaste:(text:string)=>void}) {
+export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,eventType,sessionKey,players,onImport}:{groupId:string;eventId:string;sessionId:string;disabled:boolean;onBusy:(busy:boolean)=>void;eventType:string;sessionKey:string;players:Player[];onImport:(rows:ReviewRow[])=>Promise<void>}) {
   const [config,setConfig]=useState<{configured:boolean;max_image_bytes:number}|null>(null);
   const [error,setError]=useState("");
   const [items,setItems]=useState<Item[]>([]);
@@ -55,7 +56,7 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
   const patch=(id:number,value:Partial<Item>)=>{if(active.current)setItems(old=>old.map(item=>item.id===id?{...item,...value}:item))};
   const recognize=async()=>{
     if(!config?.configured||running||disabled)return;
-    setRunning(true);onBusy(true);stop.current=false;setError("");
+    setRunning(true);onBusy(true);stop.current=false;setError("");setReviewRows([]);setParseWarnings([]);
     try {
       for(const item of items.filter(i=>i.status==="pending"||i.status==="error")){
         if(stop.current||!active.current)break;
@@ -69,7 +70,7 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
       }
     }finally{if(active.current){setRunning(false);onBusy(false)}}
   };
-  const [reviewRows,setReviewRows]=useState<(ParsedRow & {fid:string;include:boolean;match:"exact"|"suggested"|"unknown"|"manual"})[]>([]);
+  const [reviewRows,setReviewRows]=useState<ReviewRow[]>([]);
   const [parseWarnings,setParseWarnings]=useState<string[]>([]);
   const mobilization=eventType==="alliance_mobilization";
   const supported=eventType==="bear_trap"||eventType==="alliance_championship"||mobilization;
@@ -84,19 +85,33 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
     setReviewRows([...unique.values()]);setParseWarnings(parsed.flatMap(p=>p.warnings));
   };
   const selected=reviewRows.filter(r=>r.include);
-  const conflict=selected.some((r,i)=>r.fid&&selected.some((other,j)=>i!==j&&other.fid===r.fid));
+  const summary=summarizeReview(reviewRows,eventType);
+  const conflict=summary.conflicts.size>0;
+  const ordered=reviewRows.map((r,i)=>({r,i})).sort((a,b)=>{
+    const priority=(r:ReviewRow)=>!r.include?4:summary.conflicts.has(r.fid)?0:r.match==="unknown"?1:r.match==="suggested"?2:3;
+    return priority(a.r)-priority(b.r)||a.i-b.i;
+  });
+  const [imported,setImported]=useState(0);
+  const importResults=async()=>{
+    if(disabled||running||summary.conflicts.size||!summary.rows.length||selected.some(r=>!r.fid||r.match==="suggested"||r.match==="unknown"))return;
+    setError("");setRunning(true);
+    try{await onImport(summary.rows);if(active.current){setImported(summary.rows.length);setReviewRows([]);setItems([]);setParseWarnings([])}}
+    catch(e){if(active.current)setError(e instanceof Error?e.message:"Import failed")}
+    finally{if(active.current)setRunning(false)}
+  };
   const done=items.filter(i=>i.status==="done").length;
   return <div className="manual-import ocr-import">
     <h3>Import screenshots (OCR preview)</h3>
     {!supported&&<p className="manual-help">Automatic table parsing for this event is not available yet.</p>}
     <p className="manual-help">Select screenshots from this session. Images are sent to Google Vision one at a time. This preview does not change player results or publish the event.</p>
+    {imported>0&&<p role="status">Imported and saved {imported} players. Event remains a draft.</p>}
     {error&&<p role="alert">{error}</p>}
     {config&&!config.configured&&<p className="manual-help">Google Vision is not configured on the server.</p>}
     {config?.configured&&<>
       <label>Choose screenshots<input aria-label="Choose screenshots" type="file" accept="image/png,image/jpeg" multiple disabled={disabled||running} onChange={e=>{
         const files=Array.from(e.target.files??[]);e.target.value="";
         if(items.length+files.length>MAX_FILES){setError("Choose at most 30 screenshots per batch.");return}
-        setError("");setItems(old=>[...old,...files.map(file=>({id:++nextId.current,file,status:"pending" as const}))]);
+        setError("");setImported(0);setReviewRows([]);setParseWarnings([]);setItems(old=>[...old,...files.map(file=>({id:++nextId.current,file,status:"pending" as const}))]);
       }}/></label>
       {items.length>0&&<>
         <p className="manual-help" role="status">{done} of {items.length} screenshots recognized</p>
@@ -107,7 +122,7 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
         </div>
         {supported&&done>0&&<button className="button button--secondary" disabled={running||disabled} onClick={buildReview}>Review recognized players</button>}
         {parseWarnings.length>0&&<details><summary>Recognition warnings ({parseWarnings.length})</summary>{parseWarnings.map((w,i)=><p key={i}>{w}</p>)}</details>}
-        {reviewRows.length>0&&<><p className="manual-help">Yellow player selectors indicate suggested matches; red selectors indicate unresolved players. Check them against the screenshot; confirm suggestions by selecting a player or using Confirm suggested matches.</p><div className="table-wrap"><table><thead><tr><th>Include</th><th>Detected name / source</th><th>Player</th>{eventType==="bear_trap"&&<th>Damage</th>}{mobilization&&<><th>Missions</th><th>Points</th></>}</tr></thead><tbody>{reviewRows.map((r,i)=><tr key={i}><td><input type="checkbox" aria-label={"Include "+r.nickname} checked={r.include} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,include:e.target.checked}:v))}/></td><td>{r.nickname}<small className="table-subline">{r.source}</small></td><td><select className={r.match==="suggested"?"ocr-match-warning":r.match==="unknown"?"ocr-match-unresolved":""} aria-label={"Match "+r.nickname} title={r.match==="suggested"?"Suggested match — verify":r.match==="unknown"?"No reliable match": "Confirmed match"} value={r.fid} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,fid:e.target.value,match:e.target.value?"manual":"unknown"}:v))}><option value="">Choose player</option>{rankedPlayers(r.nickname,players).map(p=><option key={p.fid} value={p.fid}>{p.nickname??p.fid} · {p.fid}</option>)}</select></td>{eventType==="bear_trap"&&<td><input aria-label={"Damage for "+r.nickname} type="number" min={1} value={r.damage??""} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,damage:e.target.value?Number(e.target.value):undefined}:v))}/></td>}{mobilization&&<><td><input aria-label={"Completed for "+r.nickname} type="number" min={0} value={r.completed??""} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,completed:e.target.value===""?undefined:Number(e.target.value)}:v))}/> / {r.total??"—"}</td><td><input aria-label={"Points for "+r.nickname} type="number" min={0} value={r.points??""} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,points:e.target.value===""?undefined:Number(e.target.value)}:v))}/></td></>}</tr>)}</tbody></table></div>{selected.some(r=>r.match==="suggested")&&<button type="button" className="button button--secondary" disabled={disabled||running} onClick={()=>{if(window.confirm("Have you checked all included suggested player matches?"))setReviewRows(old=>old.map(r=>r.include&&r.match==="suggested"?{...r,match:"manual"}:r))}}>Confirm suggested matches</button>}{conflict&&<p role="alert">Conflicting rows for the same player: keep only one.</p>}<button className="button button--primary" disabled={disabled||running||!selected.length||conflict||selected.some(r=>!r.fid||r.match==="suggested"||(eventType==="bear_trap"&&(!Number.isSafeInteger(r.damage)||!r.damage||r.damage<1))||(mobilization&&(!Number.isSafeInteger(r.completed)||!Number.isSafeInteger(r.points)||(r.completed??-1)<0||(r.points??-1)<0||(r.completed??0)>(r.total??-1))))} onClick={()=>onPaste(selected.map(r=>r.fid+(eventType==="bear_trap"?"\t"+r.damage:mobilization?"\t"+r.completed+"\t"+r.points:"")).join("\n"))}>Copy reviewed rows to import field</button></>}
+        {reviewRows.length>0&&<><p className="manual-help">Yellow player selectors indicate suggested matches; red selectors indicate unresolved players. Check them against the screenshot; confirm suggestions by selecting a player or using Confirm suggested matches.</p><div className="table-wrap"><table><thead><tr><th>Include</th><th>Detected name / source</th><th>Player</th>{eventType==="bear_trap"&&<th>Damage</th>}{mobilization&&<><th>Missions</th><th>Points</th></>}</tr></thead><tbody>{ordered.map(({r,i})=><tr key={i} className={r.include&&summary.conflicts.has(r.fid)?"ocr-conflict-row":""}><td><input type="checkbox" aria-label={"Include "+r.nickname} checked={r.include} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,include:e.target.checked}:v))}/></td><td>{r.nickname}<small className="table-subline">{r.source}</small>{r.include&&summary.conflicts.has(r.fid)&&<small className="ocr-conflict-label">Conflicting results — keep one or correct values</small>}</td><td><select className={r.match==="suggested"?"ocr-match-warning":r.match==="unknown"?"ocr-match-unresolved":""} aria-label={"Match "+r.nickname} title={r.match==="suggested"?"Suggested match — verify":r.match==="unknown"?"No reliable match": "Confirmed match"} value={r.fid} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,fid:e.target.value,match:e.target.value?"manual":"unknown"}:v))}><option value="">Choose player</option>{rankedPlayers(r.nickname,players).map(p=><option key={p.fid} value={p.fid}>{p.nickname??p.fid} · {p.fid}</option>)}</select></td>{eventType==="bear_trap"&&<td><input aria-label={"Damage for "+r.nickname} type="number" min={1} value={r.damage??""} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,damage:e.target.value?Number(e.target.value):undefined}:v))}/></td>}{mobilization&&<><td><input aria-label={"Completed for "+r.nickname} type="number" min={0} value={r.completed??""} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,completed:e.target.value===""?undefined:Number(e.target.value)}:v))}/> / {r.total??"—"}</td><td><input aria-label={"Points for "+r.nickname} type="number" min={0} value={r.points??""} onChange={e=>setReviewRows(old=>old.map((v,j)=>i===j?{...v,points:e.target.value===""?undefined:Number(e.target.value)}:v))}/></td></>}</tr>)}</tbody></table></div>{selected.some(r=>r.match==="suggested")&&<button type="button" className="button button--secondary" disabled={disabled||running} onClick={()=>{if(window.confirm("Have you checked all included suggested player matches?"))setReviewRows(old=>old.map(r=>r.include&&r.match==="suggested"?{...r,match:"manual"}:r))}}>Confirm suggested matches</button>}{summary.duplicates>0&&<p role="status">{summary.duplicates} duplicate records will be merged automatically.</p>}{conflict&&<div role="alert" className="notice notice--error">Conflicting results: {[...summary.conflicts].map(fid=>players.find(p=>p.fid===fid)?.nickname??fid).join(", ")}. These rows are at the top of the table.</div>}<button className="button button--primary" disabled={disabled||running||!selected.length||conflict||selected.some(r=>!r.fid||r.match==="suggested"||r.match==="unknown"||(eventType==="bear_trap"&&(!Number.isSafeInteger(r.damage)||!r.damage||r.damage<1))||(mobilization&&(!Number.isSafeInteger(r.completed)||!Number.isSafeInteger(r.points)||(r.completed??-1)<0||(r.points??-1)<0||(r.completed??0)>(r.total??-1))))} onClick={()=>void importResults()}>Import results</button></>}
         {items.map(item=><div className="ocr-preview-item" key={item.id}>
           <div className="ocr-preview-heading"><strong>{item.file.name}</strong><span>{item.status}</span><button type="button" className="button button--quiet" disabled={running||disabled} onClick={()=>{setItems(old=>old.filter(i=>i.id!==item.id));setReviewRows([]);setParseWarnings([])}}>Remove</button></div>
           {item.error&&<p className="notice notice--error">{item.error}</p>}

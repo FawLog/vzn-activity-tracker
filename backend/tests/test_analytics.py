@@ -26,7 +26,7 @@ def test_published_analytics_scope_and_bear_cycles(authenticated_client,settings
         for fid in ("present","absent","partial","unknown"):
             db.execute("INSERT INTO player_primary_alliance_history(player_fid,group_id,alliance_id,effective_observed_at,source_type) VALUES (?,?,?,?,?)",(fid,gid,aid,"2026-11-01T00:00:00Z","manual"))
     assert c.get(url).json()["published_events"]==0
-    event_editor.publish(settings.database_path,gid,eid)
+    event_editor.publish(settings.database_path,gid,eid,True)
     r=c.get(url)
     assert r.status_code==200,r.text
     result=r.json()
@@ -55,3 +55,25 @@ def test_known_registration_and_substitute_reliability():
 
 def test_unauthenticated_analytics(client):
     assert client.get("/api/v1/groups/g/alliances/a/analytics?start=2026-11-01&end=2026-11-30").status_code==401
+
+
+def test_academy_host_and_incomplete_cycle(authenticated_client,settings):
+    c=authenticated_client
+    gid=create_onboarded_group(c)["id"]
+    aid=c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    academy=c.post(f"/api/v1/groups/{gid}/alliances",json={"name":"Academy","tag":"ACA","state_id":"1001"}).json()["id"]
+    assert c.post(f"/api/v1/groups/{gid}/players",json={"fid":"visitor","nickname":"Visitor"}).status_code==201
+    from app.database import transaction
+    with transaction(settings.database_path) as db:
+        db.execute("INSERT INTO player_primary_alliance_history(player_fid,group_id,alliance_id,effective_observed_at,source_type) VALUES (?,?,?,?,?)",("visitor",gid,aid,"2026-11-01T00:00:00Z","manual"))
+    root=f"/api/v1/groups/{gid}/alliances/{aid}"
+    eid=c.post(root+"/events",json={"event_type":"bear_trap","occurred_on":"2026-11-25"}).json()["id"]
+    s=event_editor.create_session(settings.database_path,gid,eid,SessionCreate(session_key="trap_3",started_at="2026-11-25T18:00:00Z",host_alliance_id=academy))["sessions"][0]
+    assert s["host_alliance_id"]==academy
+    event_editor.save(settings.database_path,gid,eid,s["id"],SessionSave(revision=0,rows=[{"fid":"visitor","nickname":"Visitor","attendance":"confirmed_present","metrics":{"damage":100}}]))
+    event_editor.publish(settings.database_path,gid,eid)
+    report=c.get(root+"/analytics?start=2026-11-01&end=2026-11-30").json()
+    assert report["events"][0]["metrics"]["attendance"]["positive"]==1
+    assert report["events"][0]["evidence"][0]["host_alliance_id"]==academy
+    assert analytics.bear_cycle([{"session_key":"trap_1","attendance_outcome":"negative"}],["trap_1"],False)=="unknown"
+    assert analytics.bear_cycle([{"session_key":"trap_1","attendance_outcome":"negative"}],["trap_1","trap_3"],True)=="unknown"

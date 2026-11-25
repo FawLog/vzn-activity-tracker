@@ -45,8 +45,9 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   const [review,setReview]=useState(false);
   const [sort,setSort]=useState("nickname");
   const [confirmPublish,setConfirmPublish]=useState(false);
+  const [cycleComplete,setCycleComplete]=useState(false);
   const apply=(value:ManualEvent, preferred?:string)=>{
-    setEditor(value);
+    setEditor(value);setCycleComplete(false);
     const session=value.sessions.find(s=>s.id===preferred) ?? value.sessions[0] ?? null;
     setSelected(session?.id ?? "");setDraft(session);setDirty(false);setReview(false);setPaste("");
   };
@@ -242,7 +243,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     <p>Only confirmed eligible players can be marked absent or not registered. Blank and zero scores never automatically become absences.</p>
     <button className="button button--primary" disabled={busy} onClick={()=>void run(save)}>Save reviewed draft</button></div>}</>}
     </>}
-    {editable&&editor.sessions.length>0&&<div className="manual-controls"><label><input type="checkbox" checked={confirmPublish} disabled={dirty||busy} onChange={e=>setConfirmPublish(e.target.checked)}/>I reviewed all recorded sessions (unknown remains unknown)</label><button className="button button--secondary" disabled={busy||dirty||!confirmPublish} onClick={()=>void run(async()=>{apply(await api.publishEvent(groupId,record.id),selected);setConfirmPublish(false);onPublished();setMessage("Event published.")})}>Publish event</button></div>}
+    {editable&&editor.sessions.length>0&&<div className="manual-controls">{record.event_type==="bear_trap"&&<label><input type="checkbox" checked={cycleComplete} disabled={dirty||busy} onChange={e=>setCycleComplete(e.target.checked)}/>All traps in this group cycle are recorded, including academy traps. Without this confirmation, missed cycles remain unknown.</label>}<label><input type="checkbox" checked={confirmPublish} disabled={dirty||busy} onChange={e=>setConfirmPublish(e.target.checked)}/>I reviewed all recorded sessions (unknown remains unknown)</label><button className="button button--secondary" disabled={busy||dirty||!confirmPublish} onClick={()=>void run(async()=>{apply(await api.publishEvent(groupId,record.id,cycleComplete),selected);setConfirmPublish(false);onPublished();setMessage("Event published.")})}>Publish event</button></div>}
     </>}
   </section>;
 }

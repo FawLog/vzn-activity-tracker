@@ -495,10 +495,10 @@ def create_api_router(settings: Settings) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.post("/groups/{group_id}/events/{event_id}/publish")
-    async def publish_event(request: Request, group_id: str, event_id: str):
+    async def publish_event(request: Request, group_id: str, event_id: str, bear_cycle_complete: bool = False):
         require_csrf(request, require_admin(request, settings))
         try:
-            return event_editor.publish(settings.database_path, group_id, event_id)
+            return event_editor.publish(settings.database_path, group_id, event_id, bear_cycle_complete)
         except LookupError as error:
             raise _not_found(str(error)) from error
         except ValueError as error:

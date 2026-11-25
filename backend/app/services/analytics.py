@@ -38,14 +38,14 @@ def attendance(row, session):
     return "unknown"
 
 
-def bear_cycle(sessions, expected_keys=None):
+def bear_cycle(sessions, expected_keys=None, complete=False):
     by_key = {s["session_key"]: s["attendance_outcome"] for s in sessions}
     values = [by_key.get(k, "unknown") for k in (expected_keys or ("trap_1", "trap_2"))]
     if "positive" in values:
         return "positive"
-    if len(values) >= 2 and all(v in ("negative","excused") for v in values) and "negative" in values:
+    if complete and values and all(v in ("negative","excused") for v in values) and "negative" in values:
         return "negative"
-    if len(values) >= 2 and all(v == "excused" for v in values):
+    if complete and values and all(v == "excused" for v in values):
         return "excused"
     return "unknown"
 
@@ -68,7 +68,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         if fid is not None and not db.execute("SELECT 1 FROM player_group_profiles WHERE group_id=? AND player_fid=?", (group_id,fid)).fetchone():
             raise LookupError("Player not found in selected group")
         events = [dict(r) for r in db.execute("""
-            SELECT e.id,e.event_type,e.occurred_on,e.alliance_id,a.name AS alliance_name
+            SELECT e.id,e.event_type,e.occurred_on,e.alliance_id,e.bear_cycle_complete,a.name AS alliance_name
             FROM events e JOIN alliances a ON a.id=e.alliance_id
             WHERE a.group_id=? AND (? IS NULL OR a.id=? OR e.event_type=\'bear_trap\') AND e.status='published'
               AND e.occurred_on BETWEEN ? AND ?
@@ -122,7 +122,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         entries=[]
         unknown_home=0
         for f in sorted(fids):
-            homes={h["alliance_id"] for h in home_history[f] if h["effective_observed_at"][:10] <= event["occurred_on"] and (h["ended_observed_at"] is None or h["ended_observed_at"][:10] > event["occurred_on"])}
+            homes={h["alliance_id"] for h in home_history[f] if h["effective_observed_at"][:10] < event["occurred_on"] and (h["ended_observed_at"] is None or h["ended_observed_at"][:10] > event["occurred_on"])}
             home=next(iter(homes)) if len(homes)==1 else None
             if kind=="bear_trap":
                 if home is None: unknown_home+=1
@@ -139,7 +139,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                     "registration_outcome":registration(row,s),"attendance_outcome":attendance(row,s),"metrics":row["metrics"]})
             entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"home_alliance_id":home,"sessions":evidence}
             if kind=="bear_trap":
-                entry["cycle_attendance"]=bear_cycle(evidence, sorted({"trap_1","trap_2"} | {s["session_key"] for s in ss}))
+                entry["cycle_attendance"]=bear_cycle(evidence, [s["session_key"] for s in ss], bool(event["bear_cycle_complete"]))
             entries.append(entry)
             histories[f].append(entry)
         event_reports.append({**event,"session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,

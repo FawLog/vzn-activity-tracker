@@ -52,3 +52,5 @@ Only published session evidence contributes. Date range is inclusive, max 366 da
 
 ## Group Bear cycles
 New Bear events are anchored to the active primary alliance, one per group/date; each trap has its own active host alliance, up to 30 traps. Existing records are not merged or deleted. Group trap numbers are independent of the local in-game trap number. Historical home alliance is derived only from observed primary-alliance intervals, never from current membership or host. Unknown historical homes are included in group analytics only. Attendance is once per cycle; absence requires explicit evidence for every recorded trap (and at least the original two slots); incomplete cycles remain unknown. Additional trap planning/completeness and historical roster correction need further UI support before negative attendance can be treated as exhaustive.
+
+Bear cycle completeness is explicitly confirmed at publication. Legacy cycles default to incomplete; positive attendance counts, negative cycle outcomes remain unknown until complete. Date-only historical attribution excludes same-day newly observed memberships rather than guessing intra-day affiliation.

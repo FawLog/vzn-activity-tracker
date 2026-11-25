@@ -31,7 +31,7 @@ export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:s
   if(eventType==="bear_trap"){
     const heading=lines.find(l=>/(?:Trap\s*[12]\s*Damage\s*Rewards|(?:ловушк[аеиу]|капкан)\s*[12])/iu.test(lineText(l)));
     const trap=heading&&lineText(heading).match(/(?:Trap|ловушк[аеиу]|капкан)\s*([12])/iu)?.[1];
-    if(trap&&sessionKey!=="trap_"+trap)warnings.push("Verify host and local trap number: screenshot numbering may differ from group cycle numbering.");
+    if(trap&&sessionKey!=="trap_"+trap){if(sessionKey==="trap_1"||sessionKey==="trap_2")return {rows,warnings:["Trap header does not match the selected session."]};warnings.push("Verify host and local trap number: screenshot numbering may differ from group cycle numbering.");}
     if(!trap)warnings.push("Trap number not visible: verify selected session manually.");
     const header=lines.find(l=>l.y>(heading?.y??-1)&&/(?:Ranking|рейтинг|место)/iu.test(lineText(l))&&/(?:Damage\s*Points|урон)/iu.test(lineText(l)));
     if(!header)warnings.push("Ranking header not visible; verify screenshot type manually.");

@@ -95,7 +95,7 @@ def read(path, group_id, event_id):
                 rows.append(entry)
             item["rows"] = rows
             sessions.append(item)
-        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "sessions": sessions}
+        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions}
 
 
 def create_session(path, group_id, event_id, payload):
@@ -111,6 +111,8 @@ def create_session(path, group_id, event_id, payload):
         if not db.execute("SELECT 1 FROM alliances WHERE id=? AND group_id=? AND status='active'", (host,group_id)).fetchone():
             raise ValueError("Host alliance must be active in the selected group")
         db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)", (uuid.uuid4().hex, event_id, payload.session_key, payload.started_at.isoformat(),host))
+        if event["event_type"] == "bear_trap":
+            db.execute("UPDATE events SET bear_cycle_complete=0 WHERE id=?", (event_id,))
         _audit(db, event_id, "session_created")
     return read(path, group_id, event_id)
 
@@ -156,9 +158,9 @@ def save(path, group_id, event_id, session_id, payload):
     return read(path, group_id, event_id)
 
 
-def publish(path, group_id, event_id):
+def publish(path, group_id, event_id, bear_cycle_complete=False):
     with transaction(path) as db:
-        _event(db, group_id, event_id, editable=True)
+        event = _event(db, group_id, event_id, editable=True)
         sessions = db.execute("SELECT id FROM event_sessions WHERE event_id=?", (event_id,)).fetchall()
         if not sessions or any(not db.execute("SELECT 1 FROM event_session_roster WHERE session_id=?", (s["id"],)).fetchone() for s in sessions):
             raise ValueError("Every session needs reviewed player records before publication")
@@ -188,7 +190,7 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
         if action == "reopen":
             if event["status"] != "published":
                 raise ValueError("Only published events can be reopened")
-            db.execute("UPDATE events SET status='draft',updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
+            db.execute("UPDATE events SET status='draft',bear_cycle_complete=0,updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
             db.execute("UPDATE event_sessions SET revision=revision+1 WHERE event_id=?", (event_id,))
         elif action == "date":
             if event["status"] != "draft" or occurred_on is None:

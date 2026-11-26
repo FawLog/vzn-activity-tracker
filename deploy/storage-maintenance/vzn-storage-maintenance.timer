@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily VZN deployment storage maintenance
+
+[Timer]
+OnCalendar=*-*-* 03:25:00 UTC
+RandomizedDelaySec=20m
+Persistent=true
+Unit=vzn-storage-maintenance.service
+
+[Install]
+WantedBy=timers.target
+

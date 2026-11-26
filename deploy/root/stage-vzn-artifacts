@@ -8,10 +8,13 @@ unset BASH_ENV CDPATH COMPOSE_FILE COMPOSE_PROJECT_NAME DOCKER_CONTEXT DOCKER_HO
 readonly STAGING_ROOT="/var/lib/vzn-deploy-staging"
 readonly UPDATE_STAGING_ROOT="/var/lib/vzn-update-staging"
 readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
+readonly OPERATION_LOCK_DIRECTORY="/var/lib/vzn-autodeploy"
+readonly OPERATION_LOCK="${OPERATION_LOCK_DIRECTORY}/lock"
 readonly INSTALLED_DEPLOYER="/usr/local/sbin/vzn-deploy"
 readonly INSTALLED_UPDATER="/usr/local/sbin/vzn-update"
 readonly INSTALLED_SUDOERS_HELPER="/usr/local/sbin/vzn-manage-sudoers"
 readonly INSTALLED_HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
+readonly INSTALLED_STORAGE_MAINTENANCE="/usr/local/sbin/vzn-storage-maintenance"
 
 staging_temp=""
 
@@ -31,6 +34,18 @@ trap 'exit 143' TERM
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+acquire_operation_lock() {
+  local inherited="${VZN_OPERATION_LOCK_FD:-}"
+  install -d -o root -g root -m 0700 "${OPERATION_LOCK_DIRECTORY}"
+  if [[ "${inherited}" =~ ^[0-9]+$ && -e "/proc/self/fd/${inherited}" && \
+    "$(readlink -f -- "/proc/self/fd/${inherited}")" == "${OPERATION_LOCK}" ]]; then
+    flock -n "${inherited}" || fail "Another VZN operation is active"
+    return
+  fi
+  exec {operation_lock_fd}>"${OPERATION_LOCK}"
+  flock -n "${operation_lock_fd}" || fail "Another VZN operation is active"
 }
 
 validate_archive() {
@@ -55,6 +70,7 @@ PY
 }
 
 [[ "${EUID}" -eq 0 ]] || fail "Run this staging helper as root"
+acquire_operation_lock
 case "$#:${1:-}" in
   1:*) mode="install"; artifact_argument="$1" ;;
   2:--update) mode="update"; artifact_argument="$2" ;;
@@ -145,7 +161,8 @@ for required_source in \
   deploy/root/install-vzn-activity-tracker \
   deploy/root/update-vzn-activity-tracker \
   deploy/root/manage-vzn-sudoers \
-  deploy/root/healthcheck.sh; do
+  deploy/root/healthcheck.sh \
+  deploy/root/vzn-storage-maintenance; do
   [[ -f "${staging_temp}/source/${required_source}" ]] || fail "Deployment source is missing: ${required_source}"
 done
 if [[ "${mode}" == "auto-update" ]]; then
@@ -159,7 +176,7 @@ st = config.lstat()
 if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
     raise SystemExit("Unsafe control approval file")
 approved = json.loads(config.read_text())
-required = {"compose.yaml", "scripts/set_image_tag.py", "deploy/root/stage-vzn-artifacts", "deploy/root/update-vzn-activity-tracker", "deploy/root/manage-vzn-sudoers", "deploy/root/healthcheck.sh", "deploy/root/install-vzn-activity-tracker"}
+required = {"compose.yaml", "scripts/set_image_tag.py", "deploy/root/stage-vzn-artifacts", "deploy/root/update-vzn-activity-tracker", "deploy/root/manage-vzn-sudoers", "deploy/root/healthcheck.sh", "deploy/root/install-vzn-activity-tracker", "deploy/root/vzn-storage-maintenance"}
 if set(approved) != required:
     raise SystemExit("Invalid control approval set")
 for name in required:
@@ -198,3 +215,7 @@ install -o root -g root -m 0755 \
 install -d -o root -g root -m 0755 /usr/local/lib/vzn-activity-tracker
 install -o root -g root -m 0755 \
   "${staging_root}/source/deploy/root/healthcheck.sh" "${INSTALLED_HEALTHCHECK_HELPER}"
+if [[ "${mode}" != "auto-update" ]]; then
+  install -o root -g root -m 0755 \
+    "${staging_root}/source/deploy/root/vzn-storage-maintenance" "${INSTALLED_STORAGE_MAINTENANCE}"
+fi

@@ -27,7 +27,8 @@ JOBS = {"Committed lockfile policy", "Backend tests and migrations", "TypeScript
         "Backend image build and smoke test", "Playwright full-stack browser tests", "Assemble deployment bundle"}
 CONTROL_FILES = ("compose.yaml", "scripts/set_image_tag.py", "deploy/root/stage-vzn-artifacts",
                  "deploy/root/update-vzn-activity-tracker", "deploy/root/manage-vzn-sudoers",
-                 "deploy/root/healthcheck.sh", "deploy/root/install-vzn-activity-tracker")
+                 "deploy/root/healthcheck.sh", "deploy/root/install-vzn-activity-tracker",
+                 "deploy/root/vzn-storage-maintenance")
 SHA = re.compile(r"[0-9a-f]{40}")
 
 class SafeRedirect(HTTPRedirectHandler):
@@ -187,10 +188,36 @@ def check_installed_controls():
     approved=json.loads(root_file(CONFIG/"approved-controls.json").read_text())
     for installed,source in (("/usr/local/sbin/vzn-stage-vzn-artifacts","deploy/root/stage-vzn-artifacts"),
                              ("/usr/local/sbin/vzn-update","deploy/root/update-vzn-activity-tracker"),
-                             ("/usr/local/lib/vzn-activity-tracker/healthcheck.sh","deploy/root/healthcheck.sh")):
+                             ("/usr/local/lib/vzn-activity-tracker/healthcheck.sh","deploy/root/healthcheck.sh"),
+                             ("/usr/local/sbin/vzn-storage-maintenance","deploy/root/vzn-storage-maintenance")):
         require(sha256(root_file(Path(installed)))==approved[source],"Installed control differs from reviewed version")
 
-def deploy():
+def write_deployment_context(sha, run_id):
+    """The root worker, not the untrusted artifact source, supplies the CI run id."""
+    target = Path("/var/lib/vzn-update-staging/deployment-context.json")
+    require(type(run_id) is int and run_id > 0 and SHA.fullmatch(sha), "Invalid deployment context")
+    staging = target.parent.lstat()
+    require(target.parent.is_dir() and not target.parent.is_symlink() and staging.st_uid == 0
+            and staging.st_gid == 0 and not staging.st_mode & 0o022, "Missing update staging")
+    temporary = target.with_name(".deployment-context.json.tmp")
+    temporary.unlink(missing_ok=True)
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump({"commit":sha,"ci_run_id":run_id}, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+def root_operation(arguments, lock_fd):
+    environment = os.environ.copy()
+    environment["VZN_OPERATION_LOCK_FD"] = str(lock_fd)
+    subprocess.run(arguments, check=True, env=environment, pass_fds=(lock_fd,))
+
+def deploy(lock_fd):
     if (CONFIG/"autodeploy-paused").exists():
         print("Automatic deployment paused")
         return
@@ -246,9 +273,10 @@ def deploy():
         # Record before mutating production; a failed SHA is not retried automatically.
         failed.write_text(sha+"\n")
         print("Deploying "+sha+" from CI "+str(run_id),flush=True)
-        subprocess.run(["/usr/local/sbin/vzn-stage-vzn-artifacts","--auto-update",str(root)],check=True)
+        root_operation(["/usr/local/sbin/vzn-stage-vzn-artifacts","--auto-update",str(root)], lock_fd)
+        write_deployment_context(sha, run_id)
         check_installed_controls()
-        subprocess.run(["/usr/local/sbin/vzn-update"],check=True)
+        root_operation(["/usr/local/sbin/vzn-update"], lock_fd)
         require(current_sha()==sha,"Unexpected deployed image")
         failed.unlink()
         print("Deployment SUCCESS "+sha,flush=True)
@@ -264,7 +292,7 @@ def main():
         # Remove signal before processing; a new signal during work remains for the next activation.
         QUEUE.unlink(missing_ok=True)
         try:
-            deploy()
+            deploy(lock.fileno())
         except Exception as error:
             # Avoid printing network exception details or signed redirect URLs.
             print("Deployment blocked/failed: "+(str(error) if type(error) is RuntimeError else type(error).__name__),flush=True)

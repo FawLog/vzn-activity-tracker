@@ -87,6 +87,32 @@ SQLite backup API, restores the old image tag, Compose file and frontend link, a
 starts only the previous VZN backend. The prior image is deliberately retained;
 no Docker image, volume or system-wide prune runs.
 
+## Deployment storage retention
+
+Deployment storage is retained as coherent recovery points, not as independent
+lists of archives. A root-owned `vzn-storage-maintenance` helper records a
+point only after local and public health checks have succeeded. Each point
+contains the deployed SHA, optional CI run ID, release path, image tag,
+transaction directory, verified SQLite backup path and Compose digest. The
+registry is root-only and atomically replaced. Existing historical releases
+and transactions without such metadata are legacy evidence and are never
+automatically reconstructed or deleted.
+
+The retention target is the current point plus three previous recorded points.
+The helper deletes only an unretained registered release, its VZN image tag
+after confirming that no running or stopped container and no additional tag
+references the image, root-owned build-only `staged-update-*` snapshots older
+than 24 hours, and root worker `download-*` residues older than 24 hours. It
+never follows symlinks, crosses a mount point, removes arbitrary paths, uses
+Docker prune, or deletes SQLite backups, transaction/configuration directories,
+failed/interrupted recovery directories, current staging, or user-owned
+artifacts. A deployment marker or held deployment lock causes maintenance to
+refuse or defer safely.
+
+The normal command is a dry run. `cleanup --apply` must follow owner review of
+the emitted candidate list. A cleanup failure after a healthy deployment is
+logged and can be retried; it never rolls back the healthy application.
+
 An uncatchable interruption leaves `/srv/vzn-activity-tracker/.vzn-updating` as a
 root-only evidence marker. The next update refuses to run rather than guessing
 whether a migration completed. Inspect the named root-only transaction and backup,

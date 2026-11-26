@@ -1,0 +1,18 @@
+[Unit]
+Description=VZN deployment storage maintenance
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/vzn-storage-maintenance cleanup --apply
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/vzn-autodeploy /var/lib/vzn-storage-maintenance /var/backups/vzn-activity-tracker /srv/vzn-activity-tracker
+

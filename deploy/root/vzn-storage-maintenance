@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Conservative VZN deployment-storage maintenance.
+
+This root-owned helper intentionally has a fixed set of paths.  It never
+discovers arbitrary directories, follows symlinks, or prunes Docker globally.
+The normal command is a dry run; ``--apply`` is required for deletion.
+"""
+from __future__ import annotations
+
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+APP = Path("/srv/vzn-activity-tracker")
+BACKUPS = Path("/var/backups/vzn-activity-tracker")
+AUTO_STATE = Path("/var/lib/vzn-autodeploy")
+STATE = Path("/var/lib/vzn-storage-maintenance")
+REGISTRY = STATE / "recovery-points.json"
+LOCK = AUTO_STATE / "lock"
+RELEASES = APP / "releases"
+DATA_BACKUPS = APP / "data" / "backups"
+RETAIN_PREVIOUS = 3
+STALE_SECONDS = 24 * 60 * 60
+SHA = re.compile(r"[0-9a-f]{40}")
+RELEASE_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}")
+IMAGE = re.compile(r"vzn-activity-tracker-backend:ci-([0-9a-f]{40})")
+
+
+class SafetyError(RuntimeError):
+    """A conservative validation failure; no destructive action may proceed."""
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise SafetyError(message)
+
+
+def root_regular(path: Path, mode: int | None = None) -> None:
+    entry = path.lstat()
+    require(stat.S_ISREG(entry.st_mode) and entry.st_uid == 0 and entry.st_gid == 0,
+            f"unsafe root file: {path}")
+    require(not stat.S_ISLNK(entry.st_mode) and not entry.st_mode & 0o022,
+            f"unsafe root file permissions: {path}")
+    if mode is not None:
+        require(stat.S_IMODE(entry.st_mode) == mode, f"unexpected mode: {path}")
+
+
+def root_directory(path: Path, mode: int | None = None) -> None:
+    entry = path.lstat()
+    require(stat.S_ISDIR(entry.st_mode) and entry.st_uid == 0 and entry.st_gid == 0,
+            f"unsafe root directory: {path}")
+    require(not stat.S_ISLNK(entry.st_mode) and not entry.st_mode & 0o022,
+            f"unsafe root directory permissions: {path}")
+    if mode is not None:
+        require(stat.S_IMODE(entry.st_mode) == mode, f"unexpected mode: {path}")
+
+
+def data_directory(path: Path) -> None:
+    entry = path.lstat()
+    require(stat.S_ISDIR(entry.st_mode) and entry.st_uid == 10001 and entry.st_gid == 10001,
+            f"unsafe application data directory: {path}")
+    require(not stat.S_ISLNK(entry.st_mode) and not entry.st_mode & 0o022,
+            f"unsafe application data directory permissions: {path}")
+
+
+def data_regular(path: Path) -> None:
+    entry = path.lstat()
+    require(stat.S_ISREG(entry.st_mode) and entry.st_uid == 10001 and entry.st_gid == 10001,
+            f"unsafe application data file: {path}")
+    require(not stat.S_ISLNK(entry.st_mode) and not entry.st_mode & 0o022,
+            f"unsafe application data file permissions: {path}")
+
+
+def direct_child(path: Path, parent: Path) -> bool:
+    """Reject symlinks and anything outside exactly one expected parent."""
+    try:
+        return path.parent == parent and path.resolve(strict=True).parent == parent.resolve(strict=True)
+    except OSError:
+        return False
+
+
+def atomic_json(path: Path, value: object) -> None:
+    root_directory(path.parent, 0o700)
+    descriptor, temporary = tempfile.mkstemp(prefix=".recovery-", dir=path.parent)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(value, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        root_regular(path, 0o600)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def read_registry() -> dict[str, object]:
+    if not REGISTRY.exists():
+        return {"version": 1, "points": []}
+    root_regular(REGISTRY, 0o600)
+    raw = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    require(isinstance(raw, dict) and raw.get("version") == 1 and isinstance(raw.get("points"), list),
+            "invalid recovery registry")
+    return raw
+
+
+def valid_point(point: object) -> bool:
+    if not isinstance(point, dict):
+        return False
+    required = {"commit", "release", "image", "transaction", "backup", "recorded_at", "status", "ci_run_id", "compose_sha256"}
+    if set(point) != required or point["status"] != "successful":
+        return False
+    return (
+        isinstance(point["commit"], str) and SHA.fullmatch(point["commit"]) is not None
+        and isinstance(point["release"], str) and RELEASE_ID.fullmatch(Path(point["release"]).name) is not None
+        and isinstance(point["image"], str) and IMAGE.fullmatch(point["image"]) is not None
+        and isinstance(point["transaction"], str) and isinstance(point["backup"], str)
+        and isinstance(point["recorded_at"], str) and isinstance(point["compose_sha256"], str)
+        and re.fullmatch(r"[0-9a-f]{64}", point["compose_sha256"]) is not None
+        and (point["ci_run_id"] is None or isinstance(point["ci_run_id"], int))
+    )
+
+
+def record_success(arguments: argparse.Namespace) -> None:
+    require(os.geteuid() == 0, "root is required")
+    for directory, mode in ((APP, None), (RELEASES, None), (BACKUPS, None)):
+        root_directory(directory, mode)
+    data_directory(DATA_BACKUPS)
+    require(SHA.fullmatch(arguments.commit) is not None, "invalid commit")
+    release = Path(arguments.release)
+    transaction = Path(arguments.transaction)
+    backup = Path(arguments.backup)
+    image = arguments.image
+    require(direct_child(release, RELEASES) and RELEASE_ID.fullmatch(release.name) is not None,
+            "unsafe release path")
+    require(direct_child(transaction, BACKUPS) and transaction.name.startswith("update-"),
+            "unsafe transaction path")
+    require(direct_child(backup, DATA_BACKUPS) and re.fullmatch(r"vzn-[0-9]{8}T[0-9]{6}Z\.sqlite3", backup.name),
+            "unsafe backup path")
+    root_directory(release)
+    root_directory(transaction, 0o700)
+    data_regular(backup)
+    require(IMAGE.fullmatch(image) is not None and image.endswith(arguments.commit), "invalid image tag")
+    compose = APP / "compose.yaml"
+    root_regular(compose, 0o644)
+    current = APP / "current"
+    require(current.is_symlink() and current.resolve(strict=True) == release.resolve(strict=True),
+            "current release does not match successful deployment")
+    if STATE.exists():
+        root_directory(STATE, 0o700)
+    else:
+        STATE.mkdir(mode=0o700, parents=True)
+    root_directory(STATE, 0o700)
+    registry = read_registry()
+    points = registry["points"]
+    assert isinstance(points, list)
+    point = {
+        "commit": arguments.commit,
+        "release": str(release),
+        "image": image,
+        "transaction": str(transaction),
+        "backup": str(backup),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "status": "successful",
+        "ci_run_id": arguments.ci_run_id,
+        "compose_sha256": __import__("hashlib").sha256(compose.read_bytes()).hexdigest(),
+    }
+    points[:] = [item for item in points if not (isinstance(item, dict) and item.get("commit") == arguments.commit)]
+    points.append(point)
+    atomic_json(REGISTRY, registry)
+    print(f"Recorded VZN recovery point {arguments.commit}")
+
+
+@dataclass(frozen=True)
+class Candidate:
+    kind: str
+    path: str
+    reason: str
+
+
+def operation_active() -> bool:
+    return any(path.exists() or path.is_symlink() for path in (APP / ".vzn-updating", APP / ".vzn-installing"))
+
+
+def protected_points(registry: dict[str, object]) -> list[dict[str, object]]:
+    points = registry["points"]
+    assert isinstance(points, list)
+    require(all(valid_point(point) for point in points), "invalid recovery point registry")
+    for point in points:
+        release = Path(str(point["release"]))
+        transaction = Path(str(point["transaction"]))
+        backup = Path(str(point["backup"]))
+        require(direct_child(release, RELEASES) and RELEASE_ID.fullmatch(release.name) is not None,
+                "invalid recovery point release path")
+        require(direct_child(transaction, BACKUPS) and transaction.name.startswith("update-"),
+                "invalid recovery point transaction path")
+        require(direct_child(backup, DATA_BACKUPS) and re.fullmatch(r"vzn-[0-9]{8}T[0-9]{6}Z\.sqlite3", backup.name),
+                "invalid recovery point backup path")
+    current = APP / "current"
+    require(current.is_symlink(), "current release is missing")
+    current_release = str(current.resolve(strict=True))
+    matching = [point for point in points if point["release"] == current_release]
+    require(len(matching) == 1, "current release lacks exactly one recovery point")
+    ordered = sorted(points, key=lambda point: str(point["recorded_at"]), reverse=True)
+    return ordered[: RETAIN_PREVIOUS + 1]
+
+
+def old_enough(path: Path) -> bool:
+    return time.time() - path.lstat().st_mtime >= STALE_SECONDS
+
+
+def staging_build_only(path: Path) -> bool:
+    """Only recognize the exact root-owned structure produced by the stager."""
+    if not direct_child(path, BACKUPS) or not path.name.startswith("staged-update-"):
+        return False
+    try:
+        root_directory(path, 0o750)
+    except (OSError, SafetyError):
+        return False
+    allowed = {"source", "frontend", "backend", "deployment"}
+    entries = list(path.iterdir())
+    if {entry.name for entry in entries} != allowed or any(entry.is_symlink() for entry in entries):
+        return False
+    try:
+        return all(entry.is_dir() and entry.resolve(strict=True).parent == path.resolve(strict=True) for entry in entries)
+    except OSError:
+        return False
+
+
+def stale_temporary(path: Path) -> bool:
+    if not direct_child(path, AUTO_STATE) or not path.name.startswith("download-"):
+        return False
+    try:
+        root_directory(path)
+    except (OSError, SafetyError):
+        return False
+    return old_enough(path)
+
+
+def candidates(registry: dict[str, object]) -> list[Candidate]:
+    require(not operation_active(), "deployment marker exists; cleanup is refused")
+    retained = protected_points(registry)
+    retained_releases = {str(point["release"]) for point in retained}
+    retained_images = {str(point["image"]) for point in retained}
+    result: list[Candidate] = []
+    points = registry["points"]
+    assert isinstance(points, list)
+    # A legacy release without an explicit recovery point is intentionally not a candidate.
+    for point in points:
+        release = Path(str(point["release"]))
+        if str(release) not in retained_releases and direct_child(release, RELEASES) and release.is_dir():
+            result.append(Candidate("release", str(release), "recovery point exceeds current plus three previous"))
+    for directory in BACKUPS.glob("staged-update-*"):
+        if staging_build_only(directory) and old_enough(directory):
+            result.append(Candidate("staging", str(directory), "verified build-only staging snapshot older than 24 hours"))
+    if AUTO_STATE.is_dir():
+        for directory in AUTO_STATE.glob("download-*"):
+            if stale_temporary(directory):
+                result.append(Candidate("temporary", str(directory), "root worker download residue older than 24 hours"))
+    # Image deletion is deliberately deferred to apply after container/tag protection checks.
+    for point in points:
+        image = str(point["image"])
+        if image not in retained_images:
+            result.append(Candidate("image", image, "unretained registered recovery image; requires Docker reference checks"))
+    return result
+
+
+def docker_safe_to_remove(tag: str) -> bool:
+    require(IMAGE.fullmatch(tag) is not None, "unsafe Docker tag")
+    inspected = subprocess.run(["/usr/bin/docker", "image", "inspect", tag, "--format", "{{.Id}} {{json .RepoTags}}"],
+                               check=False, text=True, capture_output=True)
+    if inspected.returncode != 0:
+        return False
+    image_id, _, raw_tags = inspected.stdout.strip().partition(" ")
+    try:
+        tags = json.loads(raw_tags)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(tags, list) or tags != [tag]:
+        return False
+    containers = subprocess.run(["/usr/bin/docker", "container", "ls", "--all", "--quiet"],
+                                check=True, text=True, capture_output=True).stdout.split()
+    if not containers:
+        return True
+    references = subprocess.run(["/usr/bin/docker", "container", "inspect", "--format", "{{.Image}} {{.Config.Image}}", *containers],
+                                check=True, text=True, capture_output=True).stdout.splitlines()
+    return all(image_id not in line.split() and tag not in line.split() for line in references)
+
+
+def remove_tree(path: Path) -> int:
+    require(not path.is_symlink() and path.is_dir(), f"unsafe deletion target: {path}")
+    root_device = path.lstat().st_dev
+    pending = [path]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                metadata = entry.stat(follow_symlinks=False)
+                require(not stat.S_ISLNK(metadata.st_mode), f"symlink inside deletion target: {entry.path}")
+                require(metadata.st_dev == root_device, f"nested mount inside deletion target: {entry.path}")
+                require(stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode),
+                        f"unsupported entry inside deletion target: {entry.path}")
+                if stat.S_ISDIR(metadata.st_mode):
+                    pending.append(Path(entry.path))
+    before = shutil.disk_usage(path.parent).free
+    shutil.rmtree(path)
+    return max(0, shutil.disk_usage(path.parent).free - before)
+
+
+def run_cleanup(apply: bool) -> int:
+    require(os.geteuid() == 0, "root is required")
+    if AUTO_STATE.exists():
+        root_directory(AUTO_STATE, 0o700)
+    else:
+        AUTO_STATE.mkdir(mode=0o700, parents=True)
+    root_directory(AUTO_STATE, 0o700)
+    with LOCK.open("a+") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("VZN maintenance deferred: deployment lock is held")
+            return 0
+        registry = read_registry()
+        planned = candidates(registry)
+        freed = 0
+        for item in planned:
+            if item.kind == "image":
+                if not docker_safe_to_remove(item.path):
+                    print(f"KEEP image {item.path}: container or additional tag protection")
+                    continue
+                if apply:
+                    subprocess.run(["/usr/bin/docker", "image", "rm", item.path], check=True)
+                print(f"{'REMOVE' if apply else 'CANDIDATE'} image {item.path}: {item.reason}")
+                continue
+            path = Path(item.path)
+            if apply:
+                freed += remove_tree(path)
+            print(f"{'REMOVE' if apply else 'CANDIDATE'} {item.kind} {path}: {item.reason}")
+        print(f"VZN maintenance {'applied' if apply else 'dry-run'}; measured_free_bytes={freed}")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    commands = result.add_subparsers(dest="command", required=True)
+    cleanup = commands.add_parser("cleanup", help="list candidates, or remove them with --apply")
+    cleanup.add_argument("--apply", action="store_true")
+    record = commands.add_parser("record-success", help="record a health-verified successful update")
+    record.add_argument("--commit", required=True)
+    record.add_argument("--release", required=True)
+    record.add_argument("--image", required=True)
+    record.add_argument("--transaction", required=True)
+    record.add_argument("--backup", required=True)
+    record.add_argument("--ci-run-id", type=int)
+    return result
+
+
+def main() -> int:
+    arguments = parser().parse_args()
+    if arguments.command == "record-success":
+        record_success(arguments)
+        return 0
+    return run_cleanup(arguments.apply)
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (SafetyError, OSError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
+        raise SystemExit(1)

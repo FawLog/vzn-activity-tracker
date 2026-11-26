@@ -45,6 +45,16 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(page.getByText("since previous sync · 6h")).toBeVisible();
   await expect.poll(()=>page.locator(".alliance-emblem img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
   await expect(page.locator(".alliance-intelligence .stats-grid > img")).toHaveCount(0);
+  // Every grid row must be fully covered by real metric cells (only 1px dividers).
+  await expect(page.locator(".alliance-intelligence .stats-grid > div")).toHaveCount(5);
+  expect(await page.locator(".alliance-intelligence .stats-grid").evaluate(grid=>{
+    const bounds=grid.getBoundingClientRect();
+    const cells=Array.from(grid.children,cell=>cell.getBoundingClientRect());
+    return [...new Set(cells.map(c=>c.top))].every(top=>{
+      const row=cells.filter(c=>c.top===top).sort((a,b)=>a.left-b.left);
+      return Math.abs(row[0].left-bounds.left)<=1 && Math.abs(row[row.length-1].right-bounds.right)<=1 && row.slice(1).every((cell,i)=>cell.left-row[i].right<=2);
+    });
+  })).toBe(true);
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.screenshot({path:testInfo.outputPath("overview-intelligence.png"),fullPage:true});
   await page.unroute("https://gof-formal-avatar.akamaized.net/test-flag.png");
@@ -183,6 +193,14 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   const academyOption = allianceSwitcher.locator("option").filter({ hasText: "WZNA" });
   await allianceSwitcher.selectOption(await academyOption.first().getAttribute("value") ?? "");
   await expect(allianceSwitcher.locator("option:checked")).toContainText("WZNA");
+  await expect(page.locator(".group-sync-card")).toHaveCount(2);
+  await expect(page.locator(".group-sync-card").first().getByRole("button",{name:"Sync now"})).toBeVisible();
+  expect(await page.locator(".group-sync-card").first().evaluate(el=>{
+    const style=getComputedStyle(el);
+    return parseFloat(style.paddingLeft)>=12&&parseFloat(style.paddingRight)>=12;
+  })).toBe(true);
+  expect(await page.locator(".group-sync-card").evaluateAll(cards=>cards[1].getBoundingClientRect().top-cards[0].getBoundingClientRect().bottom)).toBeGreaterThanOrEqual(10);
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
   // Verify Overall default, low-score sorting, missing evidence and responsive table.

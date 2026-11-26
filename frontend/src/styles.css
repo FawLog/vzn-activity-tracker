@@ -747,3 +747,5 @@ td strong { color: var(--text); font-weight: 650; }
 .quick-view-content .profile-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .quick-view-content .activity-history .table-wrap { overflow-x:auto; }
 @media(max-width:620px){.player-quick-view{width:calc(100% - 16px);max-width:calc(100% - 16px);max-height:calc(100dvh - 16px)}.quick-view-content{padding:10px}.quick-view-toolbar{padding:10px}.quick-view-actions .button{min-height:44px}.quick-view-toolbar h2{font-size:14px}}
+
+.quick-view-identity .profile-avatar { width:64px;height:64px;flex:0 0 64px;border-radius:10px; }

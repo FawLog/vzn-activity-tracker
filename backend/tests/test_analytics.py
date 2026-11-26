@@ -104,3 +104,20 @@ def test_overall_contribution_is_per_event_and_preserves_zero(authenticated_clie
     event=c.get(url).json()["events"][0]
     assert event["contribution_points"]=={"zero":"0","scorer":"100"}
     assert event["contribution_complete"] is False
+
+
+def test_analytics_avatar_is_group_scoped_and_optional(authenticated_client, settings):
+    from app.database import transaction
+    c = authenticated_client
+    gid = create_onboarded_group(c)["id"]
+    aid = c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    for fid in ("avatar-player", "no-avatar"):
+        assert c.post(f"/api/v1/groups/{gid}/players", json={"fid":fid,"nickname":fid}).status_code == 201
+    with transaction(settings.database_path) as db:
+        db.execute("UPDATE player_group_profiles SET status='active',primary_alliance_id=? WHERE group_id=?", (aid,gid))
+        db.execute("""INSERT INTO player_whiteoutstats_profiles(player_fid,group_id,avatar_url,observed_at,received_at)
+                      VALUES (?,?,?,?,?)""",("avatar-player",gid,"https://gof-format-avatar.akamaized.net/avatar.png","2026-11-25T00:00:00Z","2026-11-25T00:00:00Z"))
+    report=c.get(f"/api/v1/groups/{gid}/alliances/{aid}/analytics?start=2026-11-01&end=2026-11-30")
+    assert report.status_code==200,report.text
+    avatars={p["fid"]:p["avatar_url"] for p in report.json()["players"]}
+    assert avatars=={"avatar-player":"https://gof-formal-avatar.akamaized.net/avatar.png","no-avatar":None}

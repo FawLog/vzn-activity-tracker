@@ -85,6 +85,48 @@ def eligible(run, sha):
             and run.get("path")==".github/workflows/ci.yml"
             and run.get("head_repository",{}).get("full_name")==REPO)
 
+def exact_sha(value):
+    return isinstance(value, str) and SHA.fullmatch(value) is not None
+
+def merged_pr(pr, sha):
+    base = pr.get("base") or {}
+    return (pr.get("state") == "closed" and bool(pr.get("merged_at"))
+            and pr.get("merge_commit_sha") == sha and base.get("ref") == "main"
+            and (base.get("repo") or {}).get("full_name") == REPO)
+
+def verify_merged_history(previous, target, token):
+    """Our workflow uses squash merges only. Reject direct pushes anywhere in the gap."""
+    require(exact_sha(previous) and exact_sha(target), "Invalid deployment history")
+    cursor = target
+    target_tree = None
+    for _ in range(50):
+        if cursor == previous:
+            return target_tree
+        commit = api("/commits/" + cursor, token)
+        require(commit.get("sha") == cursor, "Commit identity mismatch")
+        if target_tree is None:
+            target_tree = commit["commit"]["tree"]["sha"]
+            require(exact_sha(target_tree), "Invalid target tree")
+        parents = commit.get("parents") or []
+        require(len(parents) == 1 and exact_sha(parents[0].get("sha")), "Nonlinear deployment history requires owner review")
+        prs = api("/commits/" + cursor + "/pulls?per_page=100", token)
+        require(isinstance(prs, list) and any(merged_pr(pr, cursor) for pr in prs),
+                "Commit is not an exact merged main PR: " + cursor)
+        cursor = parents[0]["sha"]
+    require(cursor == previous, "Deployment history exceeds 50 commits; owner review required")
+    return target_tree
+
+def verify_ci_tree(tree_sha, token):
+    # Pin the complete .github Git tree, including workflows and CI helper scripts.
+    approved = root_file(CONFIG / "approved-ci-tree").read_text().strip()
+    require(exact_sha(approved) and exact_sha(tree_sha), "Invalid approved CI tree")
+    tree = api("/git/trees/" + tree_sha, token)
+    require(tree.get("sha") == tree_sha and not tree.get("truncated"), "Invalid target root tree")
+    entries = [e for e in tree["tree"] if e.get("path") == ".github"]
+    require(len(entries) == 1 and entries[0].get("type") == "tree"
+            and entries[0].get("mode") == "040000" and entries[0].get("sha") == approved,
+            "CI configuration changed; owner review required")
+
 def current_sha():
     result = subprocess.check_output(["/usr/bin/docker","container","inspect","--format","{{.Config.Image}}",
                                       "vzn-activity-tracker-backend"],text=True).strip()
@@ -179,6 +221,8 @@ def deploy():
     jobs=api("/actions/runs/"+str(run_id)+"/jobs?filter=latest&per_page=100",token)
     require(jobs["total_count"]==len(JOBS) and len(jobs["jobs"])==len(JOBS)
             and {j["name"] for j in jobs["jobs"]}==JOBS and all(j["conclusion"]=="success" for j in jobs["jobs"]),"Required CI jobs not successful")
+    target_tree = verify_merged_history(previous, sha, token)
+    verify_ci_tree(target_tree, token)
     artifacts=api("/actions/runs/"+str(run_id)+"/artifacts?per_page=100",token)["artifacts"]
     check_installed_controls()
     space()

@@ -111,7 +111,14 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
         result = c.put(root+"/sessions/"+s["id"],json={"revision":0,"rows":rows})
         assert result.status_code==200,result.text
         revisions[s["id"]]=1
+    if kind=="bear_trap":
+        roster.append("academy-absent")
+        assert c.post(f"/api/v1/groups/{gid}/players", json={"fid":"academy-absent","nickname":"academy-absent"}).status_code == 201
     review={"roster":roster,"excused":["excused"],"no_duty":["no-duty"],"expected_sessions":len(keys),"revisions":revisions}
+    if kind=="bear_trap":
+        assert c.post(root+"/publish",json=review).status_code==409
+        review["home_alliances"]={**{f:aid for f in roster if f!="academy-absent"},"academy-absent":academy,"visitor":academy}
+        assert c.post(root+"/publish",json={**review,"home_alliances":{**review["home_alliances"],"academy-absent":"outside"}}).status_code==409
     assert c.post(root+"/publish",json={**review,"expected_sessions":len(keys)+1}).status_code==409
     assert c.post(root+"/publish",json={**review,"revisions":{}}).status_code==409
     assert c.post(root+"/publish",json={**review,"excused":["present"]}).status_code==409
@@ -119,7 +126,15 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
     assert c.get(root+"/editor").json()["status"]=="draft"
     response=c.post(root+"/publish",json=review)
     assert response.status_code==200,response.text
-    assert {r["fid"]:r["outcome"] for r in response.json()["completion"]}=={"present":"positive","visitor":"positive","absent":"negative","excused":"excused","no-duty":"no_duty"}
+    expected={"present":"positive","visitor":"positive","absent":"negative","excused":"excused","no-duty":"no_duty"}
+    if kind=="bear_trap":
+        expected["academy-absent"]="negative"
+        scoped=report(settings.database_path,gid,academy,date(2026,11,25),date(2026,11,25))
+        assert scoped["events"][0]["activity_cells"]=={"visitor":"positive","academy-absent":"negative"}
+        assert scoped["events"][0]["metrics"]["attendance"]["rate"]==50
+        combined=report(settings.database_path,gid,None,date(2026,11,25),date(2026,11,25))
+        assert combined["events"][0]["metrics"]["attendance"]["known"]==4
+    assert {r["fid"]:r["outcome"] for r in response.json()["completion"]}==expected
     data=report(settings.database_path,gid,aid,date(2026,11,25),date(2026,11,25))
     cells=data["events"][0]["activity_cells"]
     assert cells["present"]=="positive" and cells["absent"]=="negative"
@@ -130,7 +145,7 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
     assert personal["players"][0]["history"][0]["cycle_attendance"]=="negative"
     assert c.post(root+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
     reopened=c.get(root+"/editor").json()
-    assert len(reopened["completion"])==5
+    assert len(reopened["completion"])==len(expected)
     assert report(settings.database_path,gid,aid,date(2026,11,25),date(2026,11,25))["published_events"]==0
     review["revisions"]={s["id"]:s["revision"] for s in reopened["sessions"]}
     review["excused"]=["excused","absent"]

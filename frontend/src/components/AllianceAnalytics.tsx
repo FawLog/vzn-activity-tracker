@@ -1,5 +1,6 @@
 import {useEffect,useState} from "react";
 import {api} from "../lib/api";
+import {useGroupContext} from "../lib/group-context";
 import {eventName,eventNames,formatTotal,period,type AnalyticsReport,type EventKind} from "../lib/analytics";
 import {eventCounts,trend,heatCell,heatLabels,heatMarks,heatmapEvents,overallDistribution,type DashboardKind} from "../lib/dashboard";
 import {PeriodSelect} from "./ActivityShared";
@@ -33,10 +34,14 @@ function OverallSummary({rows}:{rows:OverallRow[]}){
  </div>;
 }
 export function AllianceAnalytics({groupId,allianceId,allianceLabel}:{groupId:string;allianceId:string;allianceLabel:string}){
- const [days,setDays]=useState(30),[all,setAll]=useState(false),[kind,setKind]=useState<DashboardKind>("overall"),[query,setQuery]=useState(""),[limit,setLimit]=useState(50);
+ const [days,setDays]=useState(30),[scope,setScope]=useState<string|null>(null),[kind,setKind]=useState<DashboardKind>("overall"),[query,setQuery]=useState(""),[limit,setLimit]=useState(50);
+ const {alliances}=useGroupContext();
+ const activeScope=scope===null?allianceId:scope;
+ const all=activeScope==="";
+ useEffect(()=>{setScope(null)},[groupId,allianceId]);
  const [selected,setSelected]=useState<string|null>(null);
  const [data,setData]=useState<AnalyticsReport|null>(null),[error,setError]=useState("");
- useEffect(()=>{let live=true;setData(null);setError("");setSelected(null);const p=period(days);api.analytics(groupId,all?"":allianceId,p.start,p.end).then(v=>{if(live)setData(v)}).catch(e=>{if(live)setError(e.message)});return()=>{live=false}},[groupId,allianceId,all,days]);
+ useEffect(()=>{let live=true;setData(null);setError("");setSelected(null);const p=period(days);api.analytics(groupId,activeScope,p.start,p.end).then(v=>{if(live)setData(v)}).catch(e=>{if(live)setError(e.message)});return()=>{live=false}},[groupId,activeScope,days]);
  const events=data?heatmapEvents(data,kind):[];
  const overall=data?overallRows(data):[];
  const scores=new Map(overall.map(r=>[r.player.fid,r]));
@@ -45,7 +50,7 @@ export function AllianceAnalytics({groupId,allianceId,allianceLabel}:{groupId:st
  const order=new Map(sortOverall(overall,"score",false).map((r,i)=>[r.player.fid,i]));
  const players=kind==="overall"?[...matches].sort((a,b)=>(order.get(a.fid)??Infinity)-(order.get(b.fid)??Infinity)||(a.nickname??a.fid).localeCompare(b.nickname??b.fid)):matches;
  return <section className="data-panel analytics-panel"><div className="section-header"><div><h2>Alliance activity</h2><p>Published event evidence · independent dimensions</p></div><button className="button button--quiet" onClick={()=>navigate("/activity")}>Player activity →</button></div>
- <div className="activity-toolbar"><PeriodSelect days={days} onChange={setDays}/><label>Scope<select value={all?"all":"selected"} onChange={e=>setAll(e.target.value==="all")}><option value="selected">{allianceLabel}</option><option value="all">All alliances</option></select></label></div>
+ <div className="activity-toolbar"><PeriodSelect days={days} onChange={setDays}/><label>Scope<select value={activeScope} onChange={e=>setScope(e.target.value)}>{alliances.filter(a=>a.group_id===groupId&&a.status==="active").map(a=><option key={a.id} value={a.id}>{a.id===allianceId?allianceLabel:a.name}</option>)}<option value="">All alliances</option></select></label></div>
  {error?<ErrorState message={error}/>:!data?<LoadingState label="Loading alliance analytics"/>:!data.published_events?<EmptyState compact title="No published events in this period" description="Publish reviewed event results to populate charts and activity statistics."/>:<>
  <div className="analytics-summary"><div><small>Published events</small><strong>{data.published_events}</strong><span>{data.coverage.events_with_sessions} with session evidence</span></div>{(["alliance_championship","bear_trap","foundry","canyon"] as const).map(k=>{const c=eventCounts(data,k);return <div key={k}><small>{eventNames[k]} {k==="alliance_championship"?"registration":k==="bear_trap"?"attendance":"reliability"}</small><strong>{c?.rate==null?"—":c.rate+"%"}</strong><span>{c?.positive??0}/{c?.known??0} known · {c?.unknown??0} unknown</span></div>})}<div><small>Mobilization recorded points</small><strong>{formatTotal(data.events.some(e=>e.metrics.points?.total!=null)?data.events.reduce((n,e)=>n+BigInt(e.event_type==="alliance_mobilization"?e.metrics.points?.total??"0":"0"),0n).toString():null)}</strong><span>Recorded samples only</span></div></div>
  <details className="analytics-note"><summary>Data coverage</summary><p className="activity-explainer">Rates exclude unknown and excused outcomes; recorded rows are not a historical roster. {data.coverage.events_without_sessions} events without session evidence. {!all&&"Bear player-cycle records with unknown historical affiliation excluded: "+data.events.filter(e=>e.event_type==="bear_trap").reduce((n,e)=>n+e.unknown_home_players,0)+"."}</p></details>

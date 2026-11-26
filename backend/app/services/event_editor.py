@@ -79,6 +79,16 @@ def _audit(db, event_id, action):
     db.execute("INSERT INTO audit_log(action, entity_type, entity_id, actor) VALUES (?, 'event', ?, 'admin')", (action, event_id))
 
 
+def historical_homes(db, group_id, occurred_on):
+    homes = {}
+    for row in db.execute("""SELECT player_fid, alliance_id FROM player_primary_alliance_history
+        WHERE group_id=? AND substr(effective_observed_at,1,10)<?
+        AND (ended_observed_at IS NULL OR substr(ended_observed_at,1,10)>?)""",
+        (group_id, occurred_on, occurred_on)):
+        homes.setdefault(row["player_fid"], set()).add(row["alliance_id"])
+    return {fid: next(iter(ids)) for fid, ids in homes.items() if len(ids) == 1}
+
+
 def read(path, group_id, event_id):
     with connection(path) as db:
         event = _event(db, group_id, event_id)
@@ -95,8 +105,8 @@ def read(path, group_id, event_id):
                 rows.append(entry)
             item["rows"] = rows
             sessions.append(item)
-        completion = [dict(r) for r in db.execute("SELECT player_fid AS fid,nickname,outcome,roster_member FROM event_completion_roster WHERE event_id=? ORDER BY nickname COLLATE NOCASE,player_fid",(event_id,))]
-        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion}
+        completion = [dict(r) for r in db.execute("SELECT player_fid AS fid,nickname,outcome,roster_member,home_alliance_id FROM event_completion_roster WHERE event_id=? ORDER BY nickname COLLATE NOCASE,player_fid",(event_id,))]
+        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion, "historical_homes": historical_homes(db, group_id, event["occurred_on"]) if event["event_type"] == "bear_trap" else {}}
 
 
 def create_session(path, group_id, event_id, payload):
@@ -163,6 +173,7 @@ class CompletionReview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revisions: dict[str, StrictInt] = Field(max_length=30)
     roster: list[str] = Field(min_length=1, max_length=500)
+    home_alliances: dict[str, str] = Field(default_factory=dict, max_length=500)
     excused: list[str] = Field(default_factory=list, max_length=500)
     no_duty: list[str] = Field(default_factory=list, max_length=500)
     expected_sessions: int = Field(ge=1, le=30)
@@ -199,11 +210,26 @@ def finalize_attendance(db, event, group_id, review):
                 present.add(r["player_fid"])
     if present & (excused | no_duty):
         raise ValueError("A participating player cannot be excused or ineligible")
+    homes = {}
+    if kind == "bear_trap":
+        historical = historical_homes(db, group_id, event["occurred_on"])
+        valid_homes = {r["id"] for r in db.execute("SELECT id FROM alliances WHERE group_id=?", (group_id,))}
+        if not set(review.home_alliances) <= (roster | present) or not set(review.home_alliances.values()) <= valid_homes:
+            raise ValueError("Invalid reviewed home alliance")
+        for fid in roster | present:
+            known = historical.get(fid)
+            reviewed = review.home_alliances.get(fid)
+            if known and reviewed and known != reviewed:
+                raise ValueError("Reviewed home conflicts with historical membership")
+            home = known or reviewed
+            if fid in roster and not home:
+                raise ValueError("Confirm home alliance for every eligible Bear player")
+            homes[fid] = home
     db.execute("DELETE FROM event_completion_roster WHERE event_id=?", (eid,))
     for fid in sorted(roster | present):
         outcome = "positive" if fid in present else "no_duty" if fid in no_duty else "excused" if fid in excused else "negative"
         db.execute("INSERT INTO event_completion_roster(event_id,player_fid,nickname,outcome,home_alliance_id,roster_member) VALUES (?,?,?,?,?,?)",
-                   (eid,fid,profiles[fid]["nickname"] or fid,outcome,event["alliance_id"] if fid in roster else None,int(fid in roster)))
+                   (eid,fid,profiles[fid]["nickname"] or fid,outcome,homes.get(fid) if kind == "bear_trap" else event["alliance_id"] if fid in roster else None,int(fid in roster)))
     db.execute("INSERT INTO event_completion_reviews(event_id) VALUES (?) ON CONFLICT(event_id) DO UPDATE SET completed_at=CURRENT_TIMESTAMP", (eid,))
     _audit(db,eid,"attendance_finalized")
 

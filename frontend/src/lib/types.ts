@@ -124,6 +124,7 @@ export interface AllianceStatistics {
   source_observed_at: string;
   received_at: string;
   power_change: number | null;
+  previous_source_observed_at?: string | null;
 }
 
 export interface SyncStatus {

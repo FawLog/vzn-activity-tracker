@@ -246,7 +246,7 @@ def preview_alliance(
             "member_count": _number(alliance.get("count")),
             "power": _number(alliance.get("power")),
             "power_rank": _number(alliance.get("power_rank")),
-            "flag_url": alliance.get("flag_url") if isinstance(alliance.get("flag_url"), str) else None,
+            "flag_url": normalize_avatar_url(alliance.get("flag_url")),
         },
     }
 
@@ -520,7 +520,7 @@ def _save_fresh_roster(database_path: str, group_id: str, alliance_id: str, run_
                 _number(alliance_data.get("power")), _number(alliance_data.get("count")), _number(alliance_data.get("power_rank")),
                 alliance_data.get("leader_name") if isinstance(alliance_data.get("leader_name"), str) else None,
                 str(alliance_data.get("leader_chief_id")) if alliance_data.get("leader_chief_id") is not None else None,
-                alliance_data.get("flag_url") if isinstance(alliance_data.get("flag_url"), str) else None,
+                normalize_avatar_url(alliance_data.get("flag_url")),
                 observed_at, received_at, int(roster_complete),
             ),
         )

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eventLabel, formatDate, formatFurnaceLevel, formatAllianceRank } from "./format";
+import { eventLabel, formatDate, formatFurnaceLevel, formatAllianceRank, shortElapsed, observationInterval } from "./format";
 
 describe("record formatting", () => {
   it("keeps event units identifiable by their own names", () => {
@@ -34,4 +34,12 @@ describe("roster formatting", () => {
     expect(formatAllianceRank("R0")).toBe("—");
     expect(formatAllianceRank("unknown")).toBe("—");
   });
+});
+
+it("labels actual source observation ages and intervals, including explicit offsets",()=>{
+ expect(shortElapsed("2026-11-26T04:00:00Z",Date.parse("2026-11-26T07:12:00Z"))).toBe("3h");
+ expect(observationInterval("2026-11-26T00:00:00+03:00","2026-11-26T06:00:00+03:00")).toBe("6h");
+ expect(observationInterval(null,"2026-11-26T06:00:00Z")).toBeNull();
+ expect(shortElapsed("2026-11-26T08:00:00Z",Date.parse("2026-11-26T07:00:00Z"))).toBeNull();
+ expect(shortElapsed("2026-11-26 04:00:00",Date.parse("2026-11-26T04:12:00Z"))).toBe("12m");
 });

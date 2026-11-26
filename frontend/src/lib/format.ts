@@ -30,8 +30,7 @@ export function formatDate(value: string): string {
 }
 
 export function formatTimestamp(value: string): string {
-  const normalized = value.endsWith("Z") ? value : `${value.replace(" ", "T")}Z`;
-  const date = new Date(normalized);
+  const date = new Date(timestampMillis(value));
   if (Number.isNaN(date.valueOf())) return value;
   return new Intl.DateTimeFormat("en", {
     month: "short",
@@ -53,4 +52,20 @@ export function formatFurnaceLevel(level?: number | null): string {
 export function formatAllianceRank(rank?: string | number | null): string {
   const match = String(rank ?? "").trim().match(/^R?([1-5])$/i);
   return match ? `R${match[1]}` : "—";
+}
+
+// Provider timestamps may be ISO offsets or SQLite UTC timestamps.
+function timestampMillis(value:string|null|undefined):number {
+  if(!value)return NaN;
+  const iso=value.replace(" ","T");
+  return Date.parse(/(?:Z|[+-][0-9]{2}:[0-9]{2})$/i.test(iso)?iso:iso+"Z");
+}
+export function shortElapsed(from:string|null|undefined,to:number=Date.now()):string|null {
+  const elapsed=to-timestampMillis(from);
+  if(!Number.isFinite(elapsed)||elapsed<0)return null;
+  const minutes=Math.floor(elapsed/60000);
+  return minutes<1?"<1m":minutes<60?minutes+"m":Math.floor(minutes/60)+"h";
+}
+export function observationInterval(previous:string|null|undefined,current:string|null|undefined):string|null {
+  return shortElapsed(previous,timestampMillis(current));
 }

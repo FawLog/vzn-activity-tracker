@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import type { ReviewRow } from "../lib/ocrReview";
+import { AttendanceFinalReview } from "./AttendanceFinalReview";
 import { ScreenshotImport } from "./ScreenshotImport";
 import { championshipSummary, championshipRows, invalidateChampionship } from "../lib/championship";
 import type { Alliance, EventRecord, ManualEvent, ManualRow, ManualSession, Player } from "../lib/types";
@@ -244,11 +245,12 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     {review&&!championship&&<div className="manual-review"><h3>Review before publishing</h3><p>Leave unchecked if the information is partial. Missing entries remain unknown.</p>
     <label><input type="checkbox" checked={!!draft.roster_complete} onChange={e=>confirmRoster(e.target.checked)}/>This is the full alliance roster at the time of the event (mark exceptions in the table).</label>
     {definition.registration&&<label><input type="checkbox" checked={!!draft.registration_complete} onChange={e=>complete("registration_complete",e.target.checked)}/>I entered the complete registration list.</label>}
-    {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>I verified who actually attended, not just who scored points. Mark confirmed absences explicitly in the table.</label>}
+    {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>I verified who actually attended, not just who scored points. Use Final attendance review to calculate absences automatically.</label>}
     {!definition.registration&&!definition.attendance&&<label><input type="checkbox" checked={!!draft.results_complete} onChange={e=>complete("results_complete",e.target.checked)}/>I entered the full results list.</label>}
-    <p>Only confirmed eligible players can be marked absent or not registered. Blank and zero scores never automatically become absences.</p>
+    <p>Partial records remain unknown. Final attendance review can calculate absences from a confirmed complete roster and attendance list.</p>
     <button className="button button--primary" disabled={busy} onClick={()=>void run(save)}>Save reviewed draft</button></div>}</>}
     </>}
+    {editable&&definition.attendance&&editor.sessions.length>0&&<AttendanceFinalReview key={editor.sessions.map(s=>s.id+":"+s.revision).join("|")} event={editor} candidates={candidates} allianceId={record.alliance_id} occurredOn={record.occurred_on} disabled={busy||dirty||!loaded} onPublish={completion=>void run(async()=>{apply(await api.publishEvent(groupId,record.id,false,completion),selected);onPublished();setMessage("Event published with automatic attendance.")})}/>}
     {editable&&editor.sessions.length>0&&<div className="manual-controls">{record.event_type==="bear_trap"&&<label><input type="checkbox" checked={cycleComplete} disabled={dirty||busy} onChange={e=>setCycleComplete(e.target.checked)}/>All traps in this group cycle are recorded, including academy traps. Without this confirmation, missed cycles remain unknown.</label>}<label><input type="checkbox" checked={confirmPublish} disabled={dirty||busy} onChange={e=>setConfirmPublish(e.target.checked)}/>I reviewed all recorded sessions (unknown remains unknown)</label><button className="button button--secondary" disabled={busy||dirty||!confirmPublish} onClick={()=>void run(async()=>{apply(await api.publishEvent(groupId,record.id,cycleComplete),selected);setConfirmPublish(false);onPublished();setMessage("Event published.")})}>Publish event</button></div>}
     </>}
   </section>;

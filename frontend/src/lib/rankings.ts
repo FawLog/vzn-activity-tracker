@@ -23,7 +23,7 @@ export function rankingRows(report:AnalyticsReport,option:RankingOption,measure:
   // Absence of a historical record is not evidence of eligibility or absence.
   // Keep partial rates visible, but never give them an ordinal leaderboard rank.
   const fullyObserved=missing===0&&events.every(e=>e.session_count>0);
-  const complete=!!counts&&fullyObserved&&counts.unknown===0&&counts.known>0&&(option.event==="bear_trap"||option.event==="alliance_championship"||metrics.observed_sessions===events.reduce((n,e)=>n+e.session_count,0))&&(option.count!=="reliability"||metrics.registration?.unknown===0);
+  const complete=!!counts&&fullyObserved&&counts.unknown===0&&counts.known>0&&(option.event==="bear_trap"||option.event==="alliance_championship"||option.count==="attendance"||metrics.observed_sessions===events.reduce((n,e)=>n+e.session_count,0))&&(option.count!=="reliability"||metrics.registration?.unknown===0);
   const value=option.metric?(samples?.[measure]??null):(counts?.rate??null);
   return {player,metrics,samples,counts,missing,complete,value,rank:null,registered:option.count==="reliability"?(metrics.registration?.positive??0):null} as RankRow;
  });

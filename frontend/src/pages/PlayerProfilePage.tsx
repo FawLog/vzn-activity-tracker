@@ -64,7 +64,7 @@ export function PlayerProfilePage({ fid }: { fid: string }) {
             <div className="history-list">{player.membership_history.map(entry => <div key={entry.alliance_tag + "-" + entry.observed_at}><strong>{entry.alliance_name}</strong><span>{formatTimestamp(entry.observed_at)}</span></div>)}</div>
           </section>}
           
-          <div className="principle-rail"><TrendingUp /><span><strong>Separate dimensions</strong><small>Contribution, attendance, and reliability are never collapsed into one score.</small></span></div>
+          <div className="principle-rail"><TrendingUp /><span><strong>Separate dimensions</strong><small>Contribution, attendance, and reliability remain separate; Overall is an advisory screening index.</small></span></div>
           <div className="principle-rail"><ShieldCheck /><span><strong>Unknown stays unknown</strong><small>Missing from a partial leaderboard never becomes zero.</small></span></div>
         </div>
       </div>

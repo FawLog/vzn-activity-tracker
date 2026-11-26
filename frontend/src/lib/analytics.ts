@@ -7,7 +7,7 @@ export const eventNames={alliance_championship:"Championship",bear_trap:"Bear Hu
 export type EventKind=keyof typeof eventNames;
 export interface ActivitySession {session_id:string;session_key:string;started_at:string;host_alliance_id:string|null;nickname:string;role:string|null;registration_outcome:Outcome;attendance_outcome:Outcome;metrics:Record<string,number>}
 export interface ActivityEntry {event_id:string;event_type:string;occurred_on:string;alliance_id:string;alliance_name:string;home_alliance_id:string|null;cycle_attendance?:Outcome;sessions:ActivitySession[]}
-export interface ActivityPlayer {fid:string;nickname:string|null;group_status:string;primary_alliance_id:string|null;metrics:Record<EventKind,Metrics>;history?:ActivityEntry[]}
+export interface ActivityPlayer {avatar_url?:string|null;fid:string;nickname:string|null;group_status:string;primary_alliance_id:string|null;metrics:Record<EventKind,Metrics>;history?:ActivityEntry[]}
 export interface AnalyticsReport {group_id:string;alliance_id:string|null;start:string;end:string;published_events:number;players:ActivityPlayer[];events:Array<{id:string;event_type:string;occurred_on:string;recorded_players:number;unknown_home_players:number;metrics:Metrics;session_count:number;activity_cells:Record<string,ActivityCell>;contribution_points?:Record<string,string>;contribution_complete?:boolean}>;coverage:{events_with_sessions:number;events_without_sessions:number}}
 export function period(days:number,now=new Date()){const end=now.toISOString().slice(0,10);const start=new Date(now);start.setUTCDate(start.getUTCDate()-days+1);return {start:start.toISOString().slice(0,10),end}}
 export function formatTotal(value:string|null|undefined){return value==null?"—":BigInt(value).toLocaleString()}

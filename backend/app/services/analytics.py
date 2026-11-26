@@ -2,6 +2,7 @@
 from collections import defaultdict, Counter
 from datetime import date
 from ..database import connection
+from .whiteoutstats import normalize_avatar_url
 
 TYPES = ("alliance_championship", "alliance_mobilization", "bear_trap", "foundry", "canyon")
 OUTCOMES = ("positive", "negative", "excused", "unknown")
@@ -101,12 +102,12 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                 row["metrics"][m["metric_key"]]=m["raw_value"]
         profiles={}
         for p in db.execute("""
-            SELECT p.player_fid AS fid,p.status AS group_status,p.primary_alliance_id,
+            SELECT p.player_fid AS fid,p.status AS group_status,p.primary_alliance_id,wsp.avatar_url,
             (SELECT n.nickname FROM player_nickname_observations n WHERE n.group_id=p.group_id AND n.player_fid=p.player_fid
               ORDER BY n.observed_at DESC,n.id DESC LIMIT 1) AS nickname
-            FROM player_group_profiles p WHERE p.group_id=? AND (? IS NULL OR p.player_fid=?)
+            FROM player_group_profiles p LEFT JOIN player_whiteoutstats_profiles wsp ON wsp.player_fid=p.player_fid AND wsp.group_id=p.group_id WHERE p.group_id=? AND (? IS NULL OR p.player_fid=?)
         """,(group_id,fid,fid)):
-            profiles[p["fid"]]=dict(p)
+            profiles[p["fid"]]={**dict(p),"avatar_url":normalize_avatar_url(p["avatar_url"])}
         finalized_ids={r["event_id"] for r in db.execute("SELECT event_id FROM event_completion_reviews")}
         completed=defaultdict(dict)
         for r in db.execute("""SELECT r.* FROM event_completion_roster r JOIN events e ON e.id=r.event_id JOIN alliances a ON a.id=e.alliance_id WHERE a.group_id=? AND e.status='published' AND e.occurred_on BETWEEN ? AND ? AND (? IS NULL OR r.player_fid=?)""",(group_id,start.isoformat(),end.isoformat(),fid,fid)):

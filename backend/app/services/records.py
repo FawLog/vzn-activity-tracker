@@ -8,6 +8,7 @@ from typing import Any
 
 from ..database import connection, transaction
 from ..schemas import EventCreate, PlayerCreate
+from .whiteoutstats import normalize_avatar_url
 
 PLAYER_SORT_COLUMNS = {
     "fid": "pgp.player_fid",
@@ -95,12 +96,14 @@ def overview(database_path: str, group_id: str, alliance_id: str | None = None) 
                 (selected_alliance,),
             ).fetchone()
             previous_snapshot = database.execute(
-                """SELECT power FROM alliance_stat_snapshots WHERE alliance_id = ?
+                """SELECT power, source_observed_at FROM alliance_stat_snapshots WHERE alliance_id = ?
                    ORDER BY source_observed_at DESC, id DESC LIMIT 1 OFFSET 1""",
                 (selected_alliance,),
             ).fetchone()
     alliance_stats = dict(snapshot) if snapshot else None
     if alliance_stats:
+        alliance_stats["flag_url"] = normalize_avatar_url(alliance_stats["flag_url"])
+        alliance_stats["previous_source_observed_at"] = previous_snapshot["source_observed_at"] if previous_snapshot else None
         alliance_stats["power_change"] = (alliance_stats["power"] - previous_snapshot["power"]
                                           if previous_snapshot and alliance_stats["power"] is not None and previous_snapshot["power"] is not None else None)
     return {"players": players, "events": events, "published_events": published, "recent_events": [dict(row) for row in recent], "alliance": alliance_stats}

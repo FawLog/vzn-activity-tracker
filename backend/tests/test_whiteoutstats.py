@@ -498,3 +498,22 @@ def test_sync_routes_are_admin_and_csrf_protected(settings: Settings, monkeypatc
         )
         assert reassignment.status_code == 409
         assert groups.get_alliance(configured.database_path, group.json()["id"], alliance_id)["whiteoutstats_alliance_id"] == "a1"
+
+
+def test_overview_power_change_has_actual_previous_observation_and_normalized_flag(settings: Settings) -> None:
+    configured = replace(settings, whiteoutstats_api_key="test-key")
+    gid, aid = setup_alliance(configured)
+    first = payload(cached_at="2026-01-01T00:00:00Z")
+    first["alliance"]["flag_url"] = "https://gof-format-avatar.akamaized.net/flag.png"
+    assert synced(configured, gid, aid, first).status == "success"
+    current = records.overview(configured.database_path, gid, aid)["alliance"]
+    assert current["power_change"] is None
+    assert current["previous_source_observed_at"] is None
+    second = payload(cached_at="2026-01-01T06:00:00Z")
+    second["alliance"]["power"] = 1250
+    second["alliance"]["flag_url"] = first["alliance"]["flag_url"]
+    assert synced(configured, gid, aid, second).status == "success"
+    current = records.overview(configured.database_path, gid, aid)["alliance"]
+    assert current["power_change"] == 250
+    assert current["previous_source_observed_at"] == "2026-01-01T00:00:00Z"
+    assert current["flag_url"] == "https://gof-formal-avatar.akamaized.net/flag.png"

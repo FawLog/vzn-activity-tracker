@@ -33,6 +33,28 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
   }
+  // Exercise the actual overview layout and both emblem states at every configured viewport.
+  await page.route("**/api/v1/groups/*/overview*", async route=>{
+    const response=await route.fetch();
+    const body=await response.json();
+    body.alliance={external_name:"WZN",external_tag:"WZN",state_id:"1001",power:16761986250,member_count:100,power_rank:1,leader_name:"Scout",flag_url:"https://gof-formal-avatar.akamaized.net/test-flag.png",source_observed_at:"2026-11-26T04:00:00Z",previous_source_observed_at:"2026-11-25T22:00:00Z",received_at:"2026-11-26T04:01:00Z",power_change:60406175};
+    await route.fulfill({response,json:body});
+  });
+  await page.route("https://gof-formal-avatar.akamaized.net/test-flag.png",route=>route.fulfill({contentType:"image/png",body:Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ1sAAAAASUVORK5CYII=","base64")}));
+  await page.reload();
+  await expect(page.getByText("since previous sync · 6h")).toBeVisible();
+  await expect.poll(()=>page.locator(".alliance-emblem img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+  await expect(page.locator(".alliance-intelligence .stats-grid > img")).toHaveCount(0);
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath("overview-intelligence.png"),fullPage:true});
+  await page.unroute("https://gof-formal-avatar.akamaized.net/test-flag.png");
+  await page.route("https://gof-formal-avatar.akamaized.net/test-flag.png",route=>route.fulfill({status:404,body:"not found"}));
+  await page.reload();
+  await expect(page.getByRole("img",{name:"WZN alliance emblem unavailable"})).toBeVisible();
+  await expect(page.locator(".alliance-emblem img")).toHaveCount(0);
+  await page.unroute("https://gof-formal-avatar.akamaized.net/test-flag.png");
+  await page.unroute("**/api/v1/groups/*/overview*");
+  await page.reload();
   await page.screenshot({ path: testInfo.outputPath("group-overview.png"), fullPage: true });
 
   await page.goto("/players");

@@ -11,7 +11,7 @@ export function AttendanceFinalReview({event,candidates,allianceId,occurredOn,di
  const [excused,setExcused]=useState<string[]>(prior.filter(r=>r.outcome==="excused").map(r=>r.fid));
  const [noDuty,setNoDuty]=useState<string[]>(prior.filter(r=>r.outcome==="no_duty").map(r=>r.fid));
  const [query,setQuery]=useState("");
- const [expected,setExpected]=useState(bear?"3":"2");
+ const [expected,setExpected]=useState(bear?String(prior.length?event.sessions.length:3):"2");
  const [confirmed,setConfirmed]=useState(false);
 
  const eligible=new Set(roster);
@@ -23,7 +23,7 @@ export function AttendanceFinalReview({event,candidates,allianceId,occurredOn,di
  return <div className="manual-review">
   <h3>Final attendance review</h3>
   <p>One event, one attendance outcome. Confirm the complete event-date roster ({occurredOn}) and all actual participants, including zero-point attendees. Current home roster is only a starting point.</p>
-  <div className="manual-controls"><label>Expected {bear?"traps":"legions"}<input type="number" min={1} max={30} value={expected} disabled={disabled||!bear} onChange={e=>{setExpected(e.target.value);setConfirmed(false)}}/></label><span>{event.sessions.length} recorded</span><span>{roster.length} roster · {present.size} present · {exceptions.length} excused · {ineligible.length} no duty · {absent.length} absent if confirmed</span></div>
+  <div className="manual-controls"><label>Expected {bear?"traps":"legions"}<input type="number" min={1} max={30} value={expected} disabled={disabled||!bear} onChange={e=>{setExpected(e.target.value);setConfirmed(false)}}/></label><span>{event.sessions.length} recorded</span><span>{new Set([...roster,...present]).size} reviewed · {present.size} present · {exceptions.length} excused · {ineligible.length} no duty · {absent.length} absent if confirmed</span></div>
   <p>{event.sessions.map(s=>s.session_key.replaceAll("_"," ")+": "+s.rows.filter(isPresent).length+" present").join(" · ")}</p>
   <label>Find roster exceptions<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Nickname or FID"/></label>
   {query.trim()&&<div className="table-wrap"><table><thead><tr><th>Player</th><th>Event roster</th><th>Excused</th><th>No duty</th></tr></thead><tbody>{candidates.filter(p=>((p.nickname??"")+" "+p.fid).toLowerCase().includes(query.toLowerCase())).slice(0,30).map(p=><tr key={p.fid}><td>{p.nickname??p.fid}</td><td><input type="checkbox" aria-label={p.fid+" in event roster"} checked={eligible.has(p.fid)} disabled={disabled||present.has(p.fid)} onChange={e=>{setRoster(v=>e.target.checked?[...new Set([...v,p.fid])]:v.filter(f=>f!==p.fid));setConfirmed(false)}}/></td><td><input type="checkbox" aria-label={p.fid+" excused"} checked={exceptions.includes(p.fid)} disabled={disabled||!eligible.has(p.fid)||present.has(p.fid)} onChange={()=>{toggle(p.fid,excused,setExcused);setNoDuty(v=>v.filter(f=>f!==p.fid))}}/></td><td><input type="checkbox" aria-label={p.fid+" no duty"} checked={ineligible.includes(p.fid)} disabled={disabled||!eligible.has(p.fid)||present.has(p.fid)} onChange={()=>{toggle(p.fid,noDuty,setNoDuty);setExcused(v=>v.filter(f=>f!==p.fid))}}/></td></tr>)}</tbody></table></div>}

@@ -107,6 +107,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             FROM player_group_profiles p WHERE p.group_id=? AND (? IS NULL OR p.player_fid=?)
         """,(group_id,fid,fid)):
             profiles[p["fid"]]=dict(p)
+        finalized_ids={r["event_id"] for r in db.execute("SELECT event_id FROM event_completion_reviews")}
         completed=defaultdict(dict)
         for r in db.execute("""SELECT r.* FROM event_completion_roster r JOIN events e ON e.id=r.event_id JOIN alliances a ON a.id=e.alliance_id WHERE a.group_id=? AND e.status='published' AND e.occurred_on BETWEEN ? AND ? AND (? IS NULL OR r.player_fid=?)""",(group_id,start.isoformat(),end.isoformat(),fid,fid)):
             completed[r["event_id"]][r["player_fid"]]=dict(r)
@@ -123,7 +124,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         ss=sessions[event["id"]]
         fids={f for s in ss for f in s["rows"]} | set(completed[event["id"]])
         entries=[]
-        finalized=bool(completed[event["id"]])
+        finalized=event["id"] in finalized_ids
         unknown_home=0
         for f in sorted(fids):
             homes={h["alliance_id"] for h in home_history[f] if h["effective_observed_at"][:10] < event["occurred_on"] and (h["ended_observed_at"] is None or h["ended_observed_at"][:10] > event["occurred_on"])}

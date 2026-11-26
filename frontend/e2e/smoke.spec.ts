@@ -185,6 +185,33 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(allianceSwitcher.locator("option:checked")).toContainText("WZNA");
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
+  // Verify Overall default, low-score sorting, missing evidence and responsive table.
+  await page.route("**/api/v1/groups/*/analytics?*",async route=>{
+    const response=await route.fetch();
+    const body=await response.json();
+    const blank={observed_events:0,observed_sessions:0};
+    const counts=(positive:number,negative:number)=>({positive,negative,unknown:0,excused:0,known:positive+negative,rate:positive+negative?100*positive/(positive+negative):null});
+    body.players=["Review Low","Review High","Review Unknown"].map((nickname,i)=>({fid:"screen-"+i,nickname,group_status:"active",primary_alliance_id:body.alliance_id,metrics:{bear_trap:i===2?blank:{observed_events:1,observed_sessions:1,attendance:counts(i,1-i)},alliance_championship:blank,alliance_mobilization:blank,foundry:blank,canyon:blank}}));
+    body.events=[{id:"screen-event",event_type:"bear_trap",occurred_on:"2026-11-24",recorded_players:2,unknown_home_players:0,session_count:1,metrics:blank,activity_cells:{"screen-0":"negative","screen-1":"positive"}}];
+    await route.fulfill({response,json:body});
+  });
+  await page.goto("/rankings");
+  await expect(page.getByRole("button",{name:"Overall",exact:true})).toHaveAttribute("aria-pressed","true");
+  const overallTable=page.locator(".rankings-panel tbody");
+  await expect(overallTable.locator("tr").first()).toContainText("Review Low");
+  await expect(overallTable.locator("tr").last()).toContainText("Review Unknown");
+  await expect(overallTable.locator("tr").last()).toContainText("No evidence");
+  await page.getByRole("button",{name:/Activity score/}).click();
+  await expect(overallTable.locator("tr").first()).toContainText("Review High");
+  await page.getByLabel("Find player").fill("Review Low");
+  await expect(overallTable.locator("tr")).toHaveCount(1);
+  await page.getByLabel("Find player").clear();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.screenshot({path:testInfo.outputPath("overall-ranking.png"),fullPage:true});
+  await page.getByRole("button",{name:"Attendance",exact:true}).click();
+  await expect(page.getByLabel("Event / metric")).toBeVisible();
+  await page.unroute("**/api/v1/groups/*/analytics?*");
+
   await page.goto("/admin?mode=events");
   await page.getByLabel(/^Event type/).selectOption("foundry");
   await page.getByLabel(/^Event date/).fill("2026-11-24");

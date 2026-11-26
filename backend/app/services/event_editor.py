@@ -158,12 +158,64 @@ def save(path, group_id, event_id, session_id, payload):
     return read(path, group_id, event_id)
 
 
-def publish(path, group_id, event_id, bear_cycle_complete=False):
+class CompletionReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revisions: dict[str, StrictInt] = Field(max_length=30)
+    roster: list[str] = Field(min_length=1, max_length=500)
+    excused: list[str] = Field(default_factory=list, max_length=500)
+    no_duty: list[str] = Field(default_factory=list, max_length=500)
+    expected_sessions: int = Field(ge=1, le=30)
+
+
+def finalize_attendance(db, event, group_id, review):
+    kind = event["event_type"]
+    if kind not in {"bear_trap", "foundry", "canyon"}:
+        raise ValueError("Event does not support automatic attendance")
+    eid = event["id"]
+    sessions = db.execute("SELECT * FROM event_sessions WHERE event_id=?", (eid,)).fetchall()
+    if len(sessions) != review.expected_sessions or (kind != "bear_trap" and {s["session_key"] for s in sessions} != {"legion_1","legion_2"}):
+        raise ValueError("All expected traps or both legions must be recorded")
+    if review.revisions != {s["id"]: s["revision"] for s in sessions}:
+        raise ValueError("Sessions changed; reload final review")
+    roster, excused, no_duty = set(review.roster), set(review.excused), set(review.no_duty)
+    if len(roster)!=len(review.roster) or excused & no_duty or not (excused | no_duty) <= roster:
+        raise ValueError("Invalid roster or exceptions")
+    profiles = {r["player_fid"]: r for r in db.execute("""
+        SELECT p.player_fid, (SELECT n.nickname FROM player_nickname_observations n
+          WHERE n.player_fid=p.player_fid AND n.group_id=p.group_id
+          ORDER BY n.observed_at DESC,n.id DESC LIMIT 1) AS nickname
+        FROM player_group_profiles p WHERE p.group_id=?
+    """, (group_id,))}
+    if not roster <= profiles.keys():
+        raise ValueError("Roster contains a player outside this group")
+    present = set()
+    for s in sessions:
+        for r in db.execute("""SELECT r.*, EXISTS(SELECT 1 FROM event_session_metrics m
+            WHERE m.session_id=r.session_id AND m.player_fid=r.player_fid
+            AND m.metric_key IN ('damage','personal_points') AND m.raw_value>0) AS scored
+            FROM event_session_roster r WHERE r.session_id=?""", (s["id"],)):
+            if r["attendance"] == "confirmed_present" or r["scored"]:
+                present.add(r["player_fid"])
+    if present & (excused | no_duty):
+        raise ValueError("A participating player cannot be excused or ineligible")
+    db.execute("DELETE FROM event_completion_roster WHERE event_id=?", (eid,))
+    for fid in sorted(roster | present):
+        outcome = "positive" if fid in present else "no_duty" if fid in no_duty else "excused" if fid in excused else "negative"
+        db.execute("INSERT INTO event_completion_roster(event_id,player_fid,nickname,outcome) VALUES (?,?,?,?)",
+                   (eid,fid,profiles[fid]["nickname"] or fid,outcome))
+    db.execute("INSERT INTO event_completion_reviews(event_id) VALUES (?)", (eid,))
+    _audit(db,eid,"attendance_finalized")
+
+
+def publish(path, group_id, event_id, bear_cycle_complete=False, completion=None):
     with transaction(path) as db:
         event = _event(db, group_id, event_id, editable=True)
         sessions = db.execute("SELECT id FROM event_sessions WHERE event_id=?", (event_id,)).fetchall()
         if not sessions or any(not db.execute("SELECT 1 FROM event_session_roster WHERE session_id=?", (s["id"],)).fetchone() for s in sessions):
             raise ValueError("Every session needs reviewed player records before publication")
+        if completion is not None:
+            finalize_attendance(db,event,group_id,completion)
+            bear_cycle_complete = True
         db.execute("UPDATE events SET status='published',bear_cycle_complete=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (int(bear_cycle_complete and event["event_type"] == "bear_trap"), event_id))
         _audit(db, event_id, "published")
     return read(path, group_id, event_id)
@@ -190,6 +242,8 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
         if action == "reopen":
             if event["status"] != "published":
                 raise ValueError("Only published events can be reopened")
+            db.execute("DELETE FROM event_completion_roster WHERE event_id=?", (event_id,))
+            db.execute("DELETE FROM event_completion_reviews WHERE event_id=?", (event_id,))
             db.execute("UPDATE events SET status='draft',bear_cycle_complete=0,updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
             db.execute("UPDATE event_sessions SET revision=revision+1 WHERE event_id=?", (event_id,))
         elif action == "date":

@@ -107,6 +107,9 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             FROM player_group_profiles p WHERE p.group_id=? AND (? IS NULL OR p.player_fid=?)
         """,(group_id,fid,fid)):
             profiles[p["fid"]]=dict(p)
+        completed=defaultdict(dict)
+        for r in db.execute("""SELECT r.* FROM event_completion_roster r JOIN events e ON e.id=r.event_id JOIN alliances a ON a.id=e.alliance_id WHERE a.group_id=? AND e.status='published' AND e.occurred_on BETWEEN ? AND ? AND (? IS NULL OR r.player_fid=?)""",(group_id,start.isoformat(),end.isoformat(),fid,fid)):
+            completed[r["event_id"]][r["player_fid"]]=r["outcome"]
         home_history=defaultdict(list)
         for h in db.execute("SELECT player_fid,alliance_id,effective_observed_at,ended_observed_at FROM player_primary_alliance_history WHERE group_id=? AND (? IS NULL OR player_fid=?)",(group_id,fid,fid)):
             home_history[h["player_fid"]].append(dict(h))
@@ -118,7 +121,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
     for event in events:
         kind=event["event_type"]
         ss=sessions[event["id"]]
-        fids={f for s in ss for f in s["rows"]}
+        fids={f for s in ss for f in s["rows"]} | set(completed[event["id"]])
         entries=[]
         unknown_home=0
         for f in sorted(fids):
@@ -138,7 +141,14 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                     "attendance":row["attendance"],"role":row["role"],"registered_by":row["registered_by"],
                     "registration_outcome":registration(row,s),"attendance_outcome":attendance(row,s),"metrics":row["metrics"]})
             entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"home_alliance_id":home,"sessions":evidence}
-            if kind=="bear_trap":
+            final=completed[event["id"]].get(f)
+            if final is not None:
+                entry["cycle_attendance"]="excused" if final=="no_duty" else final
+                if kind in ("foundry","canyon"):
+                    for item in evidence:
+                        if item["registration_outcome"]=="positive" and item["attendance_outcome"]!="positive":
+                            item["attendance_outcome"]="excused" if final in ("excused","no_duty") or item["attendance_outcome"]=="excused" else "negative"
+            elif kind=="bear_trap":
                 entry["cycle_attendance"]=bear_cycle(evidence, [s["session_key"] for s in ss], bool(event["bear_cycle_complete"]))
             entries.append(entry)
             histories[f].append(entry)
@@ -158,7 +168,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
 
 def activity_cell(entry):
     kind=entry["event_type"]
-    if kind=="bear_trap":
+    if "cycle_attendance" in entry:
         return entry["cycle_attendance"]
     if kind=="alliance_championship":
         values=[s["registration_outcome"] for s in entry["sessions"]]
@@ -183,7 +193,7 @@ def aggregate(entries, kind):
     if kind=="bear_trap":
         out["attendance"]=counts(e["cycle_attendance"] for e in entries)
     if kind in ("foundry","canyon"):
-        out["attendance"]=counts(s["attendance_outcome"] for s in evidence)
+        out["attendance"]=counts(v for e in entries for v in ([e["cycle_attendance"]] if "cycle_attendance" in e else [s["attendance_outcome"] for s in e["sessions"]]))
         out["reliability"]=counts(s["attendance_outcome"] for s in evidence if s["registration_outcome"]=="positive")
         out["no_shows"]=out["reliability"]["negative"]
     for metric in METRICS.get(kind,()):

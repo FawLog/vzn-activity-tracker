@@ -17,6 +17,7 @@ import { useAuth } from "../lib/auth";
 import { useGroupContext } from "../lib/group-context";
 import { navigate } from "../lib/router";
 import { Brand } from "./Brand";
+import { ProductionVersion } from "./ProductionVersion";
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
@@ -121,7 +122,7 @@ export function AppShell({ path, children }: { path: string; children: ReactNode
         <main className="main-content">{children}</main>
         <footer className="statusbar">
           <span><i />System operational</span>
-          <span>VZN Foundation v0.1</span>
+          {authenticated && <ProductionVersion />}
           <span className="statusbar__note">Verified records only · no inferred absences</span>
         </footer>
       </div>

@@ -1,7 +1,10 @@
 import react from "@vitejs/plugin-react";
 import { configDefaults, defineConfig } from "vitest/config";
 
+const buildSha = /^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA ?? "") ? process.env.GITHUB_SHA! : null;
+
 export default defineConfig({
+  define: { __VZN_BUILD_SHA__: JSON.stringify(buildSha) },
   plugins: [react()],
   server: {
     host: "127.0.0.1",

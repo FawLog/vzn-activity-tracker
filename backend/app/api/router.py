@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 from datetime import date
 from typing import Literal
 from pydantic import BaseModel, ConfigDict
@@ -90,6 +92,14 @@ def create_api_router(settings: Settings) -> APIRouter:
         if not ready:
             raise HTTPException(status_code=503, detail="Database unavailable")
         return {"status": "ok", "database": "ready", "migration_version": migration_version}
+
+    @router.get("/version")
+    async def version(request: Request, response: Response) -> dict[str, object]:
+        require_admin(request, settings)
+        response.headers["Cache-Control"] = "no-store"
+        tag = os.getenv("VZN_IMAGE_TAG", "")
+        match = re.fullmatch(r"ci-([0-9a-f]{40})", tag)
+        return {"sha": match.group(1) if match else None}
 
     @router.get("/auth/csrf")
     async def csrf(request: Request, response: Response) -> dict[str, object]:

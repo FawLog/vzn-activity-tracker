@@ -77,3 +77,25 @@ sudo -n /usr/local/sbin/vzn-manage-sudoers revoke-update
 ```
 
 `vzn-update` не принимает аргументы и не меняет Nginx. Он создаёт проверенную online-backup SQLite до запуска новой версии. При неуспехе он восстанавливает backup через SQLite Backup API и предыдущие `.env`, Compose и frontend release; при неустранимом прерывании оставляет marker для ручного review вместо небезопасного автоматического продолжения. Полная процедура восстановления приведена в `DEPLOYMENT.md`.
+
+## Retention и безопасная очистка
+
+`deploy/root/vzn-storage-maintenance` — отдельный root-owned control. Его
+устанавливают только из точно reviewed source вместе с обновлённым
+`approved-controls.json`; webhook никогда не заменяет его автоматически.
+После проверки helper и units владелец может выполнить только dry-run:
+
+```sh
+sudo install -o root -g root -m 0755 deploy/root/vzn-storage-maintenance /usr/local/sbin/vzn-storage-maintenance
+sudo install -o root -g root -m 0644 deploy/storage-maintenance/vzn-storage-maintenance.service /etc/systemd/system/vzn-storage-maintenance.service
+sudo install -o root -g root -m 0644 deploy/storage-maintenance/vzn-storage-maintenance.timer /etc/systemd/system/vzn-storage-maintenance.timer
+sudo systemctl daemon-reload
+sudo systemd-analyze verify /etc/systemd/system/vzn-storage-maintenance.service /etc/systemd/system/vzn-storage-maintenance.timer
+sudo /usr/local/sbin/vzn-storage-maintenance cleanup
+```
+
+После отдельного согласования списка кандидатов допускается один
+`cleanup --apply`; затем можно включить только timer:
+`sudo systemctl enable --now vzn-storage-maintenance.timer`. Не выдавайте
+пользователю sudo для maintenance helper и не включайте SQLite/configuration,
+`failed-*`, `interrupted-*` или user-owned artifacts в автоматическую очистку.

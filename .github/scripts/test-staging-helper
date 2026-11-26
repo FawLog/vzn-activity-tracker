@@ -12,7 +12,7 @@ fixture_root="$(mktemp -d)"
 cleanup() {
   sudo rm -rf -- "${STAGING_ROOT}"
   sudo rm -rf -- /var/lib/vzn-update-staging
-  sudo rm -f -- "${INSTALLED_STAGER}" "${INSTALLED_DEPLOYER}" "${INSTALLED_UPDATER}" "${INSTALLED_SUDOERS_HELPER}"
+  sudo rm -f -- "${INSTALLED_STAGER}" "${INSTALLED_DEPLOYER}" "${INSTALLED_UPDATER}" "${INSTALLED_SUDOERS_HELPER}" /usr/local/sbin/vzn-storage-maintenance
   sudo rm -rf -- /usr/local/lib/vzn-activity-tracker
   rm -rf -- "${fixture_root}"
 }
@@ -47,6 +47,8 @@ install -m 0755 deploy/root/manage-vzn-sudoers \
   "${deployment_payload}/deploy/root/manage-vzn-sudoers"
 install -m 0755 deploy/root/healthcheck.sh \
   "${deployment_payload}/deploy/root/healthcheck.sh"
+install -m 0755 deploy/root/vzn-storage-maintenance \
+  "${deployment_payload}/deploy/root/vzn-storage-maintenance"
 install -m 0755 deploy/root/update-vzn-activity-tracker \
   "${deployment_payload}/deploy/root/update-vzn-activity-tracker"
 deployment_archive="${artifact_root}/deployment/vzn-deployment-${commit}.tar.gz"

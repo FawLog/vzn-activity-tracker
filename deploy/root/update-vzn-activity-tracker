@@ -14,6 +14,9 @@ readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly HOST_CONFIG="/etc/vzn-activity-tracker/deploy.conf"
 readonly CONTAINER_NAME="vzn-activity-tracker-backend"
 readonly HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
+readonly STORAGE_MAINTENANCE="/usr/local/sbin/vzn-storage-maintenance"
+readonly OPERATION_LOCK_DIRECTORY="/var/lib/vzn-autodeploy"
+readonly OPERATION_LOCK="${OPERATION_LOCK_DIRECTORY}/lock"
 MINIMUM_RESERVE_BYTES=536870912
 readonly RESERVE_CONFIG="/etc/vzn-activity-tracker/minimum-reserve-bytes"
 readonly UPDATE_OVERHEAD_BYTES=268435456
@@ -32,10 +35,40 @@ previous_image=""
 transaction_started=0
 backend_switch_started=0
 update_completed=0
+ci_run_id=""
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+acquire_operation_lock() {
+  local inherited="${VZN_OPERATION_LOCK_FD:-}"
+  install -d -o root -g root -m 0700 "${OPERATION_LOCK_DIRECTORY}"
+  if [[ "${inherited}" =~ ^[0-9]+$ && -e "/proc/self/fd/${inherited}" && \
+    "$(readlink -f -- "/proc/self/fd/${inherited}")" == "${OPERATION_LOCK}" ]]; then
+    flock -n "${inherited}" || fail "Another VZN operation is active"
+    return
+  fi
+  exec {operation_lock_fd}>"${OPERATION_LOCK}"
+  flock -n "${operation_lock_fd}" || fail "Another VZN operation is active"
+}
+
+read_ci_run_context() {
+  local context="${STAGING_ROOT}/deployment-context.json"
+  [[ ! -e "${context}" && ! -L "${context}" ]] && return 0
+  [[ -f "${context}" && ! -L "${context}" && "$(stat --format='%U:%G:%a' "${context}")" == "root:root:600" ]] || \
+    fail "Unsafe deployment CI context"
+  ci_run_id="$(python3 - "${context}" "${commit}" <<'PY'
+import json, sys
+from pathlib import Path
+value = json.loads(Path(sys.argv[1]).read_text())
+run = value.get("ci_run_id")
+if value.get("commit") != sys.argv[2] or type(run) is not int or run <= 0:
+    raise SystemExit("invalid deployment CI context")
+print(run)
+PY
+)" || fail "Invalid deployment CI context"
 }
 
 require_command() {
@@ -208,6 +241,8 @@ trap 'exit 143' TERM
 for command_name in curl df docker du find grep install nginx python3 sha256sum stat systemctl tar; do
   require_command "${command_name}"
 done
+require_command flock
+acquire_operation_lock
 load_healthcheck_helper
 
 validate_root_owned_directory "${STAGING_ROOT}"
@@ -274,6 +309,7 @@ source_commit="$(tr -d '\r\n' < "${SOURCE_ROOT}/REVISION")"
 [[ "${commit}" =~ ^[0-9a-f]{40}$ && "${source_commit}" == "${commit}" ]] || \
   fail "Deployment source and backend manifest commits differ or are invalid"
 [[ "${image_tag}" == "ci-${commit}" ]] || fail "Backend image tag does not match the commit"
+read_ci_run_context
 [[ "$(basename "${frontend_archive}")" == "vzn-frontend-${commit}.tar.gz" ]] || fail "Frontend artifact does not match the commit"
 [[ "$(basename "${backend_archive}")" == "vzn-backend-${commit}.tar.gz" ]] || fail "Backend artifact does not match the commit"
 
@@ -310,6 +346,12 @@ printf 'COMMIT=%s\nRELEASE_ID=%s\nPREVIOUS_RELEASE=%s\nPREVIOUS_IMAGE=%s\n' \
 chmod 0600 "${transaction_root}/transaction"
 
 backup_database
+printf 'COMMIT=%s\nRELEASE_ID=%s\nPREVIOUS_RELEASE=%s\nPREVIOUS_IMAGE=%s\nBACKUP=%s\nCI_RUN_ID=%s\n' \
+  "${commit}" "${release_id}" "${previous_release}" "${previous_image}" "${backup_host_path}" "${ci_run_id:-manual}" > \
+  "${transaction_root}/transaction.next"
+chown root:root "${transaction_root}/transaction.next"
+chmod 0600 "${transaction_root}/transaction.next"
+mv -T "${transaction_root}/transaction.next" "${transaction_root}/transaction"
 printf 'COMMIT=%s\nRELEASE_ID=%s\nTRANSACTION_ROOT=%s\nBACKUP=%s\n' \
   "${commit}" "${release_id}" "${transaction_root}" "${backup_host_path}" > "${UPDATE_MARKER}"
 chown root:root "${UPDATE_MARKER}"
@@ -335,7 +377,23 @@ wait_for_public_https_health "vzn.fawlog.cc" "${public_ipv4}" \
   "${HTTPS_REQUEST_TIMEOUT_SECONDS}" "${HTTPS_RETRY_DELAY_SECONDS}" || \
   fail "Updated public HTTPS health check did not become ready"
 docker compose --project-directory "${APP_ROOT}" ps
-rm -f "${UPDATE_MARKER}"
 update_completed=1
+record_arguments=(record-success --commit "${commit}" --release "${release_root}" \
+  --image "vzn-activity-tracker-backend:${image_tag}" --transaction "${transaction_root}" \
+  --backup "${backup_host_path}")
+if [[ -n "${ci_run_id}" ]]; then
+  record_arguments+=(--ci-run-id "${ci_run_id}")
+fi
+[[ -f "${STORAGE_MAINTENANCE}" && ! -L "${STORAGE_MAINTENANCE}" && \
+  "$(stat --format='%U:%G:%a' "${STORAGE_MAINTENANCE}")" == "root:root:755" ]] || \
+  fail "Storage maintenance helper is missing or unsafe"
+if ! "${STORAGE_MAINTENANCE}" "${record_arguments[@]}"; then
+  printf 'ERROR: Deployment is healthy but its recovery point was not recorded; marker retained for owner review.\n' >&2
+  exit 1
+fi
+rm -f "${UPDATE_MARKER}"
+if ! "${STORAGE_MAINTENANCE}" cleanup --apply; then
+  printf 'WARNING: Deployment succeeded but storage cleanup was deferred or failed; retry maintenance separately.\n' >&2
+fi
 printf 'Updated VZN release %s from commit %s. Previous control files and verified backup are in %s.\n' \
   "${release_id}" "${commit}" "${transaction_root}"

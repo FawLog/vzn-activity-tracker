@@ -16,6 +16,8 @@ readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly HOST_CONFIG="/etc/vzn-activity-tracker/deploy.conf"
 readonly CONTAINER_NAME="vzn-activity-tracker-backend"
 readonly HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
+readonly OPERATION_LOCK_DIRECTORY="/var/lib/vzn-autodeploy"
+readonly OPERATION_LOCK="${OPERATION_LOCK_DIRECTORY}/lock"
 MINIMUM_RESERVE_BYTES=536870912
 readonly RESERVE_CONFIG="/etc/vzn-activity-tracker/minimum-reserve-bytes"
 readonly INSTALL_OVERHEAD_BYTES=268435456
@@ -33,6 +35,18 @@ install_completed=0
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+acquire_operation_lock() {
+  local inherited="${VZN_OPERATION_LOCK_FD:-}"
+  install -d -o root -g root -m 0700 "${OPERATION_LOCK_DIRECTORY}"
+  if [[ "${inherited}" =~ ^[0-9]+$ && -e "/proc/self/fd/${inherited}" && \
+    "$(readlink -f -- "/proc/self/fd/${inherited}")" == "${OPERATION_LOCK}" ]]; then
+    flock -n "${inherited}" || fail "Another VZN operation is active"
+    return
+  fi
+  exec {operation_lock_fd}>"${OPERATION_LOCK}"
+  flock -n "${operation_lock_fd}" || fail "Another VZN operation is active"
 }
 
 require_command() {
@@ -276,6 +290,8 @@ trap 'exit 143' TERM
 
 [[ "${EUID}" -eq 0 ]] || fail "Run this installer as root"
 [[ "$#" -eq 0 ]] || fail "This installer accepts no arguments"
+require_command flock
+acquire_operation_lock
 
 for command_name in curl df docker du find grep install nginx openssl python3 sha256sum ss stat systemctl tar; do
   require_command "${command_name}"

@@ -327,7 +327,14 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.goto("/events");
   await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
-  await page.getByRole("button",{name:"Add Legion 1"}).click();
+  await expect(page.getByLabel("Legion number")).toHaveValue("legion_1");
+  await page.getByRole("button",{name:"Add Legion 1",exact:true}).click();
+  await expect(page.getByRole("group",{name:"Existing sessions"}).getByRole("button",{name:"Legion 1",exact:true})).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByLabel("Legion number")).toHaveCount(0);
+  await page.getByRole("button",{name:"Add legion",exact:true}).click();
+  await expect(page.getByLabel("Legion number")).toHaveValue("legion_2");
+  await page.getByRole("button",{name:"Cancel new session"}).click();
+  await expect(page.getByLabel("Legion number")).toHaveCount(0);
   await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
   await page.route("**/ocr/preview", async route=>{
     expect(route.request().headers()["content-type"]).toBe("image/png");
@@ -335,7 +342,14 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await route.fulfill({json:{provider:"google_vision",text:"Roster Scout 4500000000",tokens:[],warnings:[]}});
   });
   await page.reload();
-  await page.getByLabel("Choose screenshots").setInputFiles([{name:"first.png",mimeType:"image/png",buffer:Buffer.from("image1")},{name:"second.png",mimeType:"image/png",buffer:Buffer.from("image2")}]);
+  await expect(page.getByRole("button",{name:"Upload screenshots"})).toBeVisible();
+  await expect(page.getByText("No screenshots selected",{exact:true})).toBeVisible();
+  const chooserPromise=page.waitForEvent("filechooser");
+  await page.getByRole("button",{name:"Upload screenshots"}).click();
+  const chooser=await chooserPromise;
+  await chooser.setFiles([{name:"first.png",mimeType:"image/png",buffer:Buffer.from("image1")},{name:"second.png",mimeType:"image/png",buffer:Buffer.from("image2")}]);
+  await expect(page.getByText("2 screenshots selected",{exact:true})).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.getByRole("button",{name:"Recognize screenshots"}).click();
   await expect(page.getByText("2 of 2 screenshots recognized")).toBeVisible();
   await expect(page.getByLabel("Roster Scout Personal points")).toHaveCount(0);

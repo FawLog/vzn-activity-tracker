@@ -95,7 +95,8 @@ def read(path, group_id, event_id):
                 rows.append(entry)
             item["rows"] = rows
             sessions.append(item)
-        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions}
+        completion = [dict(r) for r in db.execute("SELECT player_fid AS fid,nickname,outcome,roster_member FROM event_completion_roster WHERE event_id=? ORDER BY nickname COLLATE NOCASE,player_fid",(event_id,))]
+        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion}
 
 
 def create_session(path, group_id, event_id, payload):
@@ -201,9 +202,9 @@ def finalize_attendance(db, event, group_id, review):
     db.execute("DELETE FROM event_completion_roster WHERE event_id=?", (eid,))
     for fid in sorted(roster | present):
         outcome = "positive" if fid in present else "no_duty" if fid in no_duty else "excused" if fid in excused else "negative"
-        db.execute("INSERT INTO event_completion_roster(event_id,player_fid,nickname,outcome) VALUES (?,?,?,?)",
-                   (eid,fid,profiles[fid]["nickname"] or fid,outcome))
-    db.execute("INSERT INTO event_completion_reviews(event_id) VALUES (?)", (eid,))
+        db.execute("INSERT INTO event_completion_roster(event_id,player_fid,nickname,outcome,home_alliance_id,roster_member) VALUES (?,?,?,?,?,?)",
+                   (eid,fid,profiles[fid]["nickname"] or fid,outcome,event["alliance_id"] if fid in roster else None,int(fid in roster)))
+    db.execute("INSERT INTO event_completion_reviews(event_id) VALUES (?) ON CONFLICT(event_id) DO UPDATE SET completed_at=CURRENT_TIMESTAMP", (eid,))
     _audit(db,eid,"attendance_finalized")
 
 
@@ -216,6 +217,9 @@ def publish(path, group_id, event_id, bear_cycle_complete=False, completion=None
         if completion is not None:
             finalize_attendance(db,event,group_id,completion)
             bear_cycle_complete = True
+        else:
+            db.execute("DELETE FROM event_completion_roster WHERE event_id=?", (event_id,))
+            db.execute("DELETE FROM event_completion_reviews WHERE event_id=?", (event_id,))
         db.execute("UPDATE events SET status='published',bear_cycle_complete=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (int(bear_cycle_complete and event["event_type"] == "bear_trap"), event_id))
         _audit(db, event_id, "published")
     return read(path, group_id, event_id)
@@ -242,8 +246,6 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
         if action == "reopen":
             if event["status"] != "published":
                 raise ValueError("Only published events can be reopened")
-            db.execute("DELETE FROM event_completion_roster WHERE event_id=?", (event_id,))
-            db.execute("DELETE FROM event_completion_reviews WHERE event_id=?", (event_id,))
             db.execute("UPDATE events SET status='draft',bear_cycle_complete=0,updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
             db.execute("UPDATE event_sessions SET revision=revision+1 WHERE event_id=?", (event_id,))
         elif action == "date":

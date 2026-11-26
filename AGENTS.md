@@ -43,7 +43,7 @@ If sudo, Docker socket, DNS provider, or external-runner access is unavailable, 
 ## Product invariants
 
 - FID is the primary player identity; preserve nickname history and membership intervals.
-- Contribution, attendance, and reliability remain separate. Never create a universal usefulness score.
+- Contribution, attendance, and reliability remain separate. The officer-approved Overall Activity screening index may summarize them transparently, with explicit evidence limitations. Never create a universal usefulness score or automatic exclusion decision.
 - Raw points from different event types are never summed.
 - Missing from a partial top-N list does not mean zero.
 - Presence is explicitly confirmed present, confirmed absent, excused/no duty, or unknown.

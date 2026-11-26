@@ -82,3 +82,25 @@ def test_academy_host_and_incomplete_cycle(authenticated_client,settings):
     assert report["events"][0]["evidence"][0]["host_alliance_id"]==academy
     assert analytics.bear_cycle([{"session_key":"trap_1","attendance_outcome":"negative"}],["trap_1"],False)=="unknown"
     assert analytics.bear_cycle([{"session_key":"trap_1","attendance_outcome":"negative"}],["trap_1","trap_3"],True)=="unknown"
+
+
+def test_overall_contribution_is_per_event_and_preserves_zero(authenticated_client, settings):
+    c=authenticated_client
+    gid=create_onboarded_group(c)["id"]
+    aid=c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    for fid in ("zero","scorer","missing"):
+        assert c.post(f"/api/v1/groups/{gid}/players",json={"fid":fid,"nickname":fid}).status_code==201
+    root=f"/api/v1/groups/{gid}/alliances/{aid}"
+    eid=c.post(root+"/events",json={"event_type":"alliance_mobilization","occurred_on":"2026-11-25"}).json()["id"]
+    path=settings.database_path
+    s=event_editor.read(path,gid,eid)["sessions"][0]
+    event_editor.save(path,gid,eid,s["id"],SessionSave(revision=s["revision"],rows=[
+        {"fid":"zero","nickname":"zero","metrics":{"points":0}},
+        {"fid":"scorer","nickname":"scorer","metrics":{"points":100}},
+        {"fid":"missing","nickname":"missing"}]))
+    url=root+"/analytics?start=2026-11-01&end=2026-11-30"
+    assert c.get(url).json()["events"]==[]
+    event_editor.publish(path,gid,eid)
+    event=c.get(url).json()["events"][0]
+    assert event["contribution_points"]=={"zero":"0","scorer":"100"}
+    assert event["contribution_complete"] is False

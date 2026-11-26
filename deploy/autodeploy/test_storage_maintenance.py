@@ -123,6 +123,25 @@ class StorageMaintenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(maintenance.SafetyError, "invalid"):
             maintenance.protected_points(registry)
 
+    def test_cleanup_accepts_the_inherited_worker_lock(self):
+        self.lock.touch()
+        with self.lock.open("a+") as lock, \
+                patch.object(maintenance.os, "geteuid", return_value=0), \
+                patch.object(maintenance, "root_directory"), \
+                patch.object(maintenance, "candidates", return_value=[]), \
+                patch.dict(os.environ, {"VZN_OPERATION_LOCK_FD": str(lock.fileno())}):
+            maintenance.fcntl.flock(lock, maintenance.fcntl.LOCK_EX)
+            self.assertEqual(maintenance.run_cleanup(apply=False), 0)
+
+    def test_inherited_lock_rejects_a_different_file(self):
+        self.lock.touch()
+        other = self.state / "other-lock"
+        other.touch()
+        with other.open() as stream, patch.dict(
+                os.environ, {"VZN_OPERATION_LOCK_FD": str(stream.fileno())}):
+            with self.assertRaisesRegex(maintenance.SafetyError, "does not match"):
+                maintenance.inherited_lock()
+
 
 if __name__ == "__main__":
     unittest.main()

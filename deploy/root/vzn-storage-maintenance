@@ -319,6 +319,24 @@ def remove_tree(path: Path) -> int:
     return max(0, shutil.disk_usage(path.parent).free - before)
 
 
+def inherited_lock() -> int | None:
+    """Use the worker/updater lock when it was deliberately passed to us."""
+    raw = os.environ.get("VZN_OPERATION_LOCK_FD")
+    if raw is None:
+        return None
+    require(raw.isdecimal(), "invalid inherited operation lock")
+    descriptor = int(raw)
+    try:
+        actual = os.fstat(descriptor)
+        expected = LOCK.stat()
+    except OSError as error:
+        raise SafetyError("invalid inherited operation lock") from error
+    require(stat.S_ISREG(actual.st_mode)
+            and (actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino),
+            "inherited operation lock does not match")
+    return descriptor
+
+
 def run_cleanup(apply: bool) -> int:
     require(os.geteuid() == 0, "root is required")
     if AUTO_STATE.exists():
@@ -326,7 +344,8 @@ def run_cleanup(apply: bool) -> int:
     else:
         AUTO_STATE.mkdir(mode=0o700, parents=True)
     root_directory(AUTO_STATE, 0o700)
-    with LOCK.open("a+") as lock:
+    inherited = inherited_lock()
+    with LOCK.open("a+") if inherited is None else os.fdopen(os.dup(inherited), "a+") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

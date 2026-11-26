@@ -58,6 +58,7 @@ PY
 case "$#:${1:-}" in
   1:*) mode="install"; artifact_argument="$1" ;;
   2:--update) mode="update"; artifact_argument="$2" ;;
+  2:--auto-update) mode="auto-update"; artifact_argument="$2" ;;
   *) fail "Usage: stage-vzn-artifacts /absolute/path/to/artifacts | stage-vzn-artifacts --update /absolute/path/to/artifacts" ;;
 esac
 
@@ -147,7 +148,27 @@ for required_source in \
   deploy/root/healthcheck.sh; do
   [[ -f "${staging_temp}/source/${required_source}" ]] || fail "Deployment source is missing: ${required_source}"
 done
-if [[ "${mode}" == "update" && -d "${staging_root}" ]]; then
+if [[ "${mode}" == "auto-update" ]]; then
+  # Verify extracted files again before promoting staging. Never replace installed root helpers.
+  python3 - "${staging_temp}/source" <<'PY'
+import hashlib, json, os, stat, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+config = Path("/etc/vzn-activity-tracker/approved-controls.json")
+st = config.lstat()
+if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+    raise SystemExit("Unsafe control approval file")
+approved = json.loads(config.read_text())
+required = {"compose.yaml", "scripts/set_image_tag.py", "deploy/root/stage-vzn-artifacts", "deploy/root/update-vzn-activity-tracker", "deploy/root/manage-vzn-sudoers", "deploy/root/healthcheck.sh", "deploy/root/install-vzn-activity-tracker"}
+if set(approved) != required:
+    raise SystemExit("Invalid control approval set")
+for name in required:
+    path = root / name
+    if not path.is_file() or path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != approved[name]:
+        raise SystemExit("Unapproved control: " + name)
+PY
+fi
+if [[ "${mode}" != "install" && -d "${staging_root}" ]]; then
   install -d -o root -g root -m 0750 "${BACKUP_ROOT}"
   archived_stage="${BACKUP_ROOT}/staged-update-$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
   [[ ! -e "${archived_stage}" ]] || fail "Update staging archive target already exists"
@@ -155,6 +176,10 @@ if [[ "${mode}" == "update" && -d "${staging_root}" ]]; then
 fi
 mv -T "${staging_temp}" "${staging_root}"
 staging_temp=""
+if [[ "${mode}" == "auto-update" ]]; then
+  printf 'Staged approved automatic update %s without replacing installed helpers.\n' "${commit}"
+  exit 0
+fi
 if [[ "${mode}" == "install" ]]; then
   install -o root -g root -m 0755 \
     "${staging_root}/source/deploy/root/install-vzn-activity-tracker" "${INSTALLED_DEPLOYER}"

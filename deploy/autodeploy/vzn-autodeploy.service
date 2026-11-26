@@ -1,0 +1,13 @@
+[Unit]
+Description=VZN verified production deployment
+After=network-online.target docker.service
+Wants=network-online.target
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+StateDirectory=vzn-autodeploy
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vzn-autodeploy/worker.py
+TimeoutStartSec=30min

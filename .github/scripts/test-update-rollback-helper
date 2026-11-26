@@ -1,7 +1,7 @@
 #!/bin/bash
 set -Eeuo pipefail
 
-grep -Fqx 'readonly MINIMUM_RESERVE_BYTES=536870912' deploy/root/update-vzn-activity-tracker
+grep -Fqx 'MINIMUM_RESERVE_BYTES=536870912' deploy/root/update-vzn-activity-tracker
 
 # Exercise updater failure paths without touching a real application or Docker
 # daemon. The fixture covers both a failed image load before switching backend and
@@ -127,6 +127,7 @@ sed \
   -e "s|^readonly APP_ROOT=.*|readonly APP_ROOT=\"${app_root}\"|" \
   -e "s|^readonly BACKUP_ROOT=.*|readonly BACKUP_ROOT=\"${backup_root}\"|" \
   -e "s|^readonly HOST_CONFIG=.*|readonly HOST_CONFIG=\"${host_config}\"|" \
+  -e "s|^readonly RESERVE_CONFIG=.*|readonly RESERVE_CONFIG=\"${fixture_root}/minimum-reserve-bytes\"|" \
   -e "s|^readonly HEALTHCHECK_HELPER=.*|readonly HEALTHCHECK_HELPER=\"${healthcheck_helper}\"|" \
   deploy/root/update-vzn-activity-tracker > "${updater}"
 chmod 0755 "${updater}"
@@ -149,6 +150,7 @@ fi
 
 case "${scenario}" in
   docker-load-failure)
+    grep -Fq "docker load failed as requested" "${fixture_root}/updater.log" || { cat "${fixture_root}/updater.log"; exit 1; }
     [[ ! -e "${mock_log}" ]]
     [[ ! -e "${app_root}/.vzn-updating" ]]
     ;;

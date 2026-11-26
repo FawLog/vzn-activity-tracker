@@ -16,7 +16,8 @@ readonly BACKUP_ROOT="/var/backups/vzn-activity-tracker"
 readonly HOST_CONFIG="/etc/vzn-activity-tracker/deploy.conf"
 readonly CONTAINER_NAME="vzn-activity-tracker-backend"
 readonly HEALTHCHECK_HELPER="/usr/local/lib/vzn-activity-tracker/healthcheck.sh"
-readonly MINIMUM_RESERVE_BYTES=2147483648
+MINIMUM_RESERVE_BYTES=536870912
+readonly RESERVE_CONFIG="/etc/vzn-activity-tracker/minimum-reserve-bytes"
 readonly INSTALL_OVERHEAD_BYTES=268435456
 readonly HTTPS_HEALTH_MAX_ATTEMPTS=15
 readonly HTTPS_CONNECT_TIMEOUT_SECONDS=3
@@ -290,6 +291,12 @@ require_file "${HOST_CONFIG}"
 [[ "$(stat --format='%U:%G:%a' "${HOST_CONFIG}")" == "root:root:600" ]] || \
   fail "Host config must be root:root mode 0600"
 
+if [[ -e "${RESERVE_CONFIG}" || -L "${RESERVE_CONFIG}" ]]; then
+  [[ -f "${RESERVE_CONFIG}" && ! -L "${RESERVE_CONFIG}" && "$(stat --format='%U:%G:%a' "${RESERVE_CONFIG}")" == "root:root:600" ]] || fail "Unsafe disk reserve configuration"
+  MINIMUM_RESERVE_BYTES="$(cat "${RESERVE_CONFIG}")"
+  [[ "${MINIMUM_RESERVE_BYTES}" =~ ^[1-9][0-9]{0,12}$ ]] && (( MINIMUM_RESERVE_BYTES >= 536870912 && MINIMUM_RESERVE_BYTES <= 1099511627776 )) || fail "Invalid disk reserve"
+fi
+readonly MINIMUM_RESERVE_BYTES
 public_ipv4="$(read_config_value VZN_PUBLIC_IPV4)"
 certificate_fullchain="$(read_config_value VZN_CERTIFICATE_FULLCHAIN)"
 certificate_private_key="$(read_config_value VZN_CERTIFICATE_PRIVATE_KEY)"
@@ -370,10 +377,10 @@ source_bytes="$(du -sb -- "${SOURCE_ROOT}" | awk '{print $1}')"
   fail "Unable to determine disk usage"
 estimated_peak_bytes=$((backend_payload_bytes * 3 + frontend_payload_bytes + source_bytes + INSTALL_OVERHEAD_BYTES))
 required_available_bytes=$((MINIMUM_RESERVE_BYTES + estimated_peak_bytes))
-printf 'Disk preflight: available=%s bytes, conservative peak=%s bytes, required=%s bytes (includes 2 GiB reserve).\n' \
+printf 'Disk preflight: available=%s bytes, conservative peak=%s bytes, required=%s bytes (includes configured disk reserve).\n' \
   "${available_bytes}" "${estimated_peak_bytes}" "${required_available_bytes}"
 (( available_bytes >= required_available_bytes )) || \
-  fail "Insufficient disk space for the conservative installation peak and 2 GiB post-install reserve"
+  fail "Insufficient disk space for the conservative installation peak and configured post-install reserve"
 
 release_id="$(date -u +%Y%m%dT%H%M%SZ)-${commit:0:12}"
 release_root="${APP_ROOT}/releases/${release_id}"

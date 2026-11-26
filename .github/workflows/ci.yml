@@ -54,6 +54,9 @@ jobs:
       - name: Validate deployment helper syntax
         run: bash -n deploy/root/audit-vps-storage deploy/root/healthcheck.sh deploy/root/install-vzn-activity-tracker deploy/root/manage-vzn-sudoers deploy/root/stage-vzn-artifacts deploy/root/update-vzn-activity-tracker .github/scripts/test-healthcheck-helper .github/scripts/test-update-rollback-helper
 
+      - name: Test automatic deployment gates
+        run: python -m unittest discover -s deploy/autodeploy -p 'test_*.py'
+
       - name: Test public HTTPS retry helper
         run: .github/scripts/test-healthcheck-helper
 

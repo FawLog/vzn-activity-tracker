@@ -1,0 +1,24 @@
+[Unit]
+Description=VZN signed deployment webhook receiver
+After=network.target
+[Service]
+User=vzn-webhook
+Group=vzn-webhook
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vzn-autodeploy/listener.py
+LoadCredential=webhook-secret:/etc/vzn-activity-tracker/webhook-secret
+StateDirectory=vzn-deploy-inbox
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+CapabilityBoundingSet=
+Restart=on-failure
+RestartSec=2
+MemoryMax=64M
+TasksMax=8
+[Install]
+WantedBy=multi-user.target

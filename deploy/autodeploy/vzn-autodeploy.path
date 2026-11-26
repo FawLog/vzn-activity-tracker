@@ -1,0 +1,7 @@
+[Unit]
+Description=VZN deployment signal watcher
+[Path]
+PathExists=/var/lib/vzn-deploy-inbox/pending
+Unit=vzn-autodeploy.service
+[Install]
+WantedBy=multi-user.target

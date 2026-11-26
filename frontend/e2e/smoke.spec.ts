@@ -81,7 +81,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.route("**/api/v1/groups/*/players/overview-review",route=>route.fulfill({json:{fid:"overview-review",nickname:"Overview Scout",power:123456}}));
   await page.route("**/api/v1/groups/*/players/overview-review/activity?*",route=>route.fulfill({json:{players:[],events:[]}}));
   await page.reload();
-  const eventType=page.getByLabel("Event type",{exact:true});
+  const eventType=page.locator(".analytics-panel").getByRole("combobox",{name:"Event type",exact:true});
   await expect(eventType).toHaveValue("overall");
   await expect(page.getByRole("heading",{name:"Overall activity",exact:true})).toBeVisible();
   const heatmap=page.locator(".analytics-heatmap");

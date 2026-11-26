@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ImagePlus } from "lucide-react";
 import { api, type OcrPreview } from "../lib/api";
 import { parseScreenshot, normalizeName } from "../lib/ocrParser";
 import { matchPlayer, rankedPlayers } from "../lib/ocrMatching";
@@ -40,6 +41,7 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
   const [items,setItems]=useState<Item[]>([]);
   const [running,setRunning]=useState(false);
   const nextId=useRef(0);
+  const fileInput=useRef<HTMLInputElement>(null);
   const active=useRef(true);
   const stop=useRef(false);
   useEffect(()=>{
@@ -101,21 +103,21 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
   };
   const done=items.filter(i=>i.status==="done").length;
   return <div className="manual-import ocr-import">
-    <h3>Import screenshots (OCR preview)</h3>
+    <div className="manual-import-heading"><h3>Import screenshots (OCR preview)</h3><p className="manual-help">Upload screenshots for the selected session.</p></div>
     {!supported&&<p className="manual-help">Automatic table parsing for this event is not available yet.</p>}
     <p className="manual-help">Select screenshots from this session. Images are sent to Google Vision one at a time. This preview does not change player results or publish the event.</p>
     {imported>0&&<p role="status">Imported and saved {imported} players. Event remains a draft.</p>}
     {error&&<p role="alert">{error}</p>}
     {config&&!config.configured&&<p className="manual-help">Google Vision is not configured on the server.</p>}
     {config?.configured&&<>
-      <label>Choose screenshots<input aria-label="Choose screenshots" type="file" accept="image/png,image/jpeg" multiple disabled={disabled||running} onChange={e=>{
+      <div className="ocr-upload"><input ref={fileInput} className="ocr-native-file" aria-label="Choose screenshots" type="file" accept="image/png,image/jpeg" multiple disabled={disabled||running} onChange={e=>{
         const files=Array.from(e.target.files??[]);e.target.value="";
         if(items.length+files.length>MAX_FILES){setError("Choose at most 30 screenshots per batch.");return}
         setError("");setImported(0);setReviewRows([]);setParseWarnings([]);setItems(old=>[...old,...files.map(file=>({id:++nextId.current,file,status:"pending" as const}))]);
-      }}/></label>
+      }}/><button type="button" className="button button--secondary ocr-upload-button" disabled={disabled||running} onClick={()=>fileInput.current?.click()}><ImagePlus size={20}/>Upload screenshots</button><div className="ocr-upload-caption"><strong role="status">{items.length?items.length+" screenshots selected":"No screenshots selected"}</strong><small>PNG or JPEG · up to 30 images per batch</small></div></div>
       {items.length>0&&<>
         <p className="manual-help" role="status">{done} of {items.length} screenshots recognized</p>
-        <div className="manual-controls">
+        <div className="manual-controls ocr-actions">
           <button type="button" className="button button--primary" disabled={disabled||running||items.every(i=>i.status==="done")} onClick={()=>void recognize()}>Recognize screenshots</button>
           {running&&<button type="button" className="button button--secondary" onClick={()=>{stop.current=true}}>Stop after current image</button>}
           <button type="button" className="button button--quiet" disabled={running||disabled} onClick={()=>{setItems([]);setReviewRows([]);setParseWarnings([])}}>Clear screenshots</button>

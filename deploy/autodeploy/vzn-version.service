@@ -1,0 +1,23 @@
+[Unit]
+Description=VZN read-only repository version status
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=vzn-version
+Group=vzn-version
+ExecStart=/usr/bin/python3 -I /usr/local/lib/vzn-autodeploy/repository_status.py
+LoadCredential=github-token:/etc/vzn-activity-tracker/github-token
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+UMask=0077
+Restart=on-failure
+RestartSec=2
+MemoryMax=64M
+TasksMax=8
+[Install]
+WantedBy=multi-user.target

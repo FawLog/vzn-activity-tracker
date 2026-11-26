@@ -381,3 +381,15 @@ def test_legacy_events_require_explicit_onboarding_assignment(authenticated_clie
 def test_logout_invalidates_session(authenticated_client: TestClient) -> None:
     assert authenticated_client.post("/api/v1/auth/logout").status_code == 204
     assert authenticated_client.get("/api/v1/groups").status_code == 401
+
+def test_version_requires_authentication(client: TestClient) -> None:
+    assert client.get("/api/v1/version").status_code == 401
+
+
+def test_version_returns_only_valid_sha(authenticated_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VZN_IMAGE_TAG", "ci-" + "a"*40)
+    response = authenticated_client.get("/api/v1/version")
+    assert response.json() == {"sha": "a"*40}
+    assert response.headers["cache-control"] == "no-store"
+    monkeypatch.setenv("VZN_IMAGE_TAG", "invalid")
+    assert authenticated_client.get("/api/v1/version").json() == {"sha": None}

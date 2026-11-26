@@ -35,22 +35,47 @@ export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:s
     if(!trap)warnings.push("Trap number not visible: verify selected session manually.");
     const header=lines.find(l=>l.y>(heading?.y??-1)&&/(?:Ranking|рейтинг|место)/iu.test(lineText(l))&&/(?:Damage\s*Points|урон)/iu.test(lineText(l)));
     if(!header)warnings.push("Ranking header not visible; verify screenshot type manually.");
-    for(let i=0;i<lines.length;i++){
-      const l=lines[i];if(l.y<=(header?.y??-1))continue;
-      const text=lineText(l);
-      const match=text.match(/(?:Damage\s*Points|(?:очки\s+)?урона?)\s*:\s*(.+)$/iu);
-      if(!match)continue;
+    // Damage labels are row anchors. OCR may put avatar/rank decorations on
+    // their own intervening lines, so the immediately preceding line is not
+    // necessarily the nickname. Search within the same bounded row and column.
+    const damagePattern=/(?:Damage\s*Points|(?:очки\s+)?урона?)\s*:\s*(.+)$/iu;
+    const anchors=lines.filter(l=>l.y>(header?.y??heading?.y??-1)&&damagePattern.test(lineText(l)));
+    let positiveAnchors=0;
+    for(let i=0;i<anchors.length;i++){
+      const l=anchors[i],text=lineText(l),match=text.match(damagePattern)!;
       const damage=numberFrom(match[1]);
-      const previous=lines[i-1];
       const label=l.words.find(w=>/^(?:Damage|очки|урон)/iu.test(w.text));
-      if(damage===undefined||!previous||previous.y<=(header?.y??-1)||!label){warnings.push("Unreadable damage row: "+text);continue}
-      const name=previous.words.filter(w=>w.right>=label.x-previous.height*.5&&w.x>=label.x-previous.height).map(w=>w.text).join(" ").replace(/^\s*\[[^\]]+\]\s*/,"").trim();
-      if(!name||previous.y===l.y||l.y-previous.y>Math.max(l.height,previous.height)*3.5||/Damage Points/i.test(name)){warnings.push("Cannot associate damage with a nickname: "+text);continue}
-      // The pinned unranked self row is not leaderboard evidence.
-      const nearby=lines.filter(n=>Math.abs(n.y-previous.y)<=previous.height*2).flatMap(n=>n.words.filter(w=>w.right<label.x-previous.height).map(w=>w.text)).join(" ");
-      if(/un\s*ran\s*ked|unran\s*ked/i.test(nearby)||damage===0){warnings.push("Skipped zero/unranked row: "+name);continue}
+      if(damage===0){warnings.push("Skipped zero/unranked row: "+text);continue}
+      positiveAnchors++;
+      if(damage===undefined||!label){warnings.push("Unreadable damage row: "+text);continue}
+      const top=Math.max(header?.y??heading?.y??-1,anchors[i-1]?.y??-1,l.y-l.height*5);
+      const region=lines.filter(n=>n.y>top&&n.y<l.y);
+      const all=region.flatMap(n=>n.words);
+      const nearby=all.filter(w=>w.right<label.x-l.height).map(w=>w.text).join(" ");
+      if(/un\s*ran\s*ked|unran\s*ked|без\s*ранга/iu.test(nearby)){warnings.push("Skipped zero/unranked row: "+text);continue}
+      const column=(w:Word)=>w.x>=label.x-l.height*1.25&&w.right>=label.x-l.height*.5;
+      // Reassemble slightly offset tag/name glyphs around each candidate baseline.
+      const candidates=region.map(n=>{
+        const words=all.filter(w=>column(w)&&Math.abs(w.y-n.y)<=Math.max(w.height,n.height)*.8)
+          .sort((a,b)=>a.x-b.x);
+        const raw=words.map(w=>w.text).join(" ").trim();
+        const tagged=raw.match(/^\s*\[\s*([^\]]{1,24})\]\s*(.+)$/u);
+        const name=(tagged?tagged[2]:raw).trim();
+        const first=words[0];
+        const plausible=!!first&&Math.abs(first.x-label.x)<=l.height*1.25&&
+          /\p{L}/u.test(name)&&!/(?:Damage\s*Points|Damage\s*Ranking|Personal\s*Damage|Rewards|Ranking|урон|рейтинг)/iu.test(name);
+        return {name,tagged:!!tagged,plausible,y:n.y};
+      }).filter(c=>c.plausible);
+      const tagged=candidates.filter(c=>c.tagged);
+      const distinct=[...new Set(tagged.map(c=>c.name))];
+      // Prefer an explicit alliance tag. Without one, only accept an unambiguous
+      // aligned text line; never borrow a nickname from the previous damage row.
+      const plain=[...new Set(candidates.filter(c=>!c.tagged).map(c=>c.name))];
+      const name=distinct.length===1?distinct[0]:distinct.length===0&&plain.length===1?plain[0]:"";
+      if(!name){warnings.push("Cannot associate damage with a nickname: "+text);continue}
       rows.push({nickname:name,damage,source});
     }
+    warnings.push("Bear damage rows: "+rows.length+" of "+positiveAnchors+" detected non-zero damage anchors; verify against the screenshot.");
   }else if(eventType==="alliance_championship"){
     const header=lines.find(l=>/(?:Registered|зарегистрирован[оы]?|регистрация)\s*:\s*\d+\s*\/\s*\d+/iu.test(lineText(l)));
     if(!header)warnings.push("Registration header not visible; verify screenshot type manually.");

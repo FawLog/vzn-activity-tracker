@@ -38,3 +38,25 @@ describe("screenshot layouts",()=>{
  const parsed=parseScreenshot(fixture([["Alice",132,200,50],["4,200",490,222,65],["R3",132,243,30],["R4",132,354,30],["4,000",490,333,65]]),"alliance_championship","main","partial");
  expect(parsed.rows.map(r=>r.nickname)).toEqual(["Alice"]);expect(parsed.warnings.some(w=>w.includes("Skipped registration row"))).toBe(true);
  });
+
+it("reads both Trap 2 pages reconstructed from IMG_9241 and IMG_9242 despite intervening avatar OCR",()=>{
+ const names=["Léo2025","watermelon","CHAPO INFINITY X","乂 T KsA 乂","Lord NFSIEBEN","Ziggy","FALCON","송하민","KIRIKOU","EvlShrine"];
+ const scores=["1,722,932,279","1,439,690,691","1,266,109,431","1,225,290,455","1,193,698,822","957,615,012","826,113,813","542,642,275","105,882,063","102,971,137"];
+ for(let page=0;page<2;page++){
+   const words:[string,number,number,number][]=[["Trap 2 Damage Rewards",185,310,340],["Ranking",110,462,90],["Damage Points",296,462,160]];
+   for(let i=0;i<5;i++){
+     const index=page*5+i,y=528+i*133;
+     words.push([String(index+1),85,y+14,24],["[",266,y,8],["VZN",275,y,37],["]",313,y,8],[names[index],323,y,Math.min(270,names[index].length*11)],
+       ["avatar",175,y+30,65],["Damage",266,y+42,85],["Points",354,y+42,60],[":",415,y+42,5],[scores[index],422,y+42,195]);
+   }
+   words.push(["Unran",70,1198,60],["ked",80,1220,40],["[VZN]Piro",266,1198,170],["Damage Points:0",266,1240,180]);
+   const parsed=parseScreenshot(fixture(words),"bear_trap","trap_2","page"+page);
+   expect(parsed.rows).toEqual(names.slice(page*5,page*5+5).map((nickname,i)=>({nickname,damage:Number(scores[page*5+i].replaceAll(",","")),source:"page"+page})));
+   expect(parsed.warnings).toContain("Bear damage rows: 5 of 5 detected non-zero damage anchors; verify against the screenshot.");
+ }
+});
+it("never borrows the preceding Bear nickname when a later row is missing",()=>{
+ const parsed=parseScreenshot(fixture([["Trap 2 Damage Rewards",185,310,340],["Ranking",110,462,90],["Damage Points",296,462,160],["[VZN]Alice",266,528,140],["Damage Points:100",266,570,240],["7",85,650,24],["Damage Points:200",266,703,240]]),"bear_trap","trap_2","partial");
+ expect(parsed.rows).toEqual([{nickname:"Alice",damage:100,source:"partial"}]);
+ expect(parsed.warnings.some(w=>w.includes("Cannot associate damage"))).toBe(true);
+});

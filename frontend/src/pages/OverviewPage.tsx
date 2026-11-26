@@ -35,7 +35,7 @@ export function OverviewPage() {
   const age=shortElapsed(alliance?.source_observed_at,now);
   const interval=observationInterval(alliance?.previous_source_observed_at,alliance?.source_observed_at);
   return (
-    <div className="page intelligence-page">
+    <div className="page intelligence-page overview-page">
       <PageHeader
         title="Operational overview"
         description="A verified record of alliance participation, contribution, and reliability."
@@ -49,10 +49,10 @@ export function OverviewPage() {
         </div>
         <div className="stats-grid">
           <div className="alliance-power"><small>Total power</small><strong>{alliance.power?.toLocaleString()??"—"}</strong>{alliance.power_change!=null&&interval&&<span className="power-delta" title="Change between the two latest distinct WhiteoutStats observations">{alliance.power_change>0?"+":""}{alliance.power_change.toLocaleString()} <small>since previous sync · {interval}</small></span>}</div>
-          <div><small>Members</small><strong>{alliance.member_count??"—"}</strong></div>
-          <div><small>State power rank</small><strong>{alliance.power_rank?"#"+alliance.power_rank:"—"}</strong></div>
-          <div><small>Leader</small><strong>{alliance.leader_name??"—"}</strong></div>
-          <div><small>Last observation</small><strong title={formatTimestamp(alliance.source_observed_at)}>{age?age+" ago":"—"}</strong><span>{formatTimestamp(alliance.source_observed_at)}</span></div>
+          <div className="alliance-members"><small>Members</small><strong>{alliance.member_count??"—"}</strong></div>
+          <div className="alliance-state-rank"><small>State power rank</small><strong>{alliance.power_rank?"#"+alliance.power_rank:"—"}</strong></div>
+          <div className="alliance-leader"><small>Leader</small><strong>{alliance.leader_name??"—"}</strong></div>
+          <div className="alliance-observation"><small>Last observation</small><strong title={formatTimestamp(alliance.source_observed_at)}>{age?age+" ago":"—"}</strong><span>{formatTimestamp(alliance.source_observed_at)}</span></div>
         </div></section> : selectedAlliance ? <EmptyState compact title="No alliance statistics yet" description="Run WhiteoutStats Sync once configured; no external values are inferred." /> : null}
 
       <AllianceAnalytics key={selectedGroup.id+":"+selectedAlliance?.id} groupId={selectedGroup.id} allianceId={selectedAlliance?.id??""} allianceLabel={selectedAlliance?.tag??"Selected alliance"}/>

@@ -20,7 +20,7 @@ Foundation v0.1 includes authentication, pages, the database, FID-based manual p
 
 ## Non-negotiable data principles
 
-- Contribution, attendance regularity, and reliability after registration remain independent. No universal usefulness score in v1.
+- Contribution, attendance regularity, and reliability after registration remain independent. No universal usefulness score. Officer-approved Overall Activity is an advisory screening index only, never an automated kick decision.
 - Confirmed presence, confirmed absence, excused/no duty, and unknown/incomplete evidence remain distinct.
 - Missing from top-N does not mean zero.
 - FID is the primary identity. Preserve nickname history, membership intervals, and event-date roster snapshots.
@@ -57,3 +57,6 @@ Bear cycle completeness is explicitly confirmed at publication. Legacy cycles de
 
 ## Officer-attested automatic attendance
 An explicit final review snapshots the selected event-date roster and all actual session attendees. Missing eligible roster members become absent; excused/no-duty are explicit exceptions. Bear uses all expected traps across hosts, Foundry/Canyon both legions. Registered legion no-shows remain distinct from event attendance. Partial publication preserves unknown. Reopening removes the event from analytics and retains the prior review as a starting point; final publication recomputes the snapshot, partial publication clears it. Current roster is only a proposed starting point; officer verifies historical membership. Future event kinds are not enabled by this change.
+
+## Overall Activity screening (officer-approved)
+Overall is the default Rankings view for active current members in the selected scope. It is an advisory index, not a measure of worth, and never triggers sanctions. Attendance 50%, recorded contribution 30%, registered reliability 20%; renormalize over available dimensions and display effective weight and provisional coverage. Attendance combines known event attendance and Championship registration; excused/no duty and unknown are excluded. Registered no-shows also reduce reliability. Contribution uses per-event midrank percentile of recorded Mobilization points among recorded peers, averages across events, preserves explicit zero, and labels incomplete peer lists provisional. No Bear damage, Foundry/Canyon points, power or spending in the index. SvS and Showdown are not yet supported. Missing events remain unobserved, never absences, including for new joiners. Last activity includes confirmed registration, attendance or positive recorded contribution. A score with limited evidence is labeled provisional, no evidence is unscored. Current membership limits the screening list, not historical eligibility. Keep individual rankings available. No schema change.

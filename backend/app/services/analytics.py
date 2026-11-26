@@ -162,7 +162,16 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                 entry["cycle_attendance"]=bear_cycle(evidence, [s["session_key"] for s in ss], bool(event["bear_cycle_complete"]))
             entries.append(entry)
             histories[f].append(entry)
-        event_reports.append({**event,"session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
+        # Compare contribution within each actual event, not across unlike point units.
+        contribution_points = {}
+        if kind == "alliance_mobilization":
+            for e in entries:
+                values = [s["metrics"]["points"] for s in e["sessions"] if "points" in s["metrics"]]
+                if values and not all(s["eligibility"] == "no_duty" for s in e["sessions"]):
+                    contribution_points[e["fid"]] = str(sum(values))
+        event_reports.append({**event,"contribution_points":contribution_points,
+            "contribution_complete":bool(kind == "alliance_mobilization" and ss and all(s["results_complete"] and s["roster_complete"] for s in ss)),
+            "session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
             "evidence":[{k:s[k] for k in ("session_key","host_alliance_id","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],
             "metrics":aggregate(entries,kind), "activity_cells": {e["fid"]: activity_cell(e) for e in entries}})
     players=[]

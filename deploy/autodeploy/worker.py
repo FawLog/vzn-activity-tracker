@@ -4,7 +4,7 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import subprocess
@@ -129,8 +129,8 @@ def verify_controls(archive, sha):
         require(len(members)<=20000 and sum(m.size for m in members)<=128*1024**2,"Deployment archive exceeds bounds")
         indexed={}
         for member in members:
-            name=member.name.removeprefix("./")
-            require(not name.startswith("/") and ".." not in Path(name).parts and (member.isfile() or member.isdir()),"Unsafe deployment archive")
+            name=str(PurePosixPath(member.name))
+            require(not name.startswith("/") and ".." not in PurePosixPath(name).parts and (member.isfile() or member.isdir()),"Unsafe deployment archive")
             require(name not in indexed,"Duplicate deployment member")
             indexed[name]=member
         for name in CONTROL_FILES:
@@ -202,13 +202,16 @@ def deploy():
         # Record before mutating production; a failed SHA is not retried automatically.
         failed.write_text(sha+"\n")
         print("Deploying "+sha+" from CI "+str(run_id),flush=True)
-        subprocess.run(["/usr/local/sbin/vzn-stage-vzn-artifacts","--update",str(root)],check=True)
+        subprocess.run(["/usr/local/sbin/vzn-stage-vzn-artifacts","--auto-update",str(root)],check=True)
         check_installed_controls()
         subprocess.run(["/usr/local/sbin/vzn-update"],check=True)
         require(current_sha()==sha,"Unexpected deployed image")
-        space()
         failed.unlink()
         print("Deployment SUCCESS "+sha,flush=True)
+        try:
+            space()
+        except RuntimeError:
+            print("WARNING: post-update disk reserve below threshold; further deployments blocked by preflight",flush=True)
 
 def main():
     require(os.geteuid()==0,"Worker must be root")

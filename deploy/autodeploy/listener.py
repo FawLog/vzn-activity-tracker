@@ -17,6 +17,8 @@ def valid_event(raw, signature, event, secret):
         "sha256=" + hmac.new(secret, raw, hashlib.sha256).hexdigest(), signature
     ):
         return False
+    if event == "ping":
+        return False
     if event != "workflow_run":
         return False
     try:
@@ -47,6 +49,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(413)
             return
         raw = self.rfile.read(size)
+        if len(raw)==size and self.headers.get("X-GitHub-Event")=="ping" and hmac.compare_digest("sha256="+hmac.new(self.server.secret,raw,hashlib.sha256).hexdigest(),self.headers.get("X-Hub-Signature-256") or ""):
+            self.send_response(204)
+            self.end_headers()
+            return
         if len(raw) != size or not valid_event(raw, self.headers.get("X-Hub-Signature-256"),
                                                 self.headers.get("X-GitHub-Event"), self.server.secret):
             self.send_error(403)

@@ -79,3 +79,64 @@ def test_event_management_lifecycle(authenticated_client):
     assert client.post(root+"/manage",json={"action":"delete","confirmed":True}).status_code==200
     assert client.get(root).status_code==404
     assert client.get(f"/api/v1/groups/{gid}/players/p1").status_code==200
+
+
+@pytest.mark.parametrize("kind", ["bear_trap", "foundry", "canyon"])
+def test_finalize_complete_attendance(authenticated_client, settings, kind):
+    from app.services.analytics import report
+    from datetime import date
+    c = authenticated_client
+    gid = create_onboarded_group(c)["id"]
+    aid = c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    academy = c.post(f"/api/v1/groups/{gid}/alliances", json={"name":"Academy","tag":"ACA","state_id":"1001"}).json()["id"]
+    roster = ["present","absent","excused","no-duty"]
+    for fid in roster + ["visitor"]:
+        assert c.post(f"/api/v1/groups/{gid}/players", json={"fid":fid,"nickname":fid}).status_code == 201
+    eid = c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events",json={"event_type":kind,"occurred_on":"2026-11-25"}).json()["id"]
+    root = f"/api/v1/groups/{gid}/events/{eid}"
+    keys = ["trap_1","trap_2","trap_3"] if kind=="bear_trap" else ["legion_1","legion_2"]
+    revisions = {}
+    for index,key in enumerate(keys):
+        payload = {"session_key":key,"started_at":"2026-11-25T18:00:00Z"}
+        if kind=="bear_trap" and index==2:
+            payload["host_alliance_id"]=academy
+        result = c.post(root+"/sessions",json=payload)
+        assert result.status_code==201, result.text
+        s = next(s for s in result.json()["sessions"] if s["session_key"]==key)
+        rows = [{"fid":"visitor","nickname":"visitor","attendance":"confirmed_present"}]
+        if index==len(keys)-1:
+            rows.append({"fid":"present","nickname":"present","attendance":"confirmed_present","metrics":{"damage" if kind=="bear_trap" else "personal_points":100}})
+        if kind!="bear_trap" and index==0:
+            rows.append({"fid":"absent","nickname":"absent","registration":"registered","role":"main"})
+        result = c.put(root+"/sessions/"+s["id"],json={"revision":0,"rows":rows})
+        assert result.status_code==200,result.text
+        revisions[s["id"]]=1
+    review={"roster":roster,"excused":["excused"],"no_duty":["no-duty"],"expected_sessions":len(keys),"revisions":revisions}
+    assert c.post(root+"/publish",json={**review,"expected_sessions":len(keys)+1}).status_code==409
+    assert c.post(root+"/publish",json={**review,"revisions":{}}).status_code==409
+    assert c.post(root+"/publish",json={**review,"excused":["present"]}).status_code==409
+    assert c.post(root+"/publish",json={**review,"roster":roster+["outside-group"]}).status_code==409
+    assert c.get(root+"/editor").json()["status"]=="draft"
+    response=c.post(root+"/publish",json=review)
+    assert response.status_code==200,response.text
+    assert {r["fid"]:r["outcome"] for r in response.json()["completion"]}=={"present":"positive","visitor":"positive","absent":"negative","excused":"excused","no-duty":"no_duty"}
+    data=report(settings.database_path,gid,aid,date(2026,11,25),date(2026,11,25))
+    cells=data["events"][0]["activity_cells"]
+    assert cells["present"]=="positive" and cells["absent"]=="negative"
+    assert cells["excused"]=="excused" and cells["no-duty"]=="excused"
+    if kind!="bear_trap":
+        assert data["events"][0]["metrics"]["no_shows"]==1
+    personal=report(settings.database_path,gid,None,date(2026,11,25),date(2026,11,25),"absent")
+    assert personal["players"][0]["history"][0]["cycle_attendance"]=="negative"
+    assert c.post(root+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
+    reopened=c.get(root+"/editor").json()
+    assert len(reopened["completion"])==5
+    assert report(settings.database_path,gid,aid,date(2026,11,25),date(2026,11,25))["published_events"]==0
+    review["revisions"]={s["id"]:s["revision"] for s in reopened["sessions"]}
+    review["excused"]=["excused","absent"]
+    response=c.post(root+"/publish",json=review)
+    assert response.status_code==200,response.text
+    assert next(r for r in response.json()["completion"] if r["fid"]=="absent")["outcome"]=="excused"
+    assert c.post(root+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
+    assert c.post(root+"/publish").status_code==200
+    assert c.get(root+"/editor").json()["completion"]==[]

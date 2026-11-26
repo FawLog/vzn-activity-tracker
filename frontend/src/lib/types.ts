@@ -176,5 +176,5 @@ export interface ManualSession extends ManualSessionSave {
   id: string; session_key: string; started_at: string; host_alliance_id?: string | null;
 }
 export interface ManualEvent {
-  event_id: string; event_type: string; status: EventStatus; sessions: ManualSession[]; bear_cycle_complete?: boolean;
+  event_id: string; event_type: string; status: EventStatus; sessions: ManualSession[]; bear_cycle_complete?: boolean; completion?: {fid:string;nickname:string;outcome:string;roster_member:number}[];
 }

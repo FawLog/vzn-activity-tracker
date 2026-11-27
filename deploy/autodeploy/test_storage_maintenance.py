@@ -359,10 +359,10 @@ class StorageMaintenanceTests(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 maintenance.docker_tag_present(image)
         with patch.object(maintenance.subprocess, "run",
-                          return_value=subprocess.CompletedProcess([], 0, stdout=image + "\\n")):
+                          return_value=subprocess.CompletedProcess([], 0, stdout=image + "\n")):
             self.assertTrue(maintenance.docker_tag_present(image))
         with patch.object(maintenance.subprocess, "run",
-                          return_value=subprocess.CompletedProcess([], 0, stdout="other:tag\\n")):
+                          return_value=subprocess.CompletedProcess([], 0, stdout="other:tag\n")):
             self.assertFalse(maintenance.docker_tag_present(image))
 
     def test_inherited_lock_rejects_a_different_file(self):

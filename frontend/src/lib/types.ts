@@ -92,7 +92,10 @@ export interface EventRecord {
   event_type: string;
   occurred_on: string;
   status: EventStatus;
-  participant_count?: number;
+  participant_count?: number | null;
+  participant_label?: string;
+  participant_complete?: boolean;
+  registered_count?: number | null;
   created_at: string;
   updated_at: string;
   participants?: Array<{

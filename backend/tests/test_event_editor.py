@@ -200,6 +200,9 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     assert c.put(root+"/sessions/"+ids[0],json=invalid).status_code==409
     assert save(ids[0],0,l1,False).status_code==200
     assert save(ids[1],0,[row("attended",None),row("both",200)]).status_code==200
+    listing = f"/api/v1/groups/{gid}/alliances/{aid}/events"
+    draft = next(r for r in c.get(listing).json()["items"] if r["id"] == eid)
+    assert (draft["participant_count"], draft["participant_label"], draft["participant_complete"]) == (3, "Registered", True)
     review={"roster":roster,"expected_sessions":2,"revisions":dict.fromkeys(ids,1)}
     assert c.post(root+"/publish",json=review).status_code==409
     assert save(ids[0],1,l1).status_code==200
@@ -211,6 +214,8 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     data=report(settings.database_path,gid,aid,date(2026,11,29),date(2026,11,29))
     event=data["events"][0]
     assert event["activity_cells"]=={"attended":"positive","both":"present_no_show","no-show":"no_show","unselected":"not_registered"}
+    published = next(r for r in c.get(listing).json()["items"] if r["id"] == eid)
+    assert (published["participant_count"], published["registered_count"], published["participant_label"], published["participant_complete"]) == (2, 3, "Attended", True)
     assert event["metrics"]["registration"]["positive"]==3
     assert event["metrics"]["registration"]["negative"]==1
     # No session row or per-player registration checkbox is needed for this member.

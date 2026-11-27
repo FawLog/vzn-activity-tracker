@@ -256,7 +256,7 @@ def validate_point_paths(point: dict[str, object], *, release_missing: bool = Fa
     require(direct_child(transaction, BACKUPS) and transaction.name.startswith("update-")
             and transaction.is_dir(),
             f"invalid recovery point transaction path: {commit} {transaction}")
-    require(direct_child(backup, DATA_BACKUPS) and re.fullmatch(r"vzn-[0-9]{8}T[0-9]{6}Z\\.sqlite3", backup.name)
+    require(direct_child(backup, DATA_BACKUPS) and re.fullmatch(r"vzn-[0-9]{8}T[0-9]{6}Z\.sqlite3", backup.name)
             and backup.is_file(),
             f"invalid recovery point backup path: {commit} {backup}")
 

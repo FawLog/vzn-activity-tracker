@@ -109,6 +109,23 @@ failed/interrupted recovery directories, current staging, or user-owned
 artifacts. A deployment marker or held deployment lock causes maintenance to
 refuse or defer safely.
 
+Before removing an unretained release, maintenance durably records its exact
+recovery point and directory identity in a root-only `cleanup-intent.json`
+under `/var/lib/vzn-storage-maintenance`. After the directory is removed,
+maintenance atomically retires the recovery point and queues its image tag in
+the registry's optional `pending_images` list (registry version 1). The intent
+is cleared only after the registry replacement is durable. An interrupted apply
+can resume only that exact authorized deletion under the same operation lock.
+Dry runs never write the intent or registry. Unexplained missing paths, mismatched
+intents, replaced directories and protected recovery points still fail closed.
+
+Pending image tags are retained until Docker confirms removal or absence. They
+are retried on later applies, never removed while referenced by a recovery point,
+container or additional tag. Transaction directories and database backups remain
+untouched. An older registry already containing missing release paths without a
+matching intent still requires explicit owner review and repair; do not fabricate
+an intent or automatically discard historical points.
+
 The normal command is a dry run. `cleanup --apply` must follow owner review of
 the emitted candidate list. A cleanup failure after a healthy deployment is
 logged and can be retried; it never rolls back the healthy application.

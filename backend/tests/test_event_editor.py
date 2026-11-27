@@ -122,6 +122,8 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
                 row["role"] = "substitute" if row["fid"] == "absent" else "main"
                 row["metrics"] = {"personal_points": 0 if row["fid"] == "absent" else 100}
             payload.update(registration_complete=True,results_complete=True,foundry_details={"main_count":sum(r["role"]=="main" for r in rows),"substitute_count":sum(r["role"]=="substitute" for r in rows)})
+        if kind == "canyon":
+            payload.update(registration_complete=True, attendance_complete=True, foundry_details={"main_count":sum(r.get("role")=="main" for r in rows),"substitute_count":0})
         result = c.put(root+"/sessions/"+s["id"],json=payload)
         assert result.status_code==200,result.text
         revisions[s["id"]]=1
@@ -256,3 +258,22 @@ def test_foundry_partial_result_does_not_infer_cycle_absence(authenticated_clien
     assert event["metrics"]["attendance"]["negative"]==0
     assert event["metrics"]["reliability"]["negative"]==1
     assert not event["foundry_review_complete"]
+
+
+def test_canyon_registration_counts_and_draft_gate(authenticated_client, settings):
+    c = authenticated_client
+    gid = create_onboarded_group(c)["id"]
+    aid = c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    assert c.post(f"/api/v1/groups/{gid}/players", json={"fid":"main","nickname":"Main"}).status_code == 201
+    eid = c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events", json={"event_type":"canyon","occurred_on":"2026-11-28"}).json()["id"]
+    path = settings.database_path
+    sid = event_editor.create_session(path,gid,eid,SessionCreate(session_key="legion_1",started_at="2026-11-28T17:00:00Z"))["sessions"][0]["id"]
+    rows = [{"fid":"main","nickname":"Main","registration":"registered","role":"main"}]
+    with pytest.raises(ValueError, match="Reviewed registration counts"):
+        event_editor.save(path,gid,eid,sid,SessionSave(revision=0,rows=rows,registration_complete=True,foundry_details={"main_count":2,"substitute_count":0}))
+    result = event_editor.save(path,gid,eid,sid,SessionSave(revision=0,rows=rows,registration_complete=True,foundry_details={"main_count":1,"substitute_count":0}))
+    assert result["sessions"][0]["foundry_details"]["main_count"] == 1
+    assert result["sessions"][0]["registration_complete"]
+    with pytest.raises(ValueError, match="Registration alone must remain a draft"):
+        event_editor.publish(path,gid,eid)
+    assert event_editor.read(path,gid,eid)["status"] == "draft"

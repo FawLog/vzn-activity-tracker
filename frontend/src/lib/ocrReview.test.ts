@@ -23,3 +23,9 @@ it("merges overlapping Foundry results including zero and missing medal rank, bu
  expect(summarizeReview([a,{...b,points:10}],"foundry_results").conflicts.has("1")).toBe(true);
  expect(summarizeReview([row("1","Old",{role:"main"}),row("1","New",{role:"substitute"})],"foundry_registration").conflicts.has("1")).toBe(true);
 });
+
+it("flags conflicting Canyon registration roles and merges duplicates by FID",()=>{
+ const a=row("1","Old",{role:"main"}),b=row("1","New",{role:"main",source:"b.png"});
+ expect(summarizeReview([a,b],"canyon_registration").duplicates).toBe(1);
+ expect(summarizeReview([a,{...b,role:"substitute"}],"canyon_registration").conflicts.has("1")).toBe(true);
+});

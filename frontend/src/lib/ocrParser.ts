@@ -41,12 +41,14 @@ function numericRuns(line:Line):Array<Word & {value:number}> {
 // The in-game combatant dialog repeats the legion and count headers on every
 // page. Its per-row Join/Substitute label is the role anchor, not R1–R5
 // (those are group headings). Never interpret voting or troop power as points.
+const registrationMode=(mode:string)=>mode==="foundry_registration"||mode==="canyon_registration";
+const powerHeading=(line:Line,mode:string)=>/\bTroop\s+Power\b/iu.test(lineText(line))||mode==="canyon_registration"&&/^Power$/iu.test(line.words[0]?.text??"");
 function foundryCombatantList(lines:Line[],heading:Line,mode:string,sessionKey:string,source:string):ParsedScreenshot {
   const rows:ParsedRow[]=[],warnings:string[]=[],foundry:FoundryImportInfo={};
-  if(mode!=="foundry_registration")return {rows,warnings:["In-game combatant list is registration evidence, not battle results."]};
+  if(!registrationMode(mode))return {rows,warnings:["In-game combatant list is registration evidence, not battle results."]};
   const legion=lineText(heading).match(/\bLegion\s*([12])\s+Combatants\b/iu)?.[1];
   if(!legion||sessionKey!=="legion_"+legion)return {rows,warnings:["Combatant list belongs to a different legion. Remove this screenshot."]};
-  const troop=lines.find(l=>l.y>heading.y&&/\bTroop\s+Power\b/iu.test(lineText(l)));
+  const troop=lines.find(l=>l.y>heading.y&&powerHeading(l,mode));
   const footer=lines.find(l=>l.y>(troop?.y??heading.y)&&/\bParticipants\s+only\b/iu.test(lineText(l)));
   if(!troop||!footer)return {rows,warnings:["Incomplete combatant dialog header/footer; use an uncropped screenshot."]};
   const headerWords=lines.filter(l=>l.y>heading.y&&l.y<troop.y).flatMap(l=>l.words);
@@ -103,18 +105,19 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
   const combatantHeading=lines.find(l=>/\bLegion\s*[12]\s+Combatants\b/iu.test(lineText(l)));
   if(combatantHeading)return foundryCombatantList(lines,combatantHeading,mode,sessionKey,source);
   // A damaged dialog heading should not fall through to the mail parser.
-  if(lines.some(l=>/\bParticipants\s+only\b/iu.test(lineText(l)))&&lines.some(l=>/\bTroop\s+Power\b/iu.test(lineText(l))))
+  if(lines.some(l=>/\bParticipants\s+only\b/iu.test(lineText(l)))&&lines.some(l=>powerHeading(l,mode)))
     return {rows:[],warnings:["Cannot verify the in-game combatant list legion. Use a screenshot with the full heading."]};
   const rows:ParsedRow[]=[],warnings:string[]=[],foundry:FoundryImportInfo={};
   const all=lines.flatMap(l=>l.words);
   const maxX=Math.max(1,...all.map(w=>w.right));
   const mailText=lines.map(lineText).join(" ");
+  if(registrationMode(mode)&&((mode==="foundry_registration"&&/\bCanyon\s+Clash\b/iu.test(mailText))||(mode==="canyon_registration"&&/\bFoundry\s+Battle\b/iu.test(mailText))))return {rows,warnings:["Mail belongs to a different event. Remove this screenshot."]};
   const legion=mailText.match(/\bLegion\s*([12])\b/iu)?.[1];
   if(legion&&sessionKey!=="legion_"+legion)return {rows,warnings:["Mail belongs to a different legion. Remove this screenshot."]};
   const personal=lines.find(l=>/Personal\s+Arsenal\s+Points/iu.test(lineText(l)));
   const section=/\b(Combatants|Substitutes)\s*:\s*(\d+)\s*\/\s*(\d+)/iu;
   const headers=lines.flatMap(l=>{const m=lineText(l).match(section);if(!m)return [];const role=m[1].toLowerCase()==="combatants"?"main" as const:"substitute" as const;const n=Number(m[2]);if(n<0||n>(role==="main"?30:10))return [];if(role==="main")foundry.main_count=n;else foundry.substitute_count=n;return [{y:l.y,role}];});
-  if(mode==="foundry_registration"){
+  if(registrationMode(mode)){
     if(personal||/\b(?:Legion Tally|Personal Arsenal Points|DEFEAT!|VICTORY!)\b/iu.test(mailText))return {rows,warnings:["Battle result mail is not a registration list."]};
     const ranks=all.filter(w=>/^[RР]\s*[0-5]$/iu.test(w.text)&&w.x<maxX*.5).sort((a,b)=>a.y-b.y);
     for(let i=0;i<ranks.length;i++){
@@ -124,7 +127,7 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
       const top=Math.max(header?.y??-Infinity,rank.y-rank.height*4.5,prev?(prev.y+rank.y)/2-rank.height*.5:-Infinity);
       const bottom=Math.min(rank.y+rank.height*.65,next?(rank.y+next.y)/2:Infinity);
       const region=lines.filter(l=>l.y>top&&l.y<=bottom);
-      const rightValues=region.flatMap(numericRuns).filter(w=>w.x>rank.x+rank.height*6);
+      const rightValues=region.flatMap(l=>[...numericRuns(l),...l.words.filter(w=>/^\d+(?:\.\d+)?[KMBT]$/iu.test(w.text))]).filter(w=>w.x>rank.x+rank.height*6);
       const right=rightValues.length===1?rightValues[0].x-rank.height*.35:rank.x+rank.height*14;
       const nameWords=region.flatMap(l=>l.words).filter(w=>w.y<rank.y-rank.height*.4&&w.x>=rank.x-rank.height&&w.right<right&&!/^[RР]\s*[0-5]$/iu.test(w.text));
       const base=nameWords.filter(w=>/[\p{L}\p{N}]/u.test(w.text)).sort((a,b)=>b.height-a.height||a.y-b.y)[0];
@@ -191,7 +194,7 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
 export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:string,source:string):ParsedScreenshot {
   const lines=linesFrom(preview), rows:ParsedRow[]=[],warnings:string[]=[];
   if(!lines.length)return {rows,warnings:["No word coordinates; inspect the original screenshot and raw text."]};
-  if(eventType==="foundry_registration"||eventType==="foundry_results")return foundryScreenshot(lines,eventType,sessionKey,source);
+  if(registrationMode(eventType)||eventType==="foundry_results")return foundryScreenshot(lines,eventType,sessionKey,source);
   if(eventType==="bear_trap"){
     const heading=lines.find(l=>/(?:Trap\s*[12]\s*Damage\s*Rewards|(?:ловушк[аеиу]|капкан)\s*[12])/iu.test(lineText(l)));
     const trap=heading&&lineText(heading).match(/(?:Trap|ловушк[аеиу]|капкан)\s*([12])/iu)?.[1];

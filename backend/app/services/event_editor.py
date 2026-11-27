@@ -125,11 +125,11 @@ def read(path, group_id, event_id):
                 entry["metrics"] = {m["metric_key"]: m["raw_value"] for m in db.execute("SELECT metric_key, raw_value FROM event_session_metrics WHERE session_id=? AND player_fid=?", (session["id"], entry["fid"]))}
                 rows.append(entry)
             item["rows"] = rows
-            if event["event_type"] == "foundry":
+            if event["event_type"] in ("foundry", "canyon"):
                 item["foundry_details"] = foundry_details(db, session["id"])
             sessions.append(item)
         completion = [dict(r) for r in db.execute("SELECT player_fid AS fid,nickname,outcome,roster_member,home_alliance_id FROM event_completion_roster WHERE event_id=? ORDER BY nickname COLLATE NOCASE,player_fid",(event_id,))]
-        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion, "historical_homes": historical_homes(db, group_id, event["occurred_on"]) if event["event_type"] in ("bear_trap", "foundry") else {}}
+        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion, "historical_homes": historical_homes(db, group_id, event["occurred_on"]) if event["event_type"] in ("bear_trap", "foundry", "canyon") else {}}
 
 
 def create_session(path, group_id, event_id, payload):
@@ -159,9 +159,9 @@ def save(path, group_id, event_id, session_id, payload):
             raise LookupError("Session not found")
         if session["revision"] != payload.revision:
             raise ValueError("Session changed; reload before saving")
-        if payload.foundry_details is not None and event["event_type"] != "foundry":
-            raise ValueError("Battle metadata is only supported for Foundry")
-        if event["event_type"] == "foundry":
+        if payload.foundry_details is not None and event["event_type"] not in ("foundry", "canyon"):
+            raise ValueError("Battle metadata is only supported for legion battles")
+        if event["event_type"] in ("foundry", "canyon"):
             details = payload.foundry_details.model_dump() if payload.foundry_details is not None else foundry_details(db, session_id)
             own, opponent, outcome = details.get("own_score"), details.get("opponent_score"), details.get("outcome")
             if own is not None and opponent is not None and outcome and ((outcome == "victory" and own <= opponent) or (outcome == "defeat" and own >= opponent)):
@@ -200,7 +200,7 @@ def save(path, group_id, event_id, session_id, payload):
             db.execute("""INSERT INTO event_session_roster(session_id,player_fid,nickname,eligibility,registration,role,registered_by,attendance)
                 VALUES (?,?,?,?,?,?,?,?)""", (session_id,row.fid,row.nickname,row.eligibility,row.registration,row.role,row.registered_by,row.attendance))
             db.executemany("INSERT INTO event_session_metrics(session_id,player_fid,metric_key,raw_value) VALUES (?,?,?,?)", [(session_id,row.fid,k,v) for k,v in row.metrics.items()])
-        if event["event_type"] == "foundry" and payload.foundry_details is not None:
+        if event["event_type"] in ("foundry", "canyon") and payload.foundry_details is not None:
             db.execute("""INSERT INTO foundry_session_details(session_id,main_count,substitute_count,outcome,own_score,opponent_score,opponent_tag,opponent_name,opponent_state)
                 VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET
                 main_count=excluded.main_count,substitute_count=excluded.substitute_count,outcome=excluded.outcome,
@@ -245,7 +245,9 @@ def finalize_attendance(db, event, group_id, review):
         raise ValueError("Roster contains a player outside this group")
     if kind == "foundry" and any(not s["registration_complete"] or not s["results_complete"] for s in sessions):
         raise ValueError("Confirm complete registration and personal results for both legions")
-    if kind == "foundry":
+    if kind == "canyon" and any(not s["registration_complete"] or not s["attendance_complete"] for s in sessions):
+        raise ValueError("Confirm complete registration and actual attendance for both legions")
+    if kind in ("foundry", "canyon"):
         for s in sessions:
             details = foundry_details(db, s["id"])
             selected = db.execute("SELECT role, COUNT(*) AS n FROM event_session_roster WHERE session_id=? AND registration='registered' GROUP BY role", (s["id"],)).fetchall()
@@ -311,6 +313,10 @@ def publish(path, group_id, event_id, bear_cycle_complete=False, completion=None
             outcome = db.execute("SELECT 1 FROM foundry_session_details f JOIN event_sessions s ON s.id=f.session_id WHERE s.event_id=? AND f.outcome IS NOT NULL LIMIT 1", (event_id,)).fetchone()
             if not scored and not outcome:
                 raise ValueError("Registration alone must remain a draft; import battle results before publishing")
+        if event["event_type"] == "canyon" and completion is None:
+            evidence = db.execute("""SELECT 1 FROM event_sessions s WHERE s.event_id=? AND (s.attendance_complete=1 OR EXISTS (SELECT 1 FROM event_session_roster r WHERE r.session_id=s.id AND r.attendance=\'confirmed_present\') OR EXISTS (SELECT 1 FROM event_session_metrics m WHERE m.session_id=s.id AND m.metric_key=\'personal_points\' AND m.raw_value>0)) LIMIT 1""", (event_id,)).fetchone()
+            if not evidence:
+                raise ValueError("Registration alone must remain a draft; review actual battle attendance before publishing")
         if completion is not None:
             finalize_attendance(db,event,group_id,completion)
             bear_cycle_complete = True

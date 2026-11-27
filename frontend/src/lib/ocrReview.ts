@@ -4,7 +4,7 @@ export function summarizeReview(rows:ReviewRow[],eventType:string){
  const byFid=new Map<string,ReviewRow>();
  const conflicts=new Set<string>();
  let duplicates=0;
- const signature=(r:ReviewRow)=>eventType==="alliance_championship"?"registered":eventType==="bear_trap"?JSON.stringify([r.damage]):eventType==="foundry_registration"?JSON.stringify([r.role]):eventType==="foundry_results"?JSON.stringify([r.points]):JSON.stringify([r.completed,r.total,r.points]);
+ const signature=(r:ReviewRow)=>eventType==="alliance_championship"?"registered":eventType==="bear_trap"?JSON.stringify([r.damage]):(eventType==="foundry_registration"||eventType==="canyon_registration")?JSON.stringify([r.role]):eventType==="foundry_results"?JSON.stringify([r.points]):JSON.stringify([r.completed,r.total,r.points]);
  for(const row of rows){
    if(!row.include||!row.fid)continue;
    const first=byFid.get(row.fid);

@@ -5,6 +5,10 @@ const externalBaseUrl = process.env.E2E_BASE_URL;
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
+  // All viewport projects mutate the same backend database and reuse the same
+  // onboarding fixtures. fullyParallel=false does not serialize projects.
+  // Run them in sequence so check-then-create flows cannot race each other.
+  workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: [["line"], ["html", { open: "never" }]],
   outputDir: "test-results",

@@ -76,14 +76,20 @@ function foundryCombatantList(lines:Line[],heading:Line,mode:string,sessionKey:s
     const bottom=Math.min(footer.y-footer.height*.6,next?(anchor.y+next.y)/2:Infinity,anchor.y+anchor.height*3.2);
     const region=area.filter(l=>l.y>top&&l.y<bottom);
     const powers=region.flatMap(numericRuns).filter(w=>w.x>maxX*.19&&w.x<maxX*.51&&w.right<anchor.x&&w.y>=anchor.y-anchor.height*.65&&w.y-anchor.y<=Math.max(w.height,anchor.height)*2.8);
-    if(powers.length!==1){warnings.push("Skipped incomplete combatant row near y="+Math.round(anchor.y)+": missing or ambiguous troop power.");continue}
-    const power=powers[0];
-    const names=region.filter(l=>l.y<power.y-power.height*.55&&power.y-l.y<=Math.max(l.height,power.height)*3.2).map(l=>{
-      const words=l.words.filter(w=>w.x>=power.x-power.height*2.35&&w.right<anchor.x-anchor.height*.5);
+    // Troop power is optional registration evidence, not an eligibility gate.
+    // Use its baseline when reliable; otherwise use the role label and the
+    // fixed nickname column. Stay inside this card's midpoint boundaries.
+    const power=powers.length===1?powers[0]:undefined;
+    const nameLeft=power?Math.max(maxX*.20,power.x-power.height*2.35):maxX*.20;
+    const nameRight=power?power.x+power.height*2.35:maxX*.40;
+    const names=region.filter(l=>power
+      ?l.y<power.y-power.height*.55&&power.y-l.y<=Math.max(l.height,power.height)*3.2
+      :l.y>=anchor.y-Math.max(l.height,anchor.height)*2.1&&l.y<=anchor.y+anchor.height*.35
+    ).map(l=>{
+      const words=l.words.filter(w=>w.x>=nameLeft&&w.right<Math.min(anchor.x-anchor.height*.5,maxX*.78));
       const first=words[0],name=words.map(w=>w.text).join(" ").trim();
       return {first,name,l};
-    }).filter(v=>v.first&&Math.abs(v.first.x-power.x)<=power.height*2.35&&/[\p{L}\p{N}]/u.test(v.name)&&numberFrom(v.name)===undefined&&!/^(?:R[0-5]\b|Rank\s+[0-5]\b|Voted\b|Troop\s+Power\b|Participants\s+only\b)/iu.test(v.name));
-    // A clipped row must never borrow a name from its neighbour or an avatar.
+    }).filter(v=>v.first&&v.first.x<=nameRight&&/[\p{L}\p{N}]/u.test(v.name)&&numberFrom(v.name)===undefined&&!/^(?:R[0-5]\b|Rank\s+[0-5]\b|Voted\b|Troop\s+Power\b|Participants\s+only\b)/iu.test(v.name)&&!(/^[\d\s,./]+$/u.test(v.name)));
     const distinct=[...new Set(names.map(v=>v.name))];
     if(distinct.length!==1){warnings.push("Skipped incomplete combatant row near y="+Math.round(anchor.y)+": missing or ambiguous nickname.");continue}
     rows.push({nickname:distinct[0],role:/^Join$/iu.test(anchor.text)?"main":"substitute",source});

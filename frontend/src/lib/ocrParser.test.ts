@@ -122,3 +122,20 @@ it("requires a verifiable legion and complete dialog bounds rather than guessing
  expect(parseScreenshot(fixture(words.slice(3)),"foundry_registration","legion_1","no-title").rows).toEqual([]);
  expect(parseScreenshot(fixture(words.slice(0,-1)),"foundry_registration","legion_1","no-footer").rows).toEqual([]);
 });
+
+
+it("does not discard a combatant when troop power is missing or ambiguous",()=>{
+ const words:[string,number,number,number][]=[...combatantHeader(),
+ ["DrunnaNyx",187,729,120],["Join",701,749,51],
+ ["Piro",187,879,65],["2,064",222,923,65],["99",330,923,25],["Join",701,899,51],
+ ["Alex777",187,1028,100],["Substitute",628,1048,124],combatantFooter];
+ const parsed=parseScreenshot(fixture(words),"foundry_registration","legion_1","optional-power");
+ expect(parsed.rows).toEqual([{nickname:"DrunnaNyx",role:"main",source:"optional-power"},{nickname:"Piro",role:"main",source:"optional-power"},{nickname:"Alex777",role:"substitute",source:"optional-power"}]);
+});
+it("never borrows a neighbouring nickname or accepts avatar text for a clipped role-only card",()=>{
+ const words:[string,number,number,number][]=[...combatantHeader(),
+ ["Avatar",75,627,65],["Join",701,646,51],
+ ["Harissa",187,729,103],["Join",701,749,51],
+ ["Substitute",628,899,124],combatantFooter];
+ expect(parseScreenshot(fixture(words),"foundry_registration","legion_1","clipped").rows).toEqual([{nickname:"Harissa",role:"main",source:"clipped"}]);
+});

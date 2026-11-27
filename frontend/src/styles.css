@@ -879,3 +879,8 @@ td strong { color: var(--text); font-weight: 650; }
 .heat-not_registered { background:#66512d; }.heat-no_show { background:#783a43; }
 
 .heat-present_no_show { background:#705034; }
+
+/* Game event artwork is decorative and uses a fixed slot to avoid layout shift. */
+.event-name { display: inline-flex; align-items: center; gap: 8px; }
+.event-icon { display: inline-flex; width: 32px; height: 32px; flex: 0 0 32px; align-items: center; justify-content: center; }
+.event-icon img { display: block; width: 100%; height: 100%; object-fit: contain; }

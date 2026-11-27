@@ -85,9 +85,18 @@ def data_regular(path: Path) -> None:
 def direct_child(path: Path, parent: Path) -> bool:
     """Reject symlinks and anything outside exactly one expected parent."""
     try:
-        return path.parent == parent and path.resolve(strict=True).parent == parent.resolve(strict=True)
+        return (path.parent == parent and not path.is_symlink()
+                and path.resolve(strict=True).parent == parent.resolve(strict=True))
     except OSError:
         return False
+
+
+def sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -102,12 +111,15 @@ def atomic_json(path: Path, value: object) -> None:
             os.fsync(stream.fileno())
         os.replace(temporary, path)
         root_regular(path, 0o600)
+        sync_directory(path.parent)
     finally:
         Path(temporary).unlink(missing_ok=True)
 
 
 def read_registry() -> dict[str, object]:
-    if not REGISTRY.exists():
+    if path_present(STATE):
+        root_directory(STATE, 0o700)
+    if not path_present(REGISTRY):
         return {"version": 1, "points": []}
     root_regular(REGISTRY, 0o600)
     raw = json.loads(REGISTRY.read_text(encoding="utf-8"))
@@ -194,27 +206,66 @@ def operation_active() -> bool:
     return any(path.exists() or path.is_symlink() for path in (APP / ".vzn-updating", APP / ".vzn-installing"))
 
 
-def protected_points(registry: dict[str, object]) -> list[dict[str, object]]:
+def pending_images(registry: dict[str, object]) -> list[str]:
+    """Retired releases may still have Docker tags protected by other references."""
+    images = registry.get("pending_images", [])
+    require(isinstance(images, list) and all(isinstance(tag, str) and IMAGE.fullmatch(tag)
+                                             for tag in images),
+            "invalid pending recovery images")
+    require(len(set(images)) == len(images), "duplicate pending recovery images")
+    return images
+
+
+def registry_points(registry: dict[str, object]) -> list[dict[str, object]]:
     points = registry["points"]
-    assert isinstance(points, list)
-    require(all(valid_point(point) for point in points), "invalid recovery point registry")
-    for point in points:
-        release = Path(str(point["release"]))
-        transaction = Path(str(point["transaction"]))
-        backup = Path(str(point["backup"]))
-        require(direct_child(release, RELEASES) and RELEASE_ID.fullmatch(release.name) is not None,
-                "invalid recovery point release path")
-        require(direct_child(transaction, BACKUPS) and transaction.name.startswith("update-"),
-                "invalid recovery point transaction path")
-        require(direct_child(backup, DATA_BACKUPS) and re.fullmatch(r"vzn-[0-9]{8}T[0-9]{6}Z\.sqlite3", backup.name),
-                "invalid recovery point backup path")
+    require(isinstance(points, list) and all(valid_point(point) for point in points),
+            "invalid recovery point registry")
+    require(len({point["commit"] for point in points}) == len(points)
+            and len({point["release"] for point in points}) == len(points),
+            "duplicate recovery point commit or release")
+    pending_images(registry)
+    return points
+
+
+def select_protected(points: list[dict[str, object]]) -> list[dict[str, object]]:
     current = APP / "current"
     require(current.is_symlink(), "current release is missing")
     current_release = str(current.resolve(strict=True))
     matching = [point for point in points if point["release"] == current_release]
     require(len(matching) == 1, "current release lacks exactly one recovery point")
     ordered = sorted(points, key=lambda point: str(point["recorded_at"]), reverse=True)
-    return ordered[: RETAIN_PREVIOUS + 1]
+    retained = ordered[: RETAIN_PREVIOUS + 1]
+    # A manual rollback or timestamp anomaly must never make current deletable.
+    if matching[0] not in retained:
+        retained.append(matching[0])
+    return retained
+
+
+def validate_point_paths(point: dict[str, object], *, release_missing: bool = False) -> None:
+    release = Path(str(point["release"]))
+    transaction = Path(str(point["transaction"]))
+    backup = Path(str(point["backup"]))
+    commit = point["commit"]
+    release_ok = (release.parent == RELEASES and RELEASE_ID.fullmatch(release.name) is not None
+                  and not release.is_symlink())
+    if release_missing:
+        release_ok = release_ok and not path_present(release)
+    else:
+        release_ok = release_ok and direct_child(release, RELEASES) and release.is_dir()
+    require(release_ok, f"invalid recovery point release path: {commit} {release}")
+    require(direct_child(transaction, BACKUPS) and transaction.name.startswith("update-")
+            and transaction.is_dir(),
+            f"invalid recovery point transaction path: {commit} {transaction}")
+    require(direct_child(backup, DATA_BACKUPS) and re.fullmatch(r"vzn-[0-9]{8}T[0-9]{6}Z\.sqlite3", backup.name)
+            and backup.is_file(),
+            f"invalid recovery point backup path: {commit} {backup}")
+
+
+def protected_points(registry: dict[str, object]) -> list[dict[str, object]]:
+    points = registry_points(registry)
+    for point in points:
+        validate_point_paths(point)
+    return select_protected(points)
 
 
 def old_enough(path: Path) -> bool:
@@ -269,11 +320,14 @@ def candidates(registry: dict[str, object]) -> list[Candidate]:
         for directory in AUTO_STATE.glob("download-*"):
             if stale_temporary(directory):
                 result.append(Candidate("temporary", str(directory), "root worker download residue older than 24 hours"))
-    # Image deletion is deliberately deferred to apply after container/tag protection checks.
-    for point in points:
-        image = str(point["image"])
+    # A successfully retired release moves its tag into a durable pending queue.
+    # Shared or protected tags must not be deleted while any retained point uses them.
+    retiring = {item.path for item in result if item.kind == "release"}
+    images = pending_images(registry) + [str(point["image"]) for point in points
+                                         if point["release"] in retiring]
+    for image in dict.fromkeys(images):
         if image not in retained_images:
-            result.append(Candidate("image", image, "unretained registered recovery image; requires Docker reference checks"))
+            result.append(Candidate("image", image, "unretained recovery image; requires Docker reference checks"))
     return result
 
 
@@ -299,6 +353,14 @@ def docker_safe_to_remove(tag: str) -> bool:
     return all(image_id not in line.split() and tag not in line.split() for line in references)
 
 
+def docker_tag_present(tag: str) -> bool:
+    require(IMAGE.fullmatch(tag) is not None, "unsafe Docker tag")
+    # A successful listing distinguishes an absent tag from an unavailable daemon.
+    output = subprocess.run(["/usr/bin/docker", "image", "ls", "--all", "--format", "{{.Repository}}:{{.Tag}}"],
+                            check=True, text=True, capture_output=True).stdout.splitlines()
+    return tag in output
+
+
 def remove_tree(path: Path) -> int:
     require(not path.is_symlink() and path.is_dir(), f"unsafe deletion target: {path}")
     root_device = path.lstat().st_dev
@@ -317,6 +379,106 @@ def remove_tree(path: Path) -> int:
     before = shutil.disk_usage(path.parent).free
     shutil.rmtree(path)
     return max(0, shutil.disk_usage(path.parent).free - before)
+
+
+def intent_path() -> Path:
+    return STATE / "cleanup-intent.json"
+
+
+def path_present(path: Path) -> bool:
+    # Only ENOENT is evidence of absence; other filesystem failures are unsafe.
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def begin_release_cleanup(registry: dict[str, object], point: dict[str, object]) -> None:
+    require(point in registry_points(registry) and point not in protected_points(registry),
+            "refusing to retire a protected recovery point")
+    release = Path(str(point["release"]))
+    root_directory(release)
+    metadata = release.lstat()
+    require(not path_present(intent_path()), "another cleanup intent exists")
+    # Persist the exact point and directory identity before any destructive operation.
+    atomic_json(intent_path(), {"version": 1, "point": point,
+                                "device": metadata.st_dev, "inode": metadata.st_ino})
+
+
+def clear_intent() -> None:
+    root_regular(intent_path(), 0o600)
+    intent_path().unlink()
+    sync_directory(STATE)
+
+
+def retire_point(registry: dict[str, object], point: dict[str, object]) -> dict[str, object]:
+    return {**registry, "points": [item for item in registry_points(registry) if item != point],
+            "pending_images": list(dict.fromkeys([*pending_images(registry), str(point["image"])]))}
+
+
+def resume_release_cleanup(registry: dict[str, object], apply: bool) -> tuple[dict[str, object], int]:
+    """Only an exact, durable cleanup intent can explain a missing registered release.
+
+    With no intent, ordinary missing paths still fail closed. A dry run may
+    simulate retirement but never changes the intent, registry, or resources.
+    """
+    if not path_present(intent_path()):
+        return registry, 0
+    root_directory(STATE, 0o700)
+    root_regular(intent_path(), 0o600)
+    intent = json.loads(intent_path().read_text(encoding="utf-8"))
+    require(isinstance(intent, dict) and set(intent) == {"version", "point", "device", "inode"}
+            and intent["version"] == 1 and valid_point(intent["point"])
+            and type(intent["device"]) is int and intent["device"] >= 0
+            and type(intent["inode"]) is int and intent["inode"] > 0,
+            "invalid release cleanup intent")
+    point = intent["point"]
+    release = Path(str(point["release"]))
+    present = path_present(release)
+    validate_point_paths(point, release_missing=not present)
+    points = registry_points(registry)
+    matches = [item for item in points if item["commit"] == point["commit"] or item["release"] == point["release"]]
+    if not matches:
+        # Crash after registry replacement but before unlinking the intent.
+        require(not present and point["image"] in pending_images(registry),
+                "cleanup intent does not match completed retirement")
+        protected_points(registry)
+        if apply:
+            clear_intent()
+        return registry, 0
+    require(matches == [point], "cleanup intent does not match registered recovery point")
+    require(point not in select_protected(points), "cleanup intent references a protected recovery point")
+    for item in points:
+        if item != point:
+            validate_point_paths(item)
+    freed = 0
+    if present:
+        root_directory(release)
+        metadata = release.lstat()
+        require((metadata.st_dev, metadata.st_ino) == (intent["device"], intent["inode"]),
+                "cleanup intent directory identity changed")
+        if not apply:
+            return registry, 0
+        # A failed or partial deletion leaves the point and intent intact.
+        freed = remove_tree(release)
+        require(not path_present(release), "release still exists after cleanup")
+    updated = retire_point(registry, point)
+    protected_points(updated)
+    if apply:
+        # Order matters: durable removal, durable registry, then durable intent removal.
+        sync_directory(RELEASES)
+        atomic_json(REGISTRY, updated)
+        clear_intent()
+    else:
+        print(f"CANDIDATE reconcile completed release deletion {point['commit']}: {release}")
+    return updated, freed
+
+
+def forget_pending_image(registry: dict[str, object], tag: str) -> dict[str, object]:
+    updated = {**registry, "pending_images": [image for image in pending_images(registry) if image != tag]}
+    atomic_json(REGISTRY, updated)
+    return updated
 
 
 def inherited_lock() -> int | None:
@@ -351,21 +513,42 @@ def run_cleanup(apply: bool) -> int:
         except BlockingIOError:
             print("VZN maintenance deferred: deployment lock is held")
             return 0
-        registry = read_registry()
+        require(not operation_active(), "deployment marker exists; cleanup is refused")
+        for directory in (APP, RELEASES, BACKUPS):
+            root_directory(directory)
+        registry, freed = resume_release_cleanup(read_registry(), apply)
         planned = candidates(registry)
-        freed = 0
         for item in planned:
             if item.kind == "image":
+                if apply:
+                    require(item.path in pending_images(registry), "image has no retired recovery point")
+                    if any(point["image"] == item.path for point in registry_points(registry)):
+                        print(f"KEEP image {item.path}: registered recovery point protection")
+                        continue
                 if not docker_safe_to_remove(item.path):
-                    print(f"KEEP image {item.path}: container or additional tag protection")
+                    if apply and not docker_tag_present(item.path):
+                        # Includes a crash after a successful Docker removal, before registry write.
+                        registry = forget_pending_image(registry, item.path)
+                        print(f"ABSENT image {item.path}: retired tag already removed")
+                    else:
+                        print(f"KEEP image {item.path}: container or additional tag protection")
                     continue
                 if apply:
                     subprocess.run(["/usr/bin/docker", "image", "rm", item.path], check=True)
+                    require(not docker_tag_present(item.path), "retired image tag still exists after cleanup")
+                    registry = forget_pending_image(registry, item.path)
                 print(f"{'REMOVE' if apply else 'CANDIDATE'} image {item.path}: {item.reason}")
                 continue
             path = Path(item.path)
             if apply:
-                freed += remove_tree(path)
+                if item.kind == "release":
+                    matches = [point for point in registry_points(registry) if point["release"] == item.path]
+                    require(len(matches) == 1, "release has no unique recovery point")
+                    begin_release_cleanup(registry, matches[0])
+                    registry, released = resume_release_cleanup(registry, True)
+                    freed += released
+                else:
+                    freed += remove_tree(path)
             print(f"{'REMOVE' if apply else 'CANDIDATE'} {item.kind} {path}: {item.reason}")
         print(f"VZN maintenance {'applied' if apply else 'dry-run'}; measured_free_bytes={freed}")
     return 0

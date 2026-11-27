@@ -340,7 +340,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
   await expect(page.getByLabel("Legion number")).toHaveValue("legion_1");
   await page.getByRole("button",{name:"Add Legion 1",exact:true}).click();
-  await expect(page.getByRole("group",{name:"Existing sessions"}).getByRole("button",{name:"Legion 1",exact:true})).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByRole("group",{name:"Existing sessions"}).getByRole("button",{name:"Legion 1 · Registration pending",exact:true})).toHaveAttribute("aria-pressed","true");
   await expect(page.getByLabel("Legion number")).toHaveCount(0);
   await page.getByRole("button",{name:"Add legion",exact:true}).click();
   await expect(page.getByLabel("Legion number")).toHaveValue("legion_2");

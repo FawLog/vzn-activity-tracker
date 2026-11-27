@@ -10,6 +10,10 @@ describe("EventIcon", () => {
     ["alliance_championship", "alliance-championship"],
     ["alliance_mobilization", "alliance-mobilization"],
     ["canyon", "canyon-clash"],
+    ["alliance_showdown", "alliance-showdown"],
+    ["castle_battle", "sunfire-castle"],
+    ["svs_preparation", "svs-state-of-power"],
+    ["svs_battle", "svs-state-of-power"],
   ])("maps %s to its own game artwork", (type, filename) => {
     expect(eventIconUrl(type)).toContain(filename + ".png");
     const { container } = render(<EventIcon eventType={type} />);

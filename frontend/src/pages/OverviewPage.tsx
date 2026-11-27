@@ -1,3 +1,4 @@
+import { EventIcon } from "../components/EventIcon";
 import { CalendarPlus, CheckCircle2, UserPlus, Shield } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
@@ -78,7 +79,7 @@ export function OverviewPage() {
                   <thead><tr><th>Event</th><th>Date</th><th>Status</th><th className="number-cell">Participants</th></tr></thead>
                   <tbody>{data.recent_events.map((event) => (
                     <tr key={event.id} className="clickable-row">
-                      <td><button className="table-link" onClick={() => navigate(`/events/${event.id}`)}>{eventLabel(event.event_type)}</button></td><td>{formatDate(event.occurred_on)}</td><td><span className={`status status--${event.status}`}>{event.status}</span></td><td className="number-cell">{event.participant_count ?? 0}</td>
+                      <td><button className="table-link event-name" onClick={() => navigate(`/events/${event.id}`)}><EventIcon eventType={event.event_type}/><span>{eventLabel(event.event_type)}</span></button></td><td>{formatDate(event.occurred_on)}</td><td><span className={`status status--${event.status}`}>{event.status}</span></td><td className="number-cell">{event.participant_count ?? 0}</td>
                     </tr>
                   ))}</tbody>
                 </table>

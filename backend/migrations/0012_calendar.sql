@@ -34,3 +34,12 @@ CREATE TABLE calendar_occurrences (
  UNIQUE(series_id,sequence)
 );
 CREATE INDEX idx_calendar_group_start ON calendar_occurrences(group_id,starts_at);
+
+CREATE TABLE calendar_create_requests (
+ group_id TEXT NOT NULL REFERENCES alliance_groups(id) ON DELETE RESTRICT,
+ request_key TEXT NOT NULL,
+ payload_hash TEXT NOT NULL,
+ occurrence_ids TEXT NOT NULL,
+ created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(group_id,request_key)
+);

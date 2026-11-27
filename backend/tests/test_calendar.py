@@ -53,3 +53,18 @@ def test_calendar_bounds_scope_and_precision(authenticated_client):
 
 def test_calendar_requires_auth(client):
     assert client.get("/api/v1/groups/missing/calendar?start=2028-01-01&end=2028-01-02").status_code==401
+
+
+def test_calendar_idempotent_creation(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    payload={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-02-28T15:00Z","precision":"minute","interval_minutes":2850,"occurrence_count":3,"request_key":"request-test-000001"}
+    first=c.post(url,json=payload)
+    assert first.status_code==201
+    assert c.post(url,json=payload).json()==first.json()
+    assert c.post(url,json={**payload,"occurrence_count":4}).status_code==409
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==3
+        assert db.execute("SELECT COUNT(*) FROM calendar_series").fetchone()[0]==1
+        assert db.execute("SELECT COUNT(*) FROM audit_log WHERE entity_type='calendar_occurrence'").fetchone()[0]==3

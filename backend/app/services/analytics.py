@@ -178,7 +178,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                     entry["cycle_attendance"] = "positive"
                 elif final in ("excused", "no_duty"):
                     entry["cycle_attendance"] = "excused"
-                elif final == "negative" and full_registration and all(s["results_complete"] for s in ss):
+                elif final == "negative" and full_registration and all(s["results_complete"] for s in ss) and all(s["registration_outcome"] != "positive" or s["attendance_outcome"] != "unknown" for s in evidence):
                     entry["cycle_attendance"] = "negative"
                 else:
                     entry["cycle_attendance"] = "unknown"
@@ -205,7 +205,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                 values = [s["metrics"]["points"] for s in e["sessions"] if "points" in s["metrics"]]
                 if values and not all(s["eligibility"] == "no_duty" for s in e["sessions"]):
                     contribution_points[e["fid"]] = str(sum(values))
-        event_reports.append({**event,**({"foundry_battles":[{"session_key":s["session_key"],"started_at":s["started_at"],"alliance_id":event["alliance_id"],**s.get("foundry_details",{})} for s in ss]} if kind=="foundry" else {}),"contribution_points":contribution_points,
+        event_reports.append({**event,**({"foundry_review_complete":bool(finalized and len(ss)==2 and all(s["registration_complete"] and s["results_complete"] for s in ss)),"foundry_battles":[{"session_key":s["session_key"],"started_at":s["started_at"],"alliance_id":event["alliance_id"],**s.get("foundry_details",{})} for s in ss]} if kind=="foundry" else {}),"contribution_points":contribution_points,
             "contribution_complete":bool(kind == "alliance_mobilization" and ss and all(s["results_complete"] and s["roster_complete"] for s in ss)),
             "session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
             "evidence":[{k:s[k] for k in ("session_key","host_alliance_id","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],
@@ -225,6 +225,8 @@ def activity_cell(entry):
     kind=entry["event_type"]
     if kind == "foundry":
         outcome = entry.get("cycle_attendance", "unknown")
+        if outcome == "positive" and any(s["registration_outcome"] == "positive" and s["attendance_outcome"] == "negative" for s in entry["sessions"]):
+            return "present_no_show"
         if outcome == "negative":
             if entry.get("cycle_registration") == "negative":
                 return "not_registered"

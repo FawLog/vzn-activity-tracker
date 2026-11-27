@@ -191,6 +191,8 @@ def save(path, group_id, event_id, session_id, payload):
                 raise ValueError("Completed missions exceed accepted missions")
             if event["event_type"] == "alliance_championship" and row.attendance != "unknown":
                 raise ValueError("Championship records registration only")
+            if event["event_type"] == "foundry" and row.metrics.get("personal_points", 0) > 0 and (row.attendance in ("excused", "no_duty") or row.eligibility == "no_duty"):
+                raise ValueError("Positive personal points conflict with a Foundry attendance exception")
             if row.attendance == "confirmed_absent" and any(row.metrics.get(k, 0) > 0 for k in ("damage", "personal_points")):
                 raise ValueError("Positive battle result conflicts with absence")
         db.execute("DELETE FROM event_session_roster WHERE session_id=?", (session_id,))
@@ -304,6 +306,11 @@ def publish(path, group_id, event_id, bear_cycle_complete=False, completion=None
         sessions = db.execute("SELECT id FROM event_sessions WHERE event_id=?", (event_id,)).fetchall()
         if not sessions or any(not db.execute("SELECT 1 FROM event_session_roster WHERE session_id=?", (s["id"],)).fetchone() for s in sessions):
             raise ValueError("Every session needs reviewed player records before publication")
+        if event["event_type"] == "foundry" and completion is None:
+            scored = db.execute("SELECT 1 FROM event_session_metrics m JOIN event_sessions s ON s.id=m.session_id WHERE s.event_id=? AND m.metric_key='personal_points' LIMIT 1", (event_id,)).fetchone()
+            outcome = db.execute("SELECT 1 FROM foundry_session_details f JOIN event_sessions s ON s.id=f.session_id WHERE s.event_id=? AND f.outcome IS NOT NULL LIMIT 1", (event_id,)).fetchone()
+            if not scored and not outcome:
+                raise ValueError("Registration alone must remain a draft; import battle results before publishing")
         if completion is not None:
             finalize_attendance(db,event,group_id,completion)
             bear_cycle_complete = True

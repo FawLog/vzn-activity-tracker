@@ -203,7 +203,7 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     assert c.post(root+"/publish",json=review).status_code==200
     data=report(settings.database_path,gid,aid,date(2026,11,29),date(2026,11,29))
     event=data["events"][0]
-    assert event["activity_cells"]=={"attended":"positive","both":"positive","no-show":"no_show","unselected":"not_registered"}
+    assert event["activity_cells"]=={"attended":"positive","both":"present_no_show","no-show":"no_show","unselected":"not_registered"}
     assert event["metrics"]["registration"]["positive"]==3
     assert event["metrics"]["registration"]["negative"]==1
     assert event["metrics"]["attendance"]["rate"]==50
@@ -211,3 +211,31 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     assert event["metrics"]["missed_unregistered"]==1
     assert event["metrics"]["missed_registered"]==1
     assert [b["outcome"] for b in event["foundry_battles"]]==["victory","defeat"]
+
+
+def test_foundry_partial_result_does_not_infer_cycle_absence(authenticated_client, settings):
+    from app.services.analytics import report
+    from datetime import date
+    c = authenticated_client
+    gid = create_onboarded_group(c)["id"]
+    aid = c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    for fid in ("selected","scored","unselected"):
+        assert c.post(f"/api/v1/groups/{gid}/players", json={"fid":fid,"nickname":fid}).status_code==201
+    eid = c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events", json={"event_type":"foundry","occurred_on":"2026-11-29"}).json()["id"]
+    root = f"/api/v1/groups/{gid}/events/{eid}"
+    result = c.post(root+"/sessions", json={"session_key":"legion_2","started_at":"2026-11-29T18:00:00Z"})
+    sid = result.json()["sessions"][0]["id"]
+    rows=[{"fid":fid,"nickname":fid,"registration":"registered","role":"main"} for fid in ("selected","scored")]
+    payload={"revision":0,"rows":rows,"registration_complete":True,"foundry_details":{"main_count":2,"substitute_count":0}}
+    assert c.put(root+"/sessions/"+sid,json=payload).status_code==200
+    assert c.post(root+"/publish").status_code==409
+    rows[0]["metrics"]={"personal_points":0}
+    rows[1]["metrics"]={"personal_points":10}
+    payload.update(revision=1,results_complete=True)
+    assert c.put(root+"/sessions/"+sid,json=payload).status_code==200
+    assert c.post(root+"/publish").status_code==200
+    event=report(settings.database_path,gid,aid,date(2026,11,29),date(2026,11,29))["events"][0]
+    assert event["activity_cells"]=={"selected":"unknown","scored":"positive"}
+    assert event["metrics"]["attendance"]["negative"]==0
+    assert event["metrics"]["reliability"]["negative"]==1
+    assert not event["foundry_review_complete"]

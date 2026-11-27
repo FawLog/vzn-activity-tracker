@@ -61,8 +61,9 @@ def test_applied_migration_file_cannot_disappear(
     (migration_directory / "0008_event_sessions.sql").unlink()
     (migration_directory / "0009_bear_session_hosts.sql").unlink()
     (migration_directory / "0010_event_completion.sql").unlink()
+    (migration_directory / "0011_foundry_session_details.sql").unlink()
 
-    with pytest.raises(RuntimeError, match="files are missing: 0006, 0007, 0008, 0009, 0010"):
+    with pytest.raises(RuntimeError, match="files are missing: 0006, 0007, 0008, 0009, 0010, 0011"):
         database.migrate(database_path)
 
 

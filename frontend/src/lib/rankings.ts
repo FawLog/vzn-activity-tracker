@@ -5,7 +5,7 @@ export type Measure="total"|"average"|"maximum";
 export type RankingOption={key:string;label:string;event:EventKind;metric?:MetricKey;count?: "registration"|"attendance"|"reliability"};
 export const options:Record<Category,RankingOption[]>={
  contribution:[{key:"mobi_points",label:"Mobilization points",event:"alliance_mobilization",metric:"points"},{key:"mobi_missions",label:"Mobilization completed missions",event:"alliance_mobilization",metric:"missions_completed"},{key:"bear_damage",label:"Bear Hunt damage (informational)",event:"bear_trap",metric:"damage"},{key:"foundry_points",label:"Foundry personal points (informational)",event:"foundry",metric:"personal_points"},{key:"canyon_points",label:"Canyon personal points (informational)",event:"canyon",metric:"personal_points"}],
- attendance:[{key:"bear",label:"Bear Hunt cycles",event:"bear_trap",count:"attendance"},{key:"champ",label:"Championship registration",event:"alliance_championship",count:"registration"},{key:"foundry",label:"Foundry attendance",event:"foundry",count:"attendance"},{key:"canyon",label:"Canyon attendance",event:"canyon",count:"attendance"}],
+ attendance:[{key:"bear",label:"Bear Hunt cycles",event:"bear_trap",count:"attendance"},{key:"champ",label:"Championship registration",event:"alliance_championship",count:"registration"},{key:"foundry",label:"Foundry attendance",event:"foundry",count:"attendance"},{key:"foundry_registration",label:"Foundry registration",event:"foundry",count:"registration"},{key:"canyon",label:"Canyon attendance",event:"canyon",count:"attendance"}],
  reliability:[{key:"foundry",label:"Foundry registered legions",event:"foundry",count:"reliability"},{key:"canyon",label:"Canyon registered legions",event:"canyon",count:"reliability"}]
 };
 export type RankRow={player:ActivityPlayer;metrics:Metrics;samples?:Samples;counts?:Counts;missing:number;complete:boolean;value:string|number|null;rank:number|null;registered:number|null};
@@ -23,9 +23,9 @@ export function rankingRows(report:AnalyticsReport,option:RankingOption,measure:
   // Absence of a historical record is not evidence of eligibility or absence.
   // Keep partial rates visible, but never give them an ordinal leaderboard rank.
   const fullyObserved=missing===0&&events.every(e=>e.session_count>0);
-  const complete=!!counts&&fullyObserved&&counts.unknown===0&&counts.known>0&&(option.event==="bear_trap"||option.event==="alliance_championship"||option.count==="attendance"||metrics.observed_sessions===events.reduce((n,e)=>n+e.session_count,0))&&(option.count!=="reliability"||metrics.registration?.unknown===0);
+  const complete=!!counts&&fullyObserved&&counts.unknown===0&&counts.known>0&&(option.event==="foundry"?events.every(e=>e.foundry_review_complete!==false):(option.event==="bear_trap"||option.event==="alliance_championship"||option.count==="attendance"||metrics.observed_sessions===events.reduce((n,e)=>n+e.session_count,0)))&&(option.count!=="reliability"||metrics.registration?.unknown===0);
   const value=option.metric?(samples?.[measure]??null):(counts?.rate??null);
-  return {player,metrics,samples,counts,missing,complete,value,rank:null,registered:option.count==="reliability"?(metrics.registration?.positive??0):null} as RankRow;
+  return {player,metrics,samples,counts,missing,complete,value,rank:null,registered:option.count==="reliability"?(option.event==="foundry"?(metrics.reliability?.known??0)+(metrics.reliability?.unknown??0)+(metrics.reliability?.excused??0):(metrics.registration?.positive??0)):null} as RankRow;
  });
  const eligible=rows.filter(r=>r.value!==null&&(option.metric?!!r.samples?.samples:r.complete)).sort((a,b)=>compareValue(b.value,a.value)||a.player.fid.localeCompare(b.player.fid));
  let rank=0;eligible.forEach((r,i)=>{if(i===0||compareValue(r.value,eligible[i-1].value)!==0)rank=i+1;r.rank=rank});

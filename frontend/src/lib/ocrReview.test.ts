@@ -15,3 +15,11 @@ it("ignores excluded rows and detects differing mission ratios",()=>{
  expect(summarizeReview([a,b],"alliance_mobilization").conflicts.has("1")).toBe(true);
  expect(summarizeReview([a,{...b,include:false}],"alliance_mobilization").conflicts.size).toBe(0);
 });
+
+it("merges overlapping Foundry results including zero and missing medal rank, but flags inconsistent points or role",()=>{
+ const a=row("1","Old",{points:0}),b=row("1","New",{points:0,rank:25,source:"b.png"});
+ const same=summarizeReview([a,b],"foundry_results");
+ expect(same.rows[0].rank).toBe(25);expect(same.rows[0].points).toBe(0);expect(same.conflicts.size).toBe(0);
+ expect(summarizeReview([a,{...b,points:10}],"foundry_results").conflicts.has("1")).toBe(true);
+ expect(summarizeReview([row("1","Old",{role:"main"}),row("1","New",{role:"substitute"})],"foundry_registration").conflicts.has("1")).toBe(true);
+});

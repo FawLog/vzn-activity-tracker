@@ -877,3 +877,5 @@ td strong { color: var(--text); font-weight: 650; }
 }
 
 .heat-not_registered { background:#66512d; }.heat-no_show { background:#783a43; }
+
+.heat-present_no_show { background:#705034; }

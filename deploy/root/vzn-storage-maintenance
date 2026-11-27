@@ -117,7 +117,9 @@ def atomic_json(path: Path, value: object) -> None:
 
 
 def read_registry() -> dict[str, object]:
-    if not REGISTRY.exists() and not REGISTRY.is_symlink():
+    if path_present(STATE):
+        root_directory(STATE, 0o700)
+    if not path_present(REGISTRY):
         return {"version": 1, "points": []}
     root_regular(REGISTRY, 0o600)
     raw = json.loads(REGISTRY.read_text(encoding="utf-8"))
@@ -247,7 +249,7 @@ def validate_point_paths(point: dict[str, object], *, release_missing: bool = Fa
     release_ok = (release.parent == RELEASES and RELEASE_ID.fullmatch(release.name) is not None
                   and not release.is_symlink())
     if release_missing:
-        release_ok = release_ok and not release.exists()
+        release_ok = release_ok and not path_present(release)
     else:
         release_ok = release_ok and direct_child(release, RELEASES) and release.is_dir()
     require(release_ok, f"invalid recovery point release path: {commit} {release}")
@@ -384,7 +386,12 @@ def intent_path() -> Path:
 
 
 def path_present(path: Path) -> bool:
-    return path.exists() or path.is_symlink()
+    # Only ENOENT is evidence of absence; other filesystem failures are unsafe.
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def begin_release_cleanup(registry: dict[str, object], point: dict[str, object]) -> None:
@@ -507,6 +514,8 @@ def run_cleanup(apply: bool) -> int:
             print("VZN maintenance deferred: deployment lock is held")
             return 0
         require(not operation_active(), "deployment marker exists; cleanup is refused")
+        for directory in (APP, RELEASES, BACKUPS):
+            root_directory(directory)
         registry, freed = resume_release_cleanup(read_registry(), apply)
         planned = candidates(registry)
         for item in planned:

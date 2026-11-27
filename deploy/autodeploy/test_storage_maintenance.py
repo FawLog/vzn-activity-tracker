@@ -171,7 +171,14 @@ class StorageMaintenanceTests(unittest.TestCase):
     def test_failed_release_deletion_preserves_point_and_can_retry(self):
         registry = self.registry_with_current(5)
         self.save_registry(registry)
-        with self.cleanup_environment(), patch.object(maintenance, "remove_tree", side_effect=OSError("failed")):
+        release = Path(registry["points"][0]["release"])
+        (release / "partially-removed").touch()
+
+        def partial_failure(path):
+            (path / "partially-removed").unlink()
+            raise OSError("failed")
+
+        with self.cleanup_environment(), patch.object(maintenance, "remove_tree", side_effect=partial_failure):
             with self.assertRaisesRegex(OSError, "failed"):
                 maintenance.run_cleanup(apply=True)
         self.assertEqual(self.read_registry(), registry)
@@ -301,6 +308,62 @@ class StorageMaintenanceTests(unittest.TestCase):
         release.symlink_to(registry["points"][1]["release"])
         with self.assertRaisesRegex(maintenance.SafetyError, point["commit"]):
             maintenance.candidates(registry)
+
+    def test_intent_cannot_authorize_deletion_of_current_release(self):
+        registry = self.registry_with_current(5)
+        self.save_registry(registry)
+        point = registry["points"][-1]
+        metadata = Path(point["release"]).lstat()
+        with self.cleanup_environment() as docker:
+            maintenance.atomic_json(maintenance.intent_path(), {
+                "version": 1, "point": point, "device": metadata.st_dev, "inode": metadata.st_ino,
+            })
+            with self.assertRaisesRegex(maintenance.SafetyError, "protected recovery point"):
+                maintenance.run_cleanup(apply=True)
+        docker.assert_not_called()
+        self.assertEqual(self.read_registry(), registry)
+        self.assertTrue(Path(point["release"]).is_dir())
+
+    def test_intent_rejects_replaced_directory(self):
+        registry = self.registry_with_current(5)
+        self.save_registry(registry)
+        point = registry["points"][0]
+        release = Path(point["release"])
+        with self.cleanup_environment() as docker:
+            maintenance.begin_release_cleanup(registry, point)
+            release.rename(self.backups / "original-release")
+            release.mkdir()
+            with self.assertRaisesRegex(maintenance.SafetyError, "identity changed"):
+                maintenance.run_cleanup(apply=True)
+        self.assertEqual(self.read_registry(), registry)
+        self.assertTrue(release.is_dir())
+        docker.assert_not_called()
+
+    def test_intent_does_not_hide_unrelated_missing_release(self):
+        registry = self.registry_with_current(6)
+        self.save_registry(registry)
+        with self.cleanup_environment() as docker:
+            maintenance.begin_release_cleanup(registry, registry["points"][0])
+            unrelated = registry["points"][1]
+            Path(unrelated["release"]).rmdir()
+            with self.assertRaisesRegex(maintenance.SafetyError, unrelated["commit"]):
+                maintenance.run_cleanup(apply=True)
+        self.assertEqual(self.read_registry(), registry)
+        self.assertTrue(Path(registry["points"][0]["release"]).is_dir())
+        docker.assert_not_called()
+
+    def test_docker_tag_listing_failure_is_not_evidence_of_absence(self):
+        image = "vzn-activity-tracker-backend:ci-" + "a" * 40
+        with patch.object(maintenance.subprocess, "run",
+                          side_effect=subprocess.CalledProcessError(1, "docker")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                maintenance.docker_tag_present(image)
+        with patch.object(maintenance.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0, stdout=image + "\\n")):
+            self.assertTrue(maintenance.docker_tag_present(image))
+        with patch.object(maintenance.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 0, stdout="other:tag\\n")):
+            self.assertFalse(maintenance.docker_tag_present(image))
 
     def test_inherited_lock_rejects_a_different_file(self):
         self.lock.touch()

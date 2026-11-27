@@ -398,6 +398,27 @@ def create_api_router(settings: Settings) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.get("/groups/{group_id}/calendar/{occurrence_id}/future")
+    async def get_calendar_future(request: Request, group_id: str, occurrence_id: str) -> dict[str, object]:
+        require_admin(request, settings)
+        try:
+            return calendar.preview_future(settings.database_path, group_id, occurrence_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/groups/{group_id}/calendar/{occurrence_id}/future")
+    async def post_calendar_future(request: Request, group_id: str, occurrence_id: str, payload: calendar.CalendarFutureChange) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return calendar.change_future(settings.database_path, group_id, occurrence_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     @router.get("/groups/{group_id}/overview")
     async def get_overview(request: Request, group_id: str, alliance_id: str | None = Query(default=None, max_length=64)) -> dict[str, object]:
         require_admin(request, settings)

@@ -268,3 +268,65 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
           (payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.starts_at,payload.ends_at,payload.precision,payload.phase,payload.confidence,payload.schedule_status,occurrence_id,group_id))
         audit(db,"cancelled" if payload.schedule_status=="cancelled" else "updated",occurrence_id)
         return dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (occurrence_id,)).fetchone())
+
+
+class CalendarFutureChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["shift", "cancel"]
+    shift_minutes: int = Field(default=0, ge=-527040, le=527040)
+    revisions: dict[str, int] = Field(min_length=1, max_length=180)
+
+    @model_validator(mode="after")
+    def validate_action(self):
+        if (self.action == "shift") != (self.shift_minutes != 0):
+            raise ValueError("Shift requires a nonzero offset; cancellation requires zero")
+        return self
+
+
+def future_threshold(precision, now):
+    return now.replace(hour=0, minute=0, second=0, microsecond=0) if precision == "date" else now
+
+
+def future_rows(db, group_id, occurrence_id):
+    require_group(db, group_id)
+    row = db.execute("SELECT * FROM calendar_occurrences WHERE id=? AND group_id=?", (occurrence_id, group_id)).fetchone()
+    if row is None:
+        raise LookupError("Calendar occurrence not found")
+    if row["series_id"] is None or row["schedule_status"] != "scheduled":
+        raise ValueError("Choose a scheduled occurrence in a recurring series")
+    now = datetime.now(timezone.utc)
+    if parse(row["starts_at"]) < future_threshold(row["precision"], now):
+        raise ValueError("Choose a future occurrence")
+    # Keep manual overrides and cancellations intact.
+    rows = db.execute("""SELECT * FROM calendar_occurrences WHERE group_id=? AND series_id=?
+        AND sequence>=? AND schedule_status='scheduled' AND (id=? OR source='recurrence')
+        ORDER BY sequence""", (group_id, row["series_id"], row["sequence"], occurrence_id)).fetchall()
+    return [dict(r) for r in rows if parse(r["starts_at"]) >= future_threshold(r["precision"], now)]
+
+
+def preview_future(path, group_id, occurrence_id):
+    with connection(path) as db:
+        return {"items": future_rows(db, group_id, occurrence_id)}
+
+
+def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
+    with transaction(path) as db:
+        require_group(db, group_id, True)
+        rows = future_rows(db, group_id, occurrence_id)
+        if not rows or {row["id"]: row["revision"] for row in rows} != payload.revisions:
+            raise ValueError("Series changed; review affected occurrences again")
+        now = datetime.now(timezone.utc)
+        for row in rows:
+            if payload.action == "shift":
+                if row["precision"] == "date" and payload.shift_minutes % 1440:
+                    raise ValueError("Date-only entries require whole-day shifts")
+                start = shift(row["starts_at"], payload.shift_minutes)
+                end = shift(row["ends_at"], payload.shift_minutes)
+                if parse(start) < future_threshold(row["precision"], now) or not 2000 <= parse(start).year <= 2099 or (end and not 2000 <= parse(end).year <= 2099):
+                    raise ValueError("Shift would move an occurrence outside future supported dates")
+                validate_scope(db, group_id, CalendarInput(**{k: row[k] for k in CalendarInput.model_fields}))
+                db.execute("UPDATE calendar_occurrences SET starts_at=?,ends_at=?,confidence='estimated',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (start,end,row["id"]))
+            else:
+                db.execute("UPDATE calendar_occurrences SET schedule_status='cancelled',source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
+            audit(db, "cancelled" if payload.action == "cancel" else "rescheduled", row["id"])
+        return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (row["id"],)).fetchone()) for row in rows]}

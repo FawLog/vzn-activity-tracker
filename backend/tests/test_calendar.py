@@ -68,3 +68,31 @@ def test_calendar_idempotent_creation(authenticated_client,settings):
         assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==3
         assert db.execute("SELECT COUNT(*) FROM calendar_series").fetchone()[0]==1
         assert db.execute("SELECT COUNT(*) FROM audit_log WHERE entity_type='calendar_occurrence'").fetchone()[0]==3
+
+
+def test_calendar_future_changes_preserve_exceptions(authenticated_client):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    payload={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-02-28T15:00Z","precision":"minute","interval_minutes":2880,"occurrence_count":5}
+    response=c.post(url,json=payload)
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    edit={k:v for k,v in payload.items() if k not in ("interval_minutes","occurrence_count")}
+    assert c.put(url+"/"+rows[2]["id"],json={**edit,"starts_at":"2090-03-04T18:00Z","revision":1}).status_code==200
+    target=url+"/"+rows[1]["id"]+"/future"
+    preview=c.get(target).json()["items"]
+    assert [r["id"] for r in preview]==[rows[i]["id"] for i in (1,3,4)]
+    revisions={r["id"]:r["revision"] for r in preview}
+    result=c.post(target,json={"action":"shift","shift_minutes":60,"revisions":revisions})
+    assert result.status_code==200,result.text
+    assert result.json()["items"][0]["starts_at"]=="2090-03-02T16:00Z"
+    assert c.post(target,json={"action":"shift","shift_minutes":60,"revisions":revisions}).status_code==409
+    current=c.get(target).json()["items"]
+    result=c.post(target,json={"action":"cancel","revisions":{r["id"]:r["revision"] for r in current}})
+    assert result.status_code==200
+    assert all(r["schedule_status"]=="cancelled" for r in result.json()["items"])
+    all_rows=c.get(url+"?start=2090-02-28&end=2090-03-10").json()["items"]
+    assert all_rows[0]==rows[0]
+    assert all_rows[2]["starts_at"]=="2090-03-04T18:00Z"
+    assert all_rows[2]["schedule_status"]=="scheduled"

@@ -312,11 +312,18 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(page.getByRole("button",{name:"Overall",exact:true})).toHaveAttribute("aria-pressed","true");
   await page.unroute("**/api/v1/groups/*/players/screen-0");
   await page.unroute("**/api/v1/groups/*/players/screen-0/activity?*");
-  await page.unroute("https://gof-formal-avatar.akamaized.net/quick-view-test.png");
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.screenshot({path:testInfo.outputPath("overall-ranking.png"),fullPage:true});
   await page.getByRole("button",{name:"Attendance",exact:true}).click();
   await expect(page.getByLabel("Event / metric")).toBeVisible();
+  for(const category of ["Attendance","Contribution"]){
+    await page.getByRole("button",{name:category,exact:true}).click();
+    if(category==="Contribution")await page.getByLabel("Event / metric").selectOption("bear_damage");
+    const table=page.locator(".rankings-panel tbody");
+    await expect.poll(()=>table.getByRole("button",{name:"Review Low",exact:true}).locator(".roster-avatar img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+    await expect(table.getByRole("button",{name:"Review Unknown",exact:true}).locator(".roster-avatar svg")).toBeVisible();
+  }
+  await page.unroute("https://gof-formal-avatar.akamaized.net/quick-view-test.png");
   await page.unroute("**/api/v1/groups/*/analytics?*");
 
   await page.goto("/admin?mode=events");

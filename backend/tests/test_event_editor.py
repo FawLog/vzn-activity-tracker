@@ -206,6 +206,11 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     assert event["activity_cells"]=={"attended":"positive","both":"present_no_show","no-show":"no_show","unselected":"not_registered"}
     assert event["metrics"]["registration"]["positive"]==3
     assert event["metrics"]["registration"]["negative"]==1
+    # No session row or per-player registration checkbox is needed for this member.
+    unselected=next(p for p in data["players"] if p["fid"]=="unselected")
+    assert unselected["metrics"]["foundry"]["registration"]["negative"]==1
+    assert unselected["metrics"]["foundry"]["attendance"]["negative"]==1
+    assert unselected["metrics"]["foundry"]["no_shows"]==0
     assert event["metrics"]["attendance"]["rate"]==50
     assert event["metrics"]["no_shows"]==2
     assert event["metrics"]["missed_unregistered"]==1

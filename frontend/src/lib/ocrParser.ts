@@ -1,6 +1,6 @@
 import type { OcrPreview } from "./api";
 
-export type ParsedRow = { nickname: string; damage?: number; completed?: number; total?: number; points?: number; source: string };
+export type ParsedRow = { nickname: string; damage?: number; completed?: number; total?: number; points?: number; role?: "main"|"substitute"; rank?: number; source: string };
 type Word = { text: string; x: number; y: number; right: number; height: number };
 type Line = { words: Word[]; y: number; height: number };
 export const normalizeName = (name:string) => name.normalize("NFC").trim().replace(/^\s*\[[^\]]+\]\s*/, "").replace(/\s+/g," ").toLowerCase();
@@ -25,9 +25,106 @@ function numberFrom(text:string):number|undefined {
   const n=Number(cleaned.replaceAll(",",""));
   return Number.isSafeInteger(n)&&n>=0?n:undefined;
 }
-export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:string,source:string):{rows:ParsedRow[];warnings:string[]} {
+export type FoundryImportInfo = {main_count?:number;substitute_count?:number;outcome?:"victory"|"defeat";own_score?:number;opponent_score?:number;opponent_state?:string;opponent_tag?:string;opponent_name?:string};
+type ParsedScreenshot = {rows:ParsedRow[];warnings:string[];foundry?:FoundryImportInfo};
+function numericRuns(line:Line):Array<Word & {value:number}> {
+  const groups:Word[]=[];
+  for(const w of line.words){
+    if(!/^[\d, \u00a0\u202f]+$/u.test(w.text))continue;
+    const prev=groups[groups.length-1];
+    if(prev&&w.x-prev.right<=Math.max(prev.height,w.height)*.55&&w.x>=prev.x){
+      prev.text+=w.text;prev.right=w.right;
+    }else groups.push({...w});
+  }
+  return groups.flatMap(w=>{const value=numberFrom(w.text);return value===undefined?[]:[{...w,value}]});
+}
+function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:string):ParsedScreenshot {
+  const rows:ParsedRow[]=[],warnings:string[]=[],foundry:FoundryImportInfo={};
+  const all=lines.flatMap(l=>l.words);
+  const maxX=Math.max(1,...all.map(w=>w.right));
+  const mailText=lines.map(lineText).join(" ");
+  const legion=mailText.match(/\bLegion\s*([12])\b/iu)?.[1];
+  if(legion&&sessionKey!=="legion_"+legion)return {rows,warnings:["Mail belongs to a different legion. Remove this screenshot."]};
+  const personal=lines.find(l=>/Personal\s+Arsenal\s+Points/iu.test(lineText(l)));
+  const section=/\b(Combatants|Substitutes)\s*:\s*(\d+)\s*\/\s*(\d+)/iu;
+  const headers=lines.flatMap(l=>{const m=lineText(l).match(section);if(!m)return [];const role=m[1].toLowerCase()==="combatants"?"main" as const:"substitute" as const;const n=Number(m[2]);if(n<0||n>(role==="main"?30:10))return [];if(role==="main")foundry.main_count=n;else foundry.substitute_count=n;return [{y:l.y,role}];});
+  if(mode==="foundry_registration"){
+    if(personal||/\b(?:Legion Tally|Personal Arsenal Points|DEFEAT!|VICTORY!)\b/iu.test(mailText))return {rows,warnings:["Battle result mail is not a registration list."]};
+    const ranks=all.filter(w=>/^[RР]\s*[0-5]$/iu.test(w.text)&&w.x<maxX*.5).sort((a,b)=>a.y-b.y);
+    for(let i=0;i<ranks.length;i++){
+      const rank=ranks[i],prev=ranks[i-1],next=ranks[i+1];
+      const header=headers.filter(h=>h.y<rank.y).at(-1);
+      const top=Math.max(header?.y??-Infinity,rank.y-rank.height*4.5,prev?(prev.y+rank.y)/2-rank.height*.5:-Infinity);
+      const bottom=Math.min(rank.y+rank.height*.65,next?(rank.y+next.y)/2:Infinity);
+      const region=lines.filter(l=>l.y>top&&l.y<=bottom);
+      const rightValues=region.flatMap(numericRuns).filter(w=>w.x>rank.x+rank.height*6);
+      const right=rightValues.length===1?rightValues[0].x-rank.height*.35:rank.x+rank.height*14;
+      const nameWords=region.flatMap(l=>l.words).filter(w=>w.y<rank.y-rank.height*.4&&w.x>=rank.x-rank.height&&w.right<right&&!/^[RР]\s*[0-5]$/iu.test(w.text));
+      const base=nameWords.filter(w=>/[\p{L}\p{N}]/u.test(w.text)).sort((a,b)=>b.height-a.height||a.y-b.y)[0];
+      const nickname=base?nameWords.filter(w=>Math.abs(w.y-base.y)<=Math.max(w.height,base.height)*.95).sort((a,b)=>a.x-b.x).map(w=>w.text).join(" ").trim():"";
+      if(!nickname||rightValues.length!==1){warnings.push("Incomplete or ambiguous registration row near y="+Math.round(rank.y));continue}
+      const role=header?.role??(headers.some(h=>h.role==="substitute"&&h.y>rank.y)?"main":undefined);
+      rows.push({nickname,...(role?{role}:{}),source});
+    }
+    if(!ranks.length)warnings.push("No complete R0–R5 registration rows found.");
+    if(rows.some(r=>!r.role))warnings.push("Section header not visible; verify main/substitute role or use overlap matching.");
+    return {rows,warnings,foundry};
+  }
+  if(headers.length||/\bselected as a combatant\b/iu.test(mailText))return {rows,warnings:["Registration mail is not a battle result list."]};
+  const outcomeLine=lines.find(l=>/^\s*(VICTORY|DEFEAT)\s*!?\s*$/iu.test(lineText(l)));
+  if(outcomeLine){
+    foundry.outcome=/VICTORY/iu.test(lineText(outcomeLine))?"victory":"defeat";
+    const tally=lines.find(l=>l.y>outcomeLine.y&&/Legion Tally/iu.test(lineText(l)));
+    const banner=lines.filter(l=>l.y>=outcomeLine.y-outcomeLine.height*3&&l.y<(tally?.y??outcomeLine.y+outcomeLine.height*12));
+    const side=(right:boolean)=>banner.map(l=>({...l,words:l.words.filter(w=>(w.x>=maxX*.5)===right)})).filter(l=>l.words.length);
+    const readSide=(right:boolean)=>{
+      const ls=side(right);
+      const team=ls.find(l=>/\[[^\]]+\]\s*\S/u.test(lineText(l)));
+      const m=team&&lineText(team).match(/\[\s*([^\]]+?)\s*\]\s*(.+)$/u);
+      const state=ls.map(lineText).join(" ").match(/#\s*(\d{1,6})\b/u)?.[1];
+      const scores=team?ls.filter(l=>l.y>team.y).flatMap(numericRuns):[];
+      return {tag:m?.[1].replace(/\s+/g,""),name:m?.[2].trim(),state,score:scores.length===1?scores[0].value:undefined};
+    };
+    const own=readSide(false),opp=readSide(true);
+    if(own.tag&&opp.tag){
+      foundry.own_score=own.score;foundry.opponent_score=opp.score;
+      foundry.opponent_tag=opp.tag;foundry.opponent_name=opp.name;foundry.opponent_state=opp.state;
+    }
+  }
+  if(!personal&&(/Legion Tally|Control Rewards|Gathering Rewards|Loot Rewards|KO Rewards|Sieges by Mercenaries|\bMVP\b/iu.test(mailText)||outcomeLine)){
+    return {rows,warnings:["Team summary only; no personal ranking rows imported."],foundry};
+  }
+  const area=lines.filter(l=>l.y>(personal?.y??-Infinity));
+  const rankWords=area.flatMap(l=>l.words).filter(w=>w.x<maxX*.25&&numberFrom(w.text)!==undefined&&numberFrom(w.text)!>=1&&numberFrom(w.text)!<=40);
+  if(!personal&&!rankWords.length)return {rows,warnings:["Personal ranking header or rank anchors missing; review this screenshot."],foundry};
+  for(const line of area){
+    for(const n of numericRuns(line).filter(w=>w.x>=maxX*.25)){
+      const above=area.filter(l=>l.y<line.y-n.height*.65&&line.y-l.y<=n.height*4.5).reverse();
+      const names=above.map(l=>{
+        const words=l.words.filter(w=>w.x>=n.x-n.height*.75&&w.x<maxX&&w.right>n.x-n.height*.25);
+        const first=words[0],name=words.map(w=>w.text).join(" ").trim();
+        return {l,first,name};
+      }).filter(v=>v.first&&Math.abs(v.first.x-n.x)<=n.height*1.1&&/[\p{L}]/u.test(v.name)&&!/(?:Personal Arsenal Points|Legion Tally|MVP|Rewards|Expires at|Mail|Delete)/iu.test(v.name));
+      const best=names[0];
+      if(!best)continue;
+      // A score must be in the nickname column, on its own line. Never use a
+      // rank, team total, date, avatar label or the previous player's nickname.
+      if(line.words.some(w=>w.x>=n.x-n.height*.4&&w.right>n.right+n.height*.4&&/[\p{L}]/u.test(w.text)))continue;
+      const ranks=rankWords.filter(w=>w.y>=best.l.y-n.height&&w.y<=line.y+n.height);
+      if(ranks.length>1)continue;
+      const rank=ranks.length===1?numberFrom(ranks[0].text):undefined;
+      if(rank===undefined&&!personal&&!rankWords.length)continue;
+      rows.push({nickname:best.name,points:n.value,...(rank!==undefined?{rank}:{}),source});
+    }
+  }
+  if(!rows.length)warnings.push("No complete personal points rows recognized; verify screenshot.");
+  else warnings.push("Personal results: "+rows.length+" rows including "+rows.filter(r=>r.points===0).length+" explicit zeros. Review all matches.");
+  return {rows,warnings,foundry};
+}
+export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:string,source:string):ParsedScreenshot {
   const lines=linesFrom(preview), rows:ParsedRow[]=[],warnings:string[]=[];
   if(!lines.length)return {rows,warnings:["No word coordinates; inspect the original screenshot and raw text."]};
+  if(eventType==="foundry_registration"||eventType==="foundry_results")return foundryScreenshot(lines,eventType,sessionKey,source);
   if(eventType==="bear_trap"){
     const heading=lines.find(l=>/(?:Trap\s*[12]\s*Damage\s*Rewards|(?:ловушк[аеиу]|капкан)\s*[12])/iu.test(lineText(l)));
     const trap=heading&&lineText(heading).match(/(?:Trap|ловушк[аеиу]|капкан)\s*([12])/iu)?.[1];

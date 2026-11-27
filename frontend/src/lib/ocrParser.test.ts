@@ -60,3 +60,27 @@ it("never borrows the preceding Bear nickname when a later row is missing",()=>{
  expect(parsed.rows).toEqual([{nickname:"Alice",damage:100,source:"partial"}]);
  expect(parsed.warnings.some(w=>w.includes("Cannot associate damage"))).toBe(true);
 });
+
+
+it("reads main/substitute sections and counts without treating right-hand power as points",()=>{
+ const parsed=parseScreenshot(fixture([["Combatants: 1/30",250,200,250],["Alpha",155,270,100],["1,899",570,290,80],["R4",155,310,30],["Substitutes: 1/10",250,390,250],["Beta",155,450,100],["2,890",570,470,80],["R0",155,490,30]]),"foundry_registration","legion_2","registration");
+ expect(parsed.foundry).toEqual({main_count:1,substitute_count:1});
+ expect(parsed.rows).toEqual([{nickname:"Alpha",role:"main",source:"registration"},{nickname:"Beta",role:"substitute",source:"registration"}]);
+});
+it("keeps cropped registration role unresolved and rejects wrong legion",()=>{
+ const words:[string,number,number,number][]=[["Alpha",155,270,100],["1,899",570,290,80],["R4",155,310,30]];
+ expect(parseScreenshot(fixture(words),"foundry_registration","legion_2","crop").rows).toEqual([{nickname:"Alpha",source:"crop"}]);
+ expect(parseScreenshot(fixture([["Legion 1",100,80,100],...words]),"foundry_registration","legion_2","wrong").rows).toEqual([]);
+});
+it("reads explicit zero and personal score, excluding tally MVP and supporting medals without text",()=>{
+ const words:[string,number,number,number][]=[["Legion Tally",280,100,200],["MVP",210,155,50],["Not a personal result",305,150,230],["72,818",305,190,90],["Personal Arsenal Points",220,270,310],["Alpha",306,340,100],["1,306,727",306,390,130],["2",80,520,20],["Beta",306,500,100],["678,058",306,550,100],["3",80,680,20],["Gamma",306,660,100],["0",306,710,20]];
+ // Fixture font height is 20 px, with numeric rank offset from the nickname.
+ const parsed=parseScreenshot(fixture(words),"foundry_results","legion_2","results");
+ expect(parsed.rows.map(r=>[r.nickname,r.points])).toEqual([["Alpha",1306727],["Beta",678058],["Gamma",0]]);
+ expect(parseScreenshot(fixture(words.slice(0,4)),"foundry_results","legion_2","tally").rows).toEqual([]);
+});
+it("reads a reviewed team summary without creating player results",()=>{
+ const parsed=parseScreenshot(fixture([["Legion 2",60,80,100],["DEFEAT!",340,150,145],["#4284",170,190,65],["#4271",570,190,65],["[AAA]Alpha",100,230,200],["[BBB]Beta",500,230,180],["254,292",180,280,100],["263,311",575,280,100],["Legion Tally",300,340,180]]),"foundry_results","legion_2","summary");
+ expect(parsed.rows).toEqual([]);
+ expect(parsed.foundry).toEqual({outcome:"defeat",own_score:254292,opponent_score:263311,opponent_tag:"BBB",opponent_name:"Beta",opponent_state:"4271"});
+});

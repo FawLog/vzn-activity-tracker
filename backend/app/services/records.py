@@ -183,10 +183,17 @@ def list_players(
             """,
             (*parameters, limit, offset),
         ).fetchall()
+        aliases = {}
+        if rows:
+            fids = [r["fid"] for r in rows]
+            marks = ",".join("?" for _ in fids)
+            for alias in database.execute(f"SELECT DISTINCT player_fid,nickname FROM player_nickname_observations WHERE group_id=? AND player_fid IN ({marks}) ORDER BY player_fid,nickname", (group_id,*fids)):
+                aliases.setdefault(alias["player_fid"], []).append(alias["nickname"])
     items: list[dict[str, Any]] = []
     external_fields = {"power", "kills", "furnace_level", "alliance_rank", "state_id", "observed_alliance_name", "avatar_url"}
     for row in rows:
         item = dict(row)
+        item["nickname_aliases"] = [alias for alias in aliases.get(item["fid"], []) if alias != item["nickname"]]
         for field in external_fields:
             if item[field] is None:
                 item.pop(field)

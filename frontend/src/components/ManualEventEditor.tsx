@@ -90,14 +90,14 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     (async()=>{
       const items:Player[]=[];
       for(let offset=0;;offset+=100){
-        const result=await api.players(groupId,"","nickname","asc",{mode:"all"},100,offset,foundry);
+        const result=await api.players(groupId,"","nickname","asc",{mode:"all"},100,offset,true);
         items.push(...result.items);
         if(items.length>=result.total || !result.items.length)break;
       }
       if(active){setCandidates(items);setLoaded(true)}
     })().catch(e=>{if(active)setError(e instanceof Error?e.message:"Unable to load roster")});
     return ()=>{active=false};
-  },[groupId,foundry]);
+  },[groupId]);
   const blank=(p:Player):ManualRow=>({fid:p.fid,nickname:p.nickname??p.fid,eligibility:"unknown",registration:"unknown",role:null,registered_by:null,attendance:"unknown",metrics:{}});
   const currentRoster=candidates.filter(p=>p.primary_alliance_id===(draft?.host_alliance_id??record.alliance_id)&&p.group_status==="active");
   const visibleRows=draft?[...draft.rows,...(editable&&!draft.roster_complete?currentRoster.filter(p=>!draft.rows.some(r=>r.fid===p.fid)).map(blank):[])]:[];

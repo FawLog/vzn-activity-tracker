@@ -78,3 +78,5 @@ Group Bear final review proposes active members of every recorded host alliance,
 - Foundry in-game registration: troop power is optional, never a prerequisite for extracting an otherwise unambiguous nickname and Join/Substitute role. Preserve card boundaries and reject ambiguous/clipped nicknames; role counts and FID review remain mandatory.
 
 - Events list displays unique positive participants, not roster coverage. Foundry/Canyon drafts and Championship show selected registrations; published Foundry/Canyon show attended / registered when registration coverage is complete; Bear shows unique attendees across all traps; Mobilization shows positive scorers. Label partial evidence and unknown counts; no changes to published records or overall scoring.
+
+- All manual event OCR candidate loads include locally observed nickname aliases (Bear Trap, Alliance Championship, Foundry and Mobilization). Historical matches remain suggestions requiring officer confirmation; reused names across FIDs remain unresolved. No additional external API requests.

@@ -301,6 +301,50 @@ def create_player(database_path: str, group_id: str, payload: PlayerCreate) -> d
     return player
 
 
+def event_participation_summary(db, event):
+    """Count distinct positive evidence, not the roster covered by the event."""
+    kind, eid = event["event_type"], event["id"]
+    sessions = list(db.execute("SELECT * FROM event_sessions WHERE event_id=?", (eid,)))
+    registered, attended = set(), set()
+    for row in db.execute("""SELECT r.*, m.raw_value AS score
+        FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id
+        LEFT JOIN event_session_metrics m ON m.session_id=r.session_id AND m.player_fid=r.player_fid
+          AND m.metric_key=?
+        WHERE s.event_id=?""", ({"bear_trap":"damage","alliance_mobilization":"points"}.get(kind,"personal_points"), eid)):
+        fid = row["player_fid"]
+        if row["eligibility"] == "no_duty":
+            continue
+        if row["registration"] == "registered":
+            registered.add(fid)
+        if row["attendance"] in ("excused", "no_duty"):
+            continue
+        positive_score = row["score"] is not None and row["score"] > 0
+        if kind in ("foundry", "alliance_mobilization"):
+            present = positive_score
+        else:
+            present = row["attendance"] == "confirmed_present" or positive_score
+        if present:
+            attended.add(fid)
+    finalized = bool(db.execute("SELECT 1 FROM event_completion_reviews WHERE event_id=?", (eid,)).fetchone()) and event["status"] == "published"
+    if finalized and kind in ("bear_trap", "foundry", "canyon"):
+        attended = {r["player_fid"] for r in db.execute("SELECT player_fid FROM event_completion_roster WHERE event_id=? AND outcome='positive'", (eid,))}
+    legion_complete = {s["session_key"] for s in sessions} == {"legion_1", "legion_2"}
+    registration_complete = bool(sessions) and all(s["registration_complete"] for s in sessions)
+    if kind in ("foundry", "canyon"):
+        registration_complete = registration_complete and legion_complete
+    if kind == "alliance_championship" or kind in ("foundry", "canyon") and event["status"] == "draft":
+        count, label, complete = len(registered), "Registered", registration_complete
+    elif kind in ("bear_trap", "foundry", "canyon"):
+        count, label, complete = len(attended), "Attended", finalized
+    elif kind == "alliance_mobilization":
+        count, label = len(attended), "Scored"
+        complete = bool(sessions) and all(s["results_complete"] and s["roster_complete"] for s in sessions)
+    else:
+        return {"participant_count": None, "participant_label": "Unknown", "participant_complete": False, "registered_count": None}
+    return {"participant_count": count if sessions else None, "participant_label": label,
+            "participant_complete": complete, "registered_count": len(registered) if kind in ("foundry", "canyon") and event["status"] == "published" and registration_complete else None}
+
+
 def list_events(
     database_path: str,
     group_id: str,
@@ -317,7 +361,7 @@ def list_events(
         rows = database.execute(
             f"""
             SELECT e.id, e.alliance_id, e.event_type, e.occurred_on, e.status,
-                   e.created_at, e.updated_at, (SELECT COUNT(*) FROM (SELECT player_fid FROM event_participants WHERE event_id=e.id UNION SELECT r.player_fid FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id WHERE s.event_id=e.id)) AS participant_count
+                   e.created_at, e.updated_at
             FROM events e LEFT JOIN event_participants ep ON ep.event_id = e.id
             WHERE (e.alliance_id = ? OR (e.event_type=\'bear_trap\' AND e.alliance_id IN (SELECT a.id FROM alliances a WHERE a.group_id=(SELECT group_id FROM alliances WHERE id=?))))
             GROUP BY e.id
@@ -326,7 +370,7 @@ def list_events(
             """,
             (alliance_id,alliance_id),
         ).fetchall()
-    return [dict(row) for row in rows]
+        return [{**dict(row), **event_participation_summary(database, row)} for row in rows]
 
 
 def get_event(database_path: str, group_id: str, event_id: str) -> dict[str, Any] | None:

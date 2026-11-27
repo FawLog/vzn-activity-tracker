@@ -26,7 +26,7 @@ from ..schemas import (
     WhiteoutStatsPreviewRequest,
 )
 from ..security import verify_password
-from ..services import records, event_editor, vision_ocr, analytics
+from ..services import records, event_editor, vision_ocr, analytics, calendar
 from ..services.event_editor import SessionCreate, SessionSave
 from ..services import groups
 from ..services import whiteoutstats
@@ -365,6 +365,38 @@ def create_api_router(settings: Settings) -> APIRouter:
             whiteoutstats.sync_alliance, settings.database_path, settings, group_id, alliance_id, trigger_type="manual"
         )
         return result.payload()
+
+    @router.get("/groups/{group_id}/calendar")
+    async def get_calendar(request: Request, group_id: str, start: date, end: date) -> dict[str, object]:
+        require_admin(request, settings)
+        try:
+            return calendar.list_occurrences(settings.database_path, group_id, start, end)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/groups/{group_id}/calendar", status_code=201)
+    async def post_calendar(request: Request, group_id: str, payload: calendar.CalendarCreate) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return calendar.create(settings.database_path, group_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.put("/groups/{group_id}/calendar/{occurrence_id}")
+    async def put_calendar(request: Request, group_id: str, occurrence_id: str, payload: calendar.CalendarUpdate) -> dict[str, object]:
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return calendar.update(settings.database_path, group_id, occurrence_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/groups/{group_id}/overview")
     async def get_overview(request: Request, group_id: str, alliance_id: str | None = Query(default=None, max_length=64)) -> dict[str, object]:

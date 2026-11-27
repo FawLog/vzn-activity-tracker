@@ -88,3 +88,7 @@ Production deployment must verify:
 - before/after memory, CPU, disk, and logs.
 
 Use SQLite's online backup API. Never copy a live WAL database directly. See `DEPLOYMENT.md` for update, backup, restore, and rollback procedures.
+
+## Merge policy
+
+Use explicit squash-merge only, with the verified PR head SHA and all six CI jobs successful. Verify that the resulting main commit has exactly one parent. Do not bypass autodeploy provenance checks or change privileged controls without owner approval.

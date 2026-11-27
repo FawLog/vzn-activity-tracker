@@ -388,6 +388,7 @@ def create_api_router(settings: Settings) -> APIRouter:
         direction: str = Query(default="asc", pattern="^(asc|desc)$"),
         limit: int = Query(default=100, ge=1, le=250),
         offset: int = Query(default=0, ge=0),
+        include_aliases: bool = False,
     ) -> dict[str, object]:
         require_admin(request, settings)
         try:
@@ -401,6 +402,7 @@ def create_api_router(settings: Settings) -> APIRouter:
                 direction=direction,
                 limit=limit,
                 offset=offset,
+                include_aliases=include_aliases,
             )
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error

@@ -83,6 +83,12 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         """,(group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat())):
             item=dict(r);item["rows"]={};sessions[r["event_id"]].append(item)
         session_by_id={s["id"]:s for v in sessions.values() for s in v}
+        for detail in db.execute("""SELECT f.* FROM foundry_session_details f JOIN event_sessions s ON s.id=f.session_id
+            JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
+            WHERE a.group_id=? AND (? IS NULL OR a.id=?) AND e.event_type='foundry' AND e.status='published' AND e.occurred_on BETWEEN ? AND ?""",
+            (group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat())):
+            if detail["session_id"] in session_by_id:
+                session_by_id[detail["session_id"]]["foundry_details"] = {k: detail[k] for k in ("outcome","own_score","opponent_score","opponent_tag","opponent_name","opponent_state")}
         for r in db.execute("""
             SELECT r.* FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id
             JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
@@ -148,7 +154,36 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                     "registration_outcome":registration(row,s),"attendance_outcome":attendance(row,s),"metrics":row["metrics"]})
             entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"home_alliance_id":home,"sessions":evidence}
             final=final_row["outcome"] if final_row else None
-            if final is not None:
+            if kind == "foundry":
+                # Explicit scores are the evidence; missing scores never become zero.
+                for item in evidence:
+                    score = item["metrics"].get("personal_points")
+                    if final in ("excused", "no_duty") or item["eligibility"] == "no_duty" or item["attendance"] in ("excused", "no_duty"):
+                        item["attendance_outcome"] = "excused"
+                    elif score is not None:
+                        item["attendance_outcome"] = "positive" if score > 0 else "negative" if item["registration_outcome"] == "positive" else "unknown"
+                    elif item["attendance_outcome"] != "negative":
+                        item["attendance_outcome"] = "unknown"
+                registered = any(s["registration_outcome"] == "positive" for s in evidence)
+                full_registration = len(ss) == 2 and all(s["registration_complete"] for s in ss)
+                if final in ("excused", "no_duty"):
+                    entry["cycle_registration"] = "excused"
+                elif registered:
+                    entry["cycle_registration"] = "positive"
+                elif final_row and final_row["roster_member"] and full_registration:
+                    entry["cycle_registration"] = "negative"
+                else:
+                    entry["cycle_registration"] = "unknown"
+                if any(s["attendance_outcome"] == "positive" for s in evidence):
+                    entry["cycle_attendance"] = "positive"
+                elif final in ("excused", "no_duty"):
+                    entry["cycle_attendance"] = "excused"
+                elif final == "negative" and full_registration and all(s["results_complete"] for s in ss) and all(s["registration_outcome"] != "positive" or s["attendance_outcome"] != "unknown" for s in evidence):
+                    entry["cycle_attendance"] = "negative"
+                else:
+                    entry["cycle_attendance"] = "unknown"
+                entry["attendance_finalized"] = final is not None
+            elif final is not None:
                 entry["attendance_finalized"]=True
                 entry["cycle_attendance"]="excused" if final=="no_duty" else final
                 if kind in ("foundry","canyon"):
@@ -170,7 +205,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                 values = [s["metrics"]["points"] for s in e["sessions"] if "points" in s["metrics"]]
                 if values and not all(s["eligibility"] == "no_duty" for s in e["sessions"]):
                     contribution_points[e["fid"]] = str(sum(values))
-        event_reports.append({**event,"contribution_points":contribution_points,
+        event_reports.append({**event,**({"foundry_review_complete":bool(finalized and len(ss)==2 and all(s["registration_complete"] and s["results_complete"] for s in ss)),"foundry_battles":[{"session_key":s["session_key"],"started_at":s["started_at"],"alliance_id":event["alliance_id"],**s.get("foundry_details",{})} for s in ss]} if kind=="foundry" else {}),"contribution_points":contribution_points,
             "contribution_complete":bool(kind == "alliance_mobilization" and ss and all(s["results_complete"] and s["roster_complete"] for s in ss)),
             "session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
             "evidence":[{k:s[k] for k in ("session_key","host_alliance_id","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],
@@ -186,8 +221,18 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             "semantics":{"rates":"known positive / (known positive + known negative); unknown and excused excluded","population":"recorded evidence only; no inferred historical eligibility","bear":"one event is one cycle","legacy":"no session evidence means no analytics","metric_total":"decimal string"}}
 
 
-def activity_cell(entry):
-    kind=entry["event_type"]
+def activity_cell(entry, kind=None):
+    kind = entry["event_type"] if kind is None else kind
+    if kind == "foundry":
+        outcome = entry.get("cycle_attendance", "unknown")
+        if outcome == "positive" and any(s["registration_outcome"] == "positive" and s["attendance_outcome"] == "negative" for s in entry["sessions"]):
+            return "present_no_show"
+        if outcome == "negative":
+            if entry.get("cycle_registration") == "negative":
+                return "not_registered"
+            if any(s["registration_outcome"] == "positive" and s["attendance_outcome"] == "negative" for s in entry["sessions"]):
+                return "no_show"
+        return outcome
     if "cycle_attendance" in entry:
         return entry["cycle_attendance"]
     if kind=="alliance_championship":
@@ -208,7 +253,11 @@ def activity_cell(entry):
 def aggregate(entries, kind):
     evidence=[s for e in entries for s in e["sessions"]]
     out={"observed_events":len(entries),"observed_sessions":len(evidence)}
-    if kind in ("alliance_championship","foundry","canyon"):
+    if kind == "foundry":
+        out["registration"]=counts(e.get("cycle_registration", "positive" if any(s["registration_outcome"] == "positive" for s in e["sessions"]) else "unknown") for e in entries)
+        out["missed_unregistered"]=sum(activity_cell(e, kind) == "not_registered" for e in entries)
+        out["missed_registered"]=sum(activity_cell(e, kind) == "no_show" for e in entries)
+    elif kind in ("alliance_championship","canyon"):
         out["registration"]=counts(s["registration_outcome"] for s in evidence)
     if kind=="bear_trap":
         out["attendance"]=counts(e["cycle_attendance"] for e in entries)

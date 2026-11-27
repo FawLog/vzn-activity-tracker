@@ -49,6 +49,26 @@ class PlayerRow(BaseModel):
     metrics: dict[str, StrictInt] = Field(default_factory=dict, max_length=8)
 
 
+class FoundryDetails(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    main_count: StrictInt | None = Field(default=None, ge=0, le=30)
+    substitute_count: StrictInt | None = Field(default=None, ge=0, le=10)
+    outcome: Literal["victory", "defeat"] | None = None
+    own_score: StrictInt | None = Field(default=None, ge=0, le=9007199254740991)
+    opponent_score: StrictInt | None = Field(default=None, ge=0, le=9007199254740991)
+    opponent_tag: str | None = Field(default=None, max_length=24)
+    opponent_name: str | None = Field(default=None, max_length=120)
+    opponent_state: str | None = Field(default=None, max_length=16, pattern=r"^\d+$")
+
+
+FOUNDRY_FIELDS = ("main_count", "substitute_count", "outcome", "own_score", "opponent_score", "opponent_tag", "opponent_name", "opponent_state")
+
+
+def foundry_details(db, session_id):
+    row = db.execute("SELECT * FROM foundry_session_details WHERE session_id=?", (session_id,)).fetchone()
+    return {k: row[k] for k in FOUNDRY_FIELDS} if row else {}
+
+
 class SessionSave(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=0)
@@ -57,6 +77,7 @@ class SessionSave(BaseModel):
     attendance_complete: bool = False
     results_complete: bool = False
     rows: list[PlayerRow] = Field(max_length=500)
+    foundry_details: FoundryDetails | None = None
 
 
 def _event(db, group_id, event_id, *, editable=False):
@@ -104,9 +125,11 @@ def read(path, group_id, event_id):
                 entry["metrics"] = {m["metric_key"]: m["raw_value"] for m in db.execute("SELECT metric_key, raw_value FROM event_session_metrics WHERE session_id=? AND player_fid=?", (session["id"], entry["fid"]))}
                 rows.append(entry)
             item["rows"] = rows
+            if event["event_type"] == "foundry":
+                item["foundry_details"] = foundry_details(db, session["id"])
             sessions.append(item)
         completion = [dict(r) for r in db.execute("SELECT player_fid AS fid,nickname,outcome,roster_member,home_alliance_id FROM event_completion_roster WHERE event_id=? ORDER BY nickname COLLATE NOCASE,player_fid",(event_id,))]
-        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion, "historical_homes": historical_homes(db, group_id, event["occurred_on"]) if event["event_type"] == "bear_trap" else {}}
+        return {"event_id": event_id, "event_type": event["event_type"], "status": event["status"], "bear_cycle_complete": bool(event["bear_cycle_complete"]), "sessions": sessions, "completion": completion, "historical_homes": historical_homes(db, group_id, event["occurred_on"]) if event["event_type"] in ("bear_trap", "foundry") else {}}
 
 
 def create_session(path, group_id, event_id, payload):
@@ -136,6 +159,17 @@ def save(path, group_id, event_id, session_id, payload):
             raise LookupError("Session not found")
         if session["revision"] != payload.revision:
             raise ValueError("Session changed; reload before saving")
+        if payload.foundry_details is not None and event["event_type"] != "foundry":
+            raise ValueError("Battle metadata is only supported for Foundry")
+        if event["event_type"] == "foundry":
+            details = payload.foundry_details.model_dump() if payload.foundry_details is not None else foundry_details(db, session_id)
+            own, opponent, outcome = details.get("own_score"), details.get("opponent_score"), details.get("outcome")
+            if own is not None and opponent is not None and outcome and ((outcome == "victory" and own <= opponent) or (outcome == "defeat" and own >= opponent)):
+                raise ValueError("Battle outcome conflicts with recorded team scores")
+            if payload.registration_complete:
+                selected = [r for r in payload.rows if r.registration == "registered"]
+                if any(not r.role for r in selected) or details.get("main_count") != sum(r.role == "main" for r in selected) or details.get("substitute_count") != sum(r.role == "substitute" for r in selected):
+                    raise ValueError("Reviewed registration counts must match the combatant and substitute mail")
         seen = set()
         for row in payload.rows:
             if row.fid in seen:
@@ -157,6 +191,8 @@ def save(path, group_id, event_id, session_id, payload):
                 raise ValueError("Completed missions exceed accepted missions")
             if event["event_type"] == "alliance_championship" and row.attendance != "unknown":
                 raise ValueError("Championship records registration only")
+            if event["event_type"] == "foundry" and row.metrics.get("personal_points", 0) > 0 and (row.attendance in ("excused", "no_duty") or row.eligibility == "no_duty"):
+                raise ValueError("Positive personal points conflict with a Foundry attendance exception")
             if row.attendance == "confirmed_absent" and any(row.metrics.get(k, 0) > 0 for k in ("damage", "personal_points")):
                 raise ValueError("Positive battle result conflicts with absence")
         db.execute("DELETE FROM event_session_roster WHERE session_id=?", (session_id,))
@@ -164,6 +200,13 @@ def save(path, group_id, event_id, session_id, payload):
             db.execute("""INSERT INTO event_session_roster(session_id,player_fid,nickname,eligibility,registration,role,registered_by,attendance)
                 VALUES (?,?,?,?,?,?,?,?)""", (session_id,row.fid,row.nickname,row.eligibility,row.registration,row.role,row.registered_by,row.attendance))
             db.executemany("INSERT INTO event_session_metrics(session_id,player_fid,metric_key,raw_value) VALUES (?,?,?,?)", [(session_id,row.fid,k,v) for k,v in row.metrics.items()])
+        if event["event_type"] == "foundry" and payload.foundry_details is not None:
+            db.execute("""INSERT INTO foundry_session_details(session_id,main_count,substitute_count,outcome,own_score,opponent_score,opponent_tag,opponent_name,opponent_state)
+                VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET
+                main_count=excluded.main_count,substitute_count=excluded.substitute_count,outcome=excluded.outcome,
+                own_score=excluded.own_score,opponent_score=excluded.opponent_score,opponent_tag=excluded.opponent_tag,
+                opponent_name=excluded.opponent_name,opponent_state=excluded.opponent_state""",
+                (session_id, *(details.get(k) for k in FOUNDRY_FIELDS)))
         db.execute("""UPDATE event_sessions SET revision=revision+1,roster_complete=?,registration_complete=?,attendance_complete=?,results_complete=? WHERE id=?""", (payload.roster_complete,payload.registration_complete,payload.attendance_complete,payload.results_complete,session_id))
         _audit(db, event_id, "session_saved")
     return read(path, group_id, event_id)
@@ -200,13 +243,36 @@ def finalize_attendance(db, event, group_id, review):
     """, (group_id,))}
     if not roster <= profiles.keys():
         raise ValueError("Roster contains a player outside this group")
+    if kind == "foundry" and any(not s["registration_complete"] or not s["results_complete"] for s in sessions):
+        raise ValueError("Confirm complete registration and personal results for both legions")
+    if kind == "foundry":
+        for s in sessions:
+            details = foundry_details(db, s["id"])
+            selected = db.execute("SELECT role, COUNT(*) AS n FROM event_session_roster WHERE session_id=? AND registration='registered' GROUP BY role", (s["id"],)).fetchall()
+            by_role = {r["role"]: r["n"] for r in selected}
+            if None in by_role or details.get("main_count") != by_role.get("main", 0) or details.get("substitute_count") != by_role.get("substitute", 0):
+                raise ValueError("Reconfirm registration mail counts before finalizing")
     present = set()
     for s in sessions:
         for r in db.execute("""SELECT r.*, EXISTS(SELECT 1 FROM event_session_metrics m
             WHERE m.session_id=r.session_id AND m.player_fid=r.player_fid
             AND m.metric_key IN ('damage','personal_points') AND m.raw_value>0) AS scored
             FROM event_session_roster r WHERE r.session_id=?""", (s["id"],)):
-            if r["attendance"] == "confirmed_present" or r["scored"]:
+            if kind == "foundry":
+                fid = r["player_fid"]
+                score = db.execute("SELECT raw_value FROM event_session_metrics WHERE session_id=? AND player_fid=? AND metric_key='personal_points'", (s["id"], fid)).fetchone()
+                if r["registration"] == "registered":
+                    if not r["role"]:
+                        raise ValueError("Review main/substitute role for all selected players")
+                    if fid not in roster and not (score and score["raw_value"] > 0):
+                        raise ValueError("Include selected players in the reviewed event roster or review their eligibility")
+                    if score is None and fid not in excused | no_duty:
+                        raise ValueError("A selected player has missing personal points; review results")
+                elif score is not None:
+                    raise ValueError("Reconcile personal results with the selected registration roster")
+                if score is not None and score["raw_value"] > 0:
+                    present.add(fid)
+            elif r["attendance"] == "confirmed_present" or r["scored"]:
                 present.add(r["player_fid"])
     if present & (excused | no_duty):
         raise ValueError("A participating player cannot be excused or ineligible")
@@ -240,6 +306,11 @@ def publish(path, group_id, event_id, bear_cycle_complete=False, completion=None
         sessions = db.execute("SELECT id FROM event_sessions WHERE event_id=?", (event_id,)).fetchall()
         if not sessions or any(not db.execute("SELECT 1 FROM event_session_roster WHERE session_id=?", (s["id"],)).fetchone() for s in sessions):
             raise ValueError("Every session needs reviewed player records before publication")
+        if event["event_type"] == "foundry" and completion is None:
+            scored = db.execute("SELECT 1 FROM event_session_metrics m JOIN event_sessions s ON s.id=m.session_id WHERE s.event_id=? AND m.metric_key='personal_points' LIMIT 1", (event_id,)).fetchone()
+            outcome = db.execute("SELECT 1 FROM foundry_session_details f JOIN event_sessions s ON s.id=f.session_id WHERE s.event_id=? AND f.outcome IS NOT NULL LIMIT 1", (event_id,)).fetchone()
+            if not scored and not outcome:
+                raise ValueError("Registration alone must remain a draft; import battle results before publishing")
         if completion is not None:
             finalize_attendance(db,event,group_id,completion)
             bear_cycle_complete = True

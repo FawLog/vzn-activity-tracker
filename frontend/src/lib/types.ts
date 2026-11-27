@@ -5,6 +5,7 @@ export interface Player {
   nickname: string | null;
   created_at: string;
   updated_at: string;
+  nickname_aliases?: string[];
   nickname_history?: Array<{ nickname: string; valid_from: string; valid_to: string | null }>;
   group_status?: "unconfirmed" | "active" | "archived";
   primary_alliance_id?: string | null;
@@ -171,6 +172,7 @@ export interface ManualSessionSave {
   attendance_complete: boolean;
   results_complete: boolean;
   rows: ManualRow[];
+  foundry_details?: import("./ocrParser").FoundryImportInfo;
 }
 export interface ManualSession extends ManualSessionSave {
   id: string; session_key: string; started_at: string; host_alliance_id?: string | null;

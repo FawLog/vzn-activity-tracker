@@ -63,9 +63,9 @@ export const api = {
   updateAllianceSync: (groupId: string, allianceId: string, sync_enabled: boolean) => request<SyncStatus>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`, { method: "PATCH", body: JSON.stringify({ sync_enabled }) }),
   syncAllianceNow: (groupId: string, allianceId: string) => request<{ status: string; found_count: number; added_count: number; updated_count: number; message?: string | null }>(`/api/v1/groups/${encodeURIComponent(groupId)}/alliances/${encodeURIComponent(allianceId)}/sync`, { method: "POST" }),
   overview: (groupId: string, allianceId?: string) => request<OverviewData>(`/api/v1/groups/${encodeURIComponent(groupId)}/overview${allianceId ? `?alliance_id=${encodeURIComponent(allianceId)}` : ""}`),
-  players: (groupId: string, query = "", sort = "nickname", direction = "asc", filter: PlayerAffiliationFilter = { mode: "all" }, limit = 100, offset = 0) =>
+  players: (groupId: string, query = "", sort = "nickname", direction = "asc", filter: PlayerAffiliationFilter = { mode: "all" }, limit = 100, offset = 0, includeAliases = false) =>
     request<{ items: Player[]; total: number; limit: number; offset: number }>(
-      `/api/v1/groups/${encodeURIComponent(groupId)}/players?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}&direction=${direction}&affiliation=${filter.mode}&limit=${limit}&offset=${offset}${filter.mode === "alliance" ? `&alliance_id=${encodeURIComponent(filter.allianceId)}` : ""}`,
+      `/api/v1/groups/${encodeURIComponent(groupId)}/players?q=${encodeURIComponent(query)}&sort=${encodeURIComponent(sort)}&direction=${direction}&affiliation=${filter.mode}&limit=${limit}&offset=${offset}${includeAliases?"&include_aliases=true":""}${filter.mode === "alliance" ? `&alliance_id=${encodeURIComponent(filter.allianceId)}` : ""}`,
     ),
   player: (groupId: string, fid: string) => request<Player>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}`),
   createPlayer: (groupId: string, payload: { fid: string; nickname: string }) =>

@@ -23,3 +23,8 @@ it("suggests observed OCR variations without silently confirming",()=>{
 it("keeps competing decorated prefixes unresolved",()=>{
  expect(matchPlayer("Sora # 29.07",[p("1","Sora #2 ʕ•ᴥ•ʔ"),p("2","Sora #29")]).match).toBe("unknown");
 });
+
+it("suggests historical aliases but never silently chooses reused names",()=>{
+ expect(matchPlayer("Old Name",[{fid:"1",nickname:"New Name",nickname_aliases:["Old Name"]}])).toEqual({fid:"1",match:"suggested"});
+ expect(matchPlayer("Old Name",[{fid:"1",nickname:"New Name",nickname_aliases:["Old Name"]},p("2","Old Name")]).match).toBe("unknown");
+});

@@ -38,10 +38,10 @@ export function overallRows(report:AnalyticsReport):OverallRow[]{
   const observed=cells.filter(({cell})=>cell!==undefined&&cell!=="unknown"&&cell!=="mixed").length;
   const unknown=cells.filter(({cell})=>cell==="unknown"||cell==="mixed").length;
   const unobserved=cells.filter(({cell})=>cell===undefined).length;
-  const knownActivity=cells.filter(({cell,e})=>cell==="positive"||(e.event_type==="alliance_mobilization"&&/^\d+$/.test(e.contribution_points?.[player.fid]??"")&&BigInt(e.contribution_points![player.fid])>0n));
+  const knownActivity=cells.filter(({cell,e})=>(cell==="positive"||cell==="present_no_show")||(e.event_type==="alliance_mobilization"&&/^\d+$/.test(e.contribution_points?.[player.fid]??"")&&BigInt(e.contribution_points![player.fid])>0n));
   const lastActivity=knownActivity.reduce<string|null>((latest,{e})=>latest===null||e.occurred_on>latest?e.occurred_on:latest,null);
   const knownAttendance=sum(attendanceCounts,"positive")+sum(attendanceCounts,"negative");
-  return {player,...values,score:weight?total/weight:null,weight,missed:sum(attendanceCounts.slice(0,3),"negative"),noShows:sum(reliabilityCounts,"negative"),excused:sum(attendanceCounts,"excused"),unknown,unobserved,lastActivity,observed,expected:events.length,contributionSamples:samples.length,partialContribution,provisional:weight<100||partialContribution||unknown+unobserved>0||knownAttendance+samples.length<3||sum(reliabilityCounts,"unknown")>0};
+  return {player,...values,score:weight?total/weight:null,weight,missed:sum(attendanceCounts.slice(0,3),"negative"),noShows:sum(reliabilityCounts,"negative"),excused:sum(attendanceCounts,"excused"),unknown,unobserved,lastActivity,observed,expected:events.length,contributionSamples:samples.length,partialContribution,provisional:weight<100||partialContribution||cells.some(({e,cell})=>e.event_type==="foundry"&&e.foundry_review_complete===false&&cell!==undefined)||unknown+unobserved>0||knownAttendance+samples.length<3||sum(reliabilityCounts,"unknown")>0};
  });
 }
 export type OverallSort="score"|"name"|"attendance"|"contribution"|"reliability"|"missed"|"noShows"|"excused"|"lastActivity"|"coverage";

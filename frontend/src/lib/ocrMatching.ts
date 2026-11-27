@@ -1,6 +1,7 @@
 import type { Player } from "./types";
 import { normalizeName } from "./ocrParser";
-type Candidate = Pick<Player,"fid"|"nickname">;
+type Candidate = Pick<Player,"fid"|"nickname"> & {nickname_aliases?:string[]};
+const aliases=(p:Candidate)=>[p.nickname??"",...(p.nickname_aliases??[])];
 const compact = (s:string) => normalizeName(s).normalize("NFKD").toLowerCase().replace(/\p{M}/gu,"").replace(/[^\p{L}\p{N}]/gu,"");
 function distance(a:string,b:string):number {
  const x=Array.from(a),y=Array.from(b);let prev=y.map((_,i)=>i+1);prev.unshift(0);
@@ -20,11 +21,14 @@ function score(name:string,other:string):number {
  const shared=prefix>=4&&prefix/Math.min(x.length,y.length)>=.6&&prefix/length>=.5?.83:0;
  return Math.max(edit,shared);
 }
-function ranked<T extends Candidate>(name:string,players:T[]){return players.map(p=>({p,score:score(name,p.nickname??"")})).sort((a,b)=>b.score-a.score||(a.p.nickname??"").localeCompare(b.p.nickname??"")||a.p.fid.localeCompare(b.p.fid))}
+function ranked<T extends Candidate>(name:string,players:T[]){return players.map(p=>({p,score:Math.max(...aliases(p).map(alias=>score(name,alias)))})).sort((a,b)=>b.score-a.score||(a.p.nickname??"").localeCompare(b.p.nickname??"")||a.p.fid.localeCompare(b.p.fid))}
 export function rankedPlayers<T extends Candidate>(name:string,players:T[]):T[]{return ranked(name,players).map(x=>x.p)}
 export function matchPlayer(name:string,players:Candidate[]):{fid:string;match:"exact"|"suggested"|"unknown"}{
  const exact=players.filter(p=>p.nickname&&normalizeName(p.nickname)===normalizeName(name));
+ const historical=players.filter(p=>aliases(p).some(alias=>normalizeName(alias)===normalizeName(name)));
+ if(historical.length>1)return {fid:"",match:"unknown"};
  if(exact.length===1)return {fid:exact[0].fid,match:"exact"};
+ if(historical.length===1)return {fid:historical[0].fid,match:"suggested"};
  if(exact.length>1)return {fid:"",match:"unknown"};
  const [first,second]=ranked(name,players);
  if(first&&first.score>=.70&&first.score-(second?.score??0)>=.08&&(compact(name).length>=4||first.score===1&&compact(name).length>=2))return {fid:first.p.fid,match:"suggested"};

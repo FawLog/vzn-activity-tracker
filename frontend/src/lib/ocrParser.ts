@@ -38,7 +38,67 @@ function numericRuns(line:Line):Array<Word & {value:number}> {
   }
   return groups.flatMap(w=>{const value=numberFrom(w.text);return value===undefined?[]:[{...w,value}]});
 }
+// The in-game combatant dialog repeats the legion and count headers on every
+// page. Its per-row Join/Substitute label is the role anchor, not R1–R5
+// (those are group headings). Never interpret voting or troop power as points.
+function foundryCombatantList(lines:Line[],heading:Line,mode:string,sessionKey:string,source:string):ParsedScreenshot {
+  const rows:ParsedRow[]=[],warnings:string[]=[],foundry:FoundryImportInfo={};
+  if(mode!=="foundry_registration")return {rows,warnings:["In-game combatant list is registration evidence, not battle results."]};
+  const legion=lineText(heading).match(/\bLegion\s*([12])\s+Combatants\b/iu)?.[1];
+  if(!legion||sessionKey!=="legion_"+legion)return {rows,warnings:["Combatant list belongs to a different legion. Remove this screenshot."]};
+  const troop=lines.find(l=>l.y>heading.y&&/\bTroop\s+Power\b/iu.test(lineText(l)));
+  const footer=lines.find(l=>l.y>(troop?.y??heading.y)&&/\bParticipants\s+only\b/iu.test(lineText(l)));
+  if(!troop||!footer)return {rows,warnings:["Incomplete combatant dialog header/footer; use an uncropped screenshot."]};
+  const headerWords=lines.filter(l=>l.y>heading.y&&l.y<troop.y).flatMap(l=>l.words);
+  const join=headerWords.find(w=>/^Join$/iu.test(w.text));
+  const sub=headerWords.find(w=>/^Substitute$/iu.test(w.text));
+  if(!join||!sub||join.x>=sub.x)return {rows,warnings:["Cannot locate both combatant count columns. Review this screenshot."]};
+  const middle=(join.x+sub.x)/2;
+  const maxX=Math.max(sub.right,...lines.filter(l=>l.y>=heading.y&&l.y<=footer.y).flatMap(l=>l.words.map(w=>w.right)));
+  const readCount=(right:boolean,capacity:number,label:Word)=>{
+    const matches=lines.filter(l=>l.y>=label.y-label.height*.6&&l.y<troop.y).flatMap(l=>{
+      const words=l.words.filter(w=>(w.x>=middle)===right);
+      const text=words.map(w=>w.text).join("").replace(/\s/g,"");
+      return [...text.matchAll(/(\d{1,2})\/(\d{1,2})(?!\d)/g)].filter(m=>Number(m[2])===capacity&&Number(m[1])<=capacity).map(m=>Number(m[1]));
+    });
+    const unique=[...new Set(matches)];
+    return unique.length===1?unique[0]:undefined;
+  };
+  foundry.main_count=readCount(false,30,join);
+  foundry.substitute_count=readCount(true,10,sub);
+  if(foundry.main_count===undefined||foundry.substitute_count===undefined)
+    warnings.push("Unreadable Join/Substitute counts; verify against the in-game header.");
+  const area=lines.filter(l=>l.y>troop.y+troop.height*.6&&l.y<footer.y-footer.height*.6);
+  const anchors=area.flatMap(l=>l.words).filter(w=>/^(Join|Substitute)$/iu.test(w.text)&&w.x>maxX*.62).sort((a,b)=>a.y-b.y);
+  for(let i=0;i<anchors.length;i++){
+    const anchor=anchors[i],prev=anchors[i-1],next=anchors[i+1];
+    const top=Math.max(troop.y+troop.height*.6,prev?(prev.y+anchor.y)/2:-Infinity,anchor.y-anchor.height*3.2);
+    const bottom=Math.min(footer.y-footer.height*.6,next?(anchor.y+next.y)/2:Infinity,anchor.y+anchor.height*3.2);
+    const region=area.filter(l=>l.y>top&&l.y<bottom);
+    const powers=region.flatMap(numericRuns).filter(w=>w.x>maxX*.19&&w.x<maxX*.51&&w.right<anchor.x&&w.y>=anchor.y-anchor.height*.65&&w.y-anchor.y<=Math.max(w.height,anchor.height)*2.8);
+    if(powers.length!==1){warnings.push("Skipped incomplete combatant row near y="+Math.round(anchor.y)+": missing or ambiguous troop power.");continue}
+    const power=powers[0];
+    const names=region.filter(l=>l.y<power.y-power.height*.55&&power.y-l.y<=Math.max(l.height,power.height)*3.2).map(l=>{
+      const words=l.words.filter(w=>w.x>=power.x-power.height*2.35&&w.right<anchor.x-anchor.height*.5);
+      const first=words[0],name=words.map(w=>w.text).join(" ").trim();
+      return {first,name,l};
+    }).filter(v=>v.first&&Math.abs(v.first.x-power.x)<=power.height*2.35&&/[\p{L}\p{N}]/u.test(v.name)&&numberFrom(v.name)===undefined&&!/^(?:R[0-5]\b|Rank\s+[0-5]\b|Voted\b|Troop\s+Power\b|Participants\s+only\b)/iu.test(v.name));
+    // A clipped row must never borrow a name from its neighbour or an avatar.
+    const distinct=[...new Set(names.map(v=>v.name))];
+    if(distinct.length!==1){warnings.push("Skipped incomplete combatant row near y="+Math.round(anchor.y)+": missing or ambiguous nickname.");continue}
+    rows.push({nickname:distinct[0],role:/^Join$/iu.test(anchor.text)?"main":"substitute",source});
+  }
+  if(!anchors.length)warnings.push("No per-player Join/Substitute labels recognized.");
+  warnings.push("In-game combatant list: "+rows.length+" of "+anchors.length+" role anchors read. Verify the final roster and both role counts.");
+  return {rows,warnings,foundry};
+}
+
 function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:string):ParsedScreenshot {
+  const combatantHeading=lines.find(l=>/\bLegion\s*[12]\s+Combatants\b/iu.test(lineText(l)));
+  if(combatantHeading)return foundryCombatantList(lines,combatantHeading,mode,sessionKey,source);
+  // A damaged dialog heading should not fall through to the mail parser.
+  if(lines.some(l=>/\bParticipants\s+only\b/iu.test(lineText(l)))&&lines.some(l=>/\bTroop\s+Power\b/iu.test(lineText(l))))
+    return {rows:[],warnings:["Cannot verify the in-game combatant list legion. Use a screenshot with the full heading."]};
   const rows:ParsedRow[]=[],warnings:string[]=[],foundry:FoundryImportInfo={};
   const all=lines.flatMap(l=>l.words);
   const maxX=Math.max(1,...all.map(w=>w.right));

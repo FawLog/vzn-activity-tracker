@@ -84,3 +84,41 @@ it("reads a reviewed team summary without creating player results",()=>{
  expect(parsed.rows).toEqual([]);
  expect(parsed.foundry).toEqual({outcome:"defeat",own_score:254292,opponent_score:263311,opponent_tag:"BBB",opponent_name:"Beta",opponent_state:"4271"});
 });
+
+
+// Reconstructed from the officer's in-game dialog screenshots, not live Vision output.
+const combatantHeader=(legion=1,main=30,subs=10):[string,number,number,number][]=>[
+ ["Legion",246,358,100],[String(legion),350,358,18],["Combatants",376,358,200],
+ ["Join",235,468,49],["Substitute",551,468,126],
+ [String(main),201,505,30],["/",232,505,9],["30",242,505,30],
+ [String(subs)+"/10",562,505,70],["Troop",69,580,67],["Power",141,580,69],["45,296",519,580,92]
+];
+const combatantFooter:[string,number,number,number]=["Participants only",333,1204,234];
+it("reads mixed Join and Substitute rows from the new Legion 1 screenshot, ignoring vote, rank and power",()=>{
+ const words:[string,number,number,number][]=[...combatantHeader(),["1,891",222,630,65],
+ ["Harissa",187,729,103],["1,866",222,773,65],["Join",701,749,51],
+ ["FTAO0Y",187,879,126],["1,747",222,923,65],["Voted",678,849,61],["Substitute",628,899,124],
+ ["M&R",187,1028,65],["1,723",222,1072,65],["Join",701,1048,51],
+ ["R3",75,1131,28],["Rank 3",146,1131,80],["16/82",629,1131,67],combatantFooter];
+ const parsed=parseScreenshot(fixture(words),"foundry_registration","legion_1","dialog");
+ expect(parsed.foundry).toEqual({main_count:30,substitute_count:10});
+ expect(parsed.rows).toEqual([{nickname:"Harissa",role:"main",source:"dialog"},{nickname:"FTAO0Y",role:"substitute",source:"dialog"},{nickname:"M&R",role:"main",source:"dialog"}]);
+ expect(parseScreenshot(fixture(words),"foundry_registration","legion_2","wrong").rows).toEqual([]);
+ expect(parseScreenshot(fixture(words),"foundry_results","legion_1","wrong-stage").rows).toEqual([]);
+});
+it("recognizes zero substitutes, split nickname tokens and non-Latin names; skips a clipped row",()=>{
+ const words:[string,number,number,number][]=[...combatantHeader(2,18,0),
+ ["Join",701,646,51],["1,999",222,669,65],
+ ["Melon",187,729,70],["doggo",261,729,65],["1,409",222,771,65],["Join",701,749,51],
+ ["北極熊",187,879,94],["1,596",222,921,65],["Join",701,899,51],
+ ["Voted",677,1030,61],["Join",701,1050,51],combatantFooter];
+ const parsed=parseScreenshot(fixture(words),"foundry_registration","legion_2","dialog");
+ expect(parsed.foundry).toEqual({main_count:18,substitute_count:0});
+ expect(parsed.rows).toEqual([{nickname:"Melon doggo",role:"main",source:"dialog"},{nickname:"北極熊",role:"main",source:"dialog"}]);
+ expect(parsed.warnings.some(w=>w.includes("missing or ambiguous nickname"))).toBe(true);
+});
+it("requires a verifiable legion and complete dialog bounds rather than guessing a mail layout",()=>{
+ const words:[string,number,number,number][]=[...combatantHeader(),["Harissa",187,729,103],["1,866",222,773,65],["Join",701,749,51],combatantFooter];
+ expect(parseScreenshot(fixture(words.slice(3)),"foundry_registration","legion_1","no-title").rows).toEqual([]);
+ expect(parseScreenshot(fixture(words.slice(0,-1)),"foundry_registration","legion_1","no-footer").rows).toEqual([]);
+});

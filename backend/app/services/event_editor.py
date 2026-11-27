@@ -200,13 +200,29 @@ def finalize_attendance(db, event, group_id, review):
     """, (group_id,))}
     if not roster <= profiles.keys():
         raise ValueError("Roster contains a player outside this group")
+    if kind == "foundry" and any(not s["registration_complete"] or not s["results_complete"] for s in sessions):
+        raise ValueError("Confirm complete registration and personal results for both legions")
     present = set()
     for s in sessions:
         for r in db.execute("""SELECT r.*, EXISTS(SELECT 1 FROM event_session_metrics m
             WHERE m.session_id=r.session_id AND m.player_fid=r.player_fid
             AND m.metric_key IN ('damage','personal_points') AND m.raw_value>0) AS scored
             FROM event_session_roster r WHERE r.session_id=?""", (s["id"],)):
-            if r["attendance"] == "confirmed_present" or r["scored"]:
+            if kind == "foundry":
+                fid = r["player_fid"]
+                score = db.execute("SELECT raw_value FROM event_session_metrics WHERE session_id=? AND player_fid=? AND metric_key='personal_points'", (s["id"], fid)).fetchone()
+                if r["registration"] == "registered":
+                    if not r["role"]:
+                        raise ValueError("Review main/substitute role for all selected players")
+                    if fid not in roster and not (score and score["raw_value"] > 0):
+                        raise ValueError("Include selected players in the reviewed event roster or review their eligibility")
+                    if score is None and fid not in excused | no_duty:
+                        raise ValueError("A selected player has missing personal points; review results")
+                elif score is not None:
+                    raise ValueError("Reconcile personal results with the selected registration roster")
+                if score is not None and score["raw_value"] > 0:
+                    present.add(fid)
+            elif r["attendance"] == "confirmed_present" or r["scored"]:
                 present.add(r["player_fid"])
     if present & (excused | no_duty):
         raise ValueError("A participating player cannot be excused or ineligible")

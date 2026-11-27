@@ -264,8 +264,8 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     {review&&!championship&&<div className="manual-review"><h3>Review before publishing</h3><p>Leave unchecked if the information is partial. Missing entries remain unknown.</p>
     <label><input type="checkbox" checked={!!draft.roster_complete} onChange={e=>confirmRoster(e.target.checked)}/>This is the full alliance roster at the time of the event (mark exceptions in the table).</label>
     {definition.registration&&<label><input type="checkbox" checked={!!draft.registration_complete} onChange={e=>complete("registration_complete",e.target.checked)}/>I entered the complete registration list.</label>}
-    {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>I verified who actually attended, not just who scored points. Use Final attendance review to calculate absences automatically.</label>}
-    {!definition.registration&&!definition.attendance&&<label><input type="checkbox" checked={!!draft.results_complete} onChange={e=>complete("results_complete",e.target.checked)}/>I entered the full results list.</label>}
+    {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>{record.event_type==="foundry"?"Review personal points; explicit zero means no-show for a selected player.":"I verified who actually attended, not just who scored points. Use Final attendance review to calculate absences automatically."}</label>}
+    {(record.event_type==="foundry"||!definition.registration&&!definition.attendance)&&<label><input type="checkbox" checked={!!draft.results_complete} onChange={e=>complete("results_complete",e.target.checked)}/>I entered the full results list.</label>}
     <p>Partial records remain unknown. Final attendance review can calculate absences from a confirmed complete roster and attendance list.</p>
     <button className="button button--primary" disabled={busy} onClick={()=>void run(save)}>Save reviewed draft</button></div>}</>}
     </>}

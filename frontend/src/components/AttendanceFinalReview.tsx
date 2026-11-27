@@ -3,7 +3,8 @@ import type {Alliance,ManualEvent,Player} from "../lib/types";
 type Completion={revisions:Record<string,number>;roster:string[];home_alliances?:Record<string,string>;excused:string[];no_duty:string[];expected_sessions:number};
 export function AttendanceFinalReview({event,candidates,alliances,allianceId,occurredOn,disabled,onPublish}:{event:ManualEvent;candidates:Player[];alliances:Alliance[];allianceId:string;occurredOn:string;disabled:boolean;onPublish:(value:Completion)=>void}){
  const bear=event.event_type==="bear_trap";
- const isPresent=(r:ManualEvent["sessions"][number]["rows"][number])=>r.attendance==="confirmed_present"||(r.metrics.damage??0)>0||(r.metrics.personal_points??0)>0;
+ const foundry=event.event_type==="foundry";
+ const isPresent=(r:ManualEvent["sessions"][number]["rows"][number])=>foundry?(r.metrics.personal_points??0)>0:r.attendance==="confirmed_present"||(r.metrics.damage??0)>0||(r.metrics.personal_points??0)>0;
  const present=new Set(event.sessions.flatMap(s=>s.rows.filter(isPresent).map(r=>r.fid)));
  const prior=event.completion??[];
  const historical=event.historical_homes??{};
@@ -11,7 +12,7 @@ export function AttendanceFinalReview({event,candidates,alliances,allianceId,occ
  const suggested=candidates.filter(p=>p.group_status==="active"&&(bear?hostIds.has(historical[p.fid]??p.primary_alliance_id??""):p.primary_alliance_id===allianceId)).map(p=>p.fid);
  const initialRoster=bear?[...new Set([...prior.filter(r=>r.roster_member).map(r=>r.fid),...suggested])]:prior.length?prior.filter(r=>r.roster_member).map(r=>r.fid):suggested;
  const [homes,setHomes]=useState<Record<string,string>>(()=>({...historical}));
- const [roster,setRoster]=useState<string[]>(initialRoster);
+ const [roster,setRoster]=useState<string[]>(()=>foundry?[...new Set([...initialRoster,...event.sessions.flatMap(s=>s.rows.filter(r=>r.registration==="registered").map(r=>r.fid))])]:initialRoster);
  const [excused,setExcused]=useState<string[]>(prior.filter(r=>r.outcome==="excused").map(r=>r.fid));
  const [noDuty,setNoDuty]=useState<string[]>(prior.filter(r=>r.outcome==="no_duty").map(r=>r.fid));
  const [query,setQuery]=useState("");
@@ -22,12 +23,13 @@ export function AttendanceFinalReview({event,candidates,alliances,allianceId,occ
  const exceptions=excused.filter(f=>eligible.has(f)&&!present.has(f));
  const ineligible=noDuty.filter(f=>eligible.has(f)&&!present.has(f));
  const absent=roster.filter(f=>!present.has(f)&&!exceptions.includes(f)&&!ineligible.includes(f));
- const valid=Number.isInteger(Number(expected))&&Number(expected)>0&&Number(expected)<=30&&event.sessions.length===Number(expected)&&event.sessions.every(s=>s.rows.length>0)&&roster.length>0&&(!bear||roster.every(f=>!!homes[f]));
+ const valid=Number.isInteger(Number(expected))&&Number(expected)>0&&Number(expected)<=30&&event.sessions.length===Number(expected)&&event.sessions.every(s=>s.rows.length>0)&&roster.length>0&&(!bear||roster.every(f=>!!homes[f]))&&(!foundry||event.sessions.every(s=>s.registration_complete&&s.results_complete));
  const toggle=(f:string,values:string[],set:(v:string[])=>void)=>{set(values.includes(f)?values.filter(x=>x!==f):[...values,f]);setConfirmed(false)};
  return <div className="manual-review">
   <h3>Final attendance review</h3>
-  <p>One event, one attendance outcome. Confirm the complete event-date roster ({occurredOn}) and all actual participants, including zero-point attendees. Current home roster is only a starting point.</p>
+  <p>One event, one attendance outcome. Confirm the complete event-date roster ({occurredOn}) and {foundry?"both complete result lists. Explicit zero means no-show for a selected player; missing points are unknown.":"all actual participants, including zero-point attendees."} Current home roster is only a starting point.</p>
   <div className="manual-controls"><label>Expected {bear?"traps":"legions"}<input type="number" min={1} max={30} value={expected} disabled={disabled||!bear} onChange={e=>{setExpected(e.target.value);setConfirmed(false)}}/></label><span>{event.sessions.length} recorded</span><span>{new Set([...roster,...present]).size} reviewed · {present.size} present · {exceptions.length} excused · {ineligible.length} no duty · {absent.length} absent if confirmed</span></div>
+  {foundry&&<p>{event.sessions.every(s=>s.registration_complete&&s.results_complete)&&event.sessions.length===2?"Both legions reviewed.":"Confirm registration and personal results for both legions before finalizing."}</p>}
   <p>{event.sessions.map(s=>s.session_key.replaceAll("_"," ")+": "+s.rows.filter(isPresent).length+" present").join(" · ")}</p>
   {bear&&<div className="manual-controls"><p>Review both host rosters. Historical homes are locked; explicitly assign uncertain homes before publishing.</p>{alliances.map(a=><span key={a.id}>{a.name}: {roster.filter(f=>homes[f]===a.id).length} eligible</span>)}<span>Unconfirmed home: {roster.filter(f=>!homes[f]).length}</span></div>}
   {bear&&[...new Set([...roster,...present])].filter(f=>!historical[f]).map(f=><label key={f}>{candidates.find(p=>p.fid===f)?.nickname??f} · reviewed home<select aria-label={f+" reviewed home"} value={homes[f]??""} disabled={disabled} onChange={e=>{setHomes(v=>({...v,[f]:e.target.value}));setConfirmed(false)}}><option value="">Confirm home</option>{alliances.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label>)}

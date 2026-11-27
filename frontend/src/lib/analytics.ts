@@ -1,8 +1,8 @@
-export type ActivityCell=Outcome|"mixed"|"recorded";
+export type ActivityCell=Outcome|"mixed"|"recorded"|"not_registered"|"no_show";
 export type Outcome="positive"|"negative"|"unknown"|"excused";
 export interface Counts {positive:number;negative:number;unknown:number;excused:number;known:number;rate:number|null}
 export interface Samples {samples:number;total:string|null;average:number|null;maximum:number|null}
-export interface Metrics {observed_events:number;observed_sessions:number;registration?:Counts;attendance?:Counts;reliability?:Counts;no_shows?:number;damage?:Samples;points?:Samples;missions_completed?:Samples;personal_points?:Samples}
+export interface Metrics {observed_events:number;observed_sessions:number;registration?:Counts;attendance?:Counts;reliability?:Counts;no_shows?:number;missed_unregistered?:number;missed_registered?:number;damage?:Samples;points?:Samples;missions_completed?:Samples;personal_points?:Samples}
 export const eventNames={alliance_championship:"Championship",bear_trap:"Bear Hunt",alliance_mobilization:"Mobilization",foundry:"Foundry",canyon:"Canyon"} as const;
 export type EventKind=keyof typeof eventNames;
 export interface ActivitySession {session_id:string;session_key:string;started_at:string;host_alliance_id:string|null;nickname:string;role:string|null;registration_outcome:Outcome;attendance_outcome:Outcome;metrics:Record<string,number>}

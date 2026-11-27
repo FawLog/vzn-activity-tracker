@@ -875,3 +875,5 @@ td strong { color: var(--text); font-weight: 650; }
  .manual-editor .manual-controls { gap:8px; padding:12px var(--editor-inset); }
  .manual-editor .ocr-actions { padding:0; }
 }
+
+.heat-not_registered { background:#66512d; }.heat-no_show { background:#783a43; }

@@ -108,7 +108,14 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
             rows.append({"fid":"present","nickname":"present","attendance":"confirmed_present","metrics":{"damage" if kind=="bear_trap" else "personal_points":100}})
         if kind!="bear_trap" and index==0:
             rows.append({"fid":"absent","nickname":"absent","registration":"registered","role":"main"})
-        result = c.put(root+"/sessions/"+s["id"],json={"revision":0,"rows":rows})
+        payload = {"revision":0,"rows":rows}
+        if kind == "foundry":
+            for row in rows:
+                row["registration"] = "registered"
+                row["role"] = "substitute" if row["fid"] == "absent" else "main"
+                row["metrics"] = {"personal_points": 0 if row["fid"] == "absent" else 100}
+            payload.update(registration_complete=True,results_complete=True)
+        result = c.put(root+"/sessions/"+s["id"],json=payload)
         assert result.status_code==200,result.text
         revisions[s["id"]]=1
     if kind=="bear_trap":
@@ -137,7 +144,7 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
     assert {r["fid"]:r["outcome"] for r in response.json()["completion"]}==expected
     data=report(settings.database_path,gid,aid,date(2026,11,25),date(2026,11,25))
     cells=data["events"][0]["activity_cells"]
-    assert cells["present"]=="positive" and cells["absent"]=="negative"
+    assert cells["present"]=="positive" and cells["absent"]==("no_show" if kind=="foundry" else "negative")
     assert cells["excused"]=="excused" and cells["no-duty"]=="excused"
     if kind!="bear_trap":
         assert data["events"][0]["metrics"]["no_shows"]==1
@@ -155,3 +162,47 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
     assert c.post(root+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
     assert c.post(root+"/publish").status_code==200
     assert c.get(root+"/editor").json()["completion"]==[]
+
+
+def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, settings):
+    from app.services.analytics import report
+    from datetime import date
+    c = authenticated_client
+    gid = create_onboarded_group(c)["id"]
+    aid = c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    roster = ["attended", "no-show", "unselected", "both"]
+    for fid in roster:
+        assert c.post(f"/api/v1/groups/{gid}/players", json={"fid":fid,"nickname":fid}).status_code == 201
+    eid = c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events", json={"event_type":"foundry","occurred_on":"2026-11-29"}).json()["id"]
+    root = f"/api/v1/groups/{gid}/events/{eid}"
+    def row(fid, score, role="main"):
+        return {"fid":fid,"nickname":fid,"registration":"registered","role":role,
+                "attendance":"confirmed_present","metrics":{} if score is None else {"personal_points":score}}
+    ids = []
+    for key in ("legion_1","legion_2"):
+        result = c.post(root+"/sessions", json={"session_key":key,"started_at":"2026-11-29T18:00:00Z"})
+        assert result.status_code==201
+        ids.append(next(s["id"] for s in result.json()["sessions"] if s["session_key"]==key))
+    l1 = [row("no-show",0,"substitute"),row("both",0)]
+    l2 = [row("attended",100),row("both",200)]
+    def save(sid, revision, rows, complete=True):
+        return c.put(root+"/sessions/"+sid,json={"revision":revision,"rows":rows,"registration_complete":True,"results_complete":complete})
+    assert save(ids[0],0,l1,False).status_code==200
+    assert save(ids[1],0,[row("attended",None),row("both",200)]).status_code==200
+    review={"roster":roster,"expected_sessions":2,"revisions":dict.fromkeys(ids,1)}
+    assert c.post(root+"/publish",json=review).status_code==409
+    assert save(ids[0],1,l1).status_code==200
+    review["revisions"][ids[0]]=2
+    assert c.post(root+"/publish",json=review).status_code==409
+    assert save(ids[1],1,l2).status_code==200
+    review["revisions"][ids[1]]=2
+    assert c.post(root+"/publish",json=review).status_code==200
+    data=report(settings.database_path,gid,aid,date(2026,11,29),date(2026,11,29))
+    event=data["events"][0]
+    assert event["activity_cells"]=={"attended":"positive","both":"positive","no-show":"no_show","unselected":"not_registered"}
+    assert event["metrics"]["registration"]["positive"]==3
+    assert event["metrics"]["registration"]["negative"]==1
+    assert event["metrics"]["attendance"]["rate"]==50
+    assert event["metrics"]["no_shows"]==2
+    assert event["metrics"]["missed_unregistered"]==1
+    assert event["metrics"]["missed_registered"]==1

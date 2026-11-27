@@ -332,7 +332,10 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByRole("button", { name: "Create event" }).click();
   await expect(page.getByText("Event record created for the selected alliance.")).toBeVisible();
   await page.goto("/events");
-  await page.getByRole("button", {name:"Foundry Battle",exact:true}).first().click();
+  const foundryEvent = page.getByRole("button", {name:"Foundry Battle",exact:true}).first();
+  await expect.poll(() => foundryEvent.locator(".event-icon img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+  await foundryEvent.click();
+  await expect.poll(() => page.locator(".event-header__type .event-icon img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   await expect(page.getByRole("heading",{name:"Manual results"})).toBeVisible();
   await expect(page.getByLabel("Legion number")).toHaveValue("legion_1");
   await page.getByRole("button",{name:"Add Legion 1",exact:true}).click();

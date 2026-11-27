@@ -179,6 +179,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.reload();
   const row = page.getByRole("row").filter({ has: rosterPlayer });
   await expect(row.getByText("FC5", { exact: true })).toBeVisible();
+  await expect.poll(() => row.locator(".furnace-level img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   await expect(row.locator(".roster-rank--r5")).toHaveText("R5");
   await expect.poll(() => row.locator(".roster-avatar img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   await page.route("**/api/v1/groups/*/players/e2e-roster-fid", async route => {

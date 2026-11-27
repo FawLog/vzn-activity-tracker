@@ -1,8 +1,10 @@
+import { FurnaceLevel } from "./FurnaceLevel";
+import { Swords, Crosshair } from "lucide-react";
 import {useEffect,useRef,useState} from "react";
 import {X,ExternalLink} from "lucide-react";
 import {api} from "../lib/api";
 import {navigate} from "../lib/router";
-import {formatAllianceRank,formatFurnaceLevel,formatTimestamp} from "../lib/format";
+import {formatAllianceRank,formatTimestamp} from "../lib/format";
 import type {Player} from "../lib/types";
 import type {OverallRow} from "../lib/overall";
 import type {ActivityPlayer} from "../lib/analytics";
@@ -35,7 +37,7 @@ export function PlayerQuickView({groupId,activityPlayer,row,start,end,onClose}:{
     <div><small>Excused / no duty</small><strong>{row.excused}</strong></div><div><small>Last activity</small><strong>{row.lastActivity??"—"}</strong></div>
    </div></section>:<p className="activity-explainer">Overall screening is not available for this player in the selected active roster. Historical event records remain available below.</p>}
    {error?<ErrorState message={error}/>:!player?<LoadingState label="Loading game profile"/>:<section className="data-panel"><div className="section-header"><div><h2>Game profile</h2><p>{player.stats_observed_at?"Updated "+formatTimestamp(player.stats_observed_at):"Latest available game data"}</p></div></div><div className="profile-stats">
-    <div><small>Power</small><strong>{player.power?.toLocaleString()??"—"}</strong></div><div><small>Kills</small><strong>{player.kills?.toLocaleString()??"—"}</strong></div><div><small>Furnace</small><strong>{formatFurnaceLevel(player.furnace_level)}</strong></div><div><small>Alliance rank</small><strong>{formatAllianceRank(player.alliance_rank)}</strong></div><div><small>State</small><strong>{player.state_id??"—"}</strong></div><div><small>Alliance</small><strong>{player.observed_alliance_name??player.primary_alliance_name??"—"}</strong></div>
+    <div><small className="game-label"><Swords size={16} aria-hidden="true"/><span>Power</span></small><strong>{player.power?.toLocaleString()??"—"}</strong></div><div><small className="game-label"><Crosshair size={16} aria-hidden="true"/><span>Kills</span></small><strong>{player.kills?.toLocaleString()??"—"}</strong></div><div><small>Furnace</small><strong><FurnaceLevel level={player.furnace_level}/></strong></div><div><small>Alliance rank</small><strong>{formatAllianceRank(player.alliance_rank)}</strong></div><div><small>State</small><strong>{player.state_id??"—"}</strong></div><div><small>Alliance</small><strong>{player.observed_alliance_name??player.primary_alliance_name??"—"}</strong></div>
    </div></section>}
    <section className="data-panel"><div className="section-header"><div><h2>Foundry participation</h2><p>One attendance outcome per event; reliability per selected legion.</p></div></div><div className="profile-stats"><div><small>Registration rate</small><strong>{fmt(activityPlayer.metrics.foundry.registration?.rate??null)}</strong></div><div><small>Attendance</small><strong>{fmt(activityPlayer.metrics.foundry.attendance?.rate??null)}</strong></div><div><small>Missed without registration</small><strong>{activityPlayer.metrics.foundry.missed_unregistered??0}</strong></div><div><small>Legion no-shows</small><strong>{activityPlayer.metrics.foundry.no_shows??0}</strong></div></div></section>
    <PlayerActivity groupId={groupId} fid={fid} range={{start,end}} onNavigate={onClose}/>

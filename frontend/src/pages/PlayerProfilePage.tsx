@@ -1,3 +1,5 @@
+import { FurnaceLevel } from "../components/FurnaceLevel";
+import { Swords, Crosshair } from "lucide-react";
 import { ArrowLeft, History, ShieldCheck, TrendingUp } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PlayerActivity } from "../components/PlayerActivity";
@@ -41,9 +43,9 @@ export function PlayerProfilePage({ fid }: { fid: string }) {
           <section className="data-panel">
             <div className="section-header"><div><h2>Game profile</h2><p>{player.stats_observed_at ? "Updated " + formatTimestamp(player.stats_observed_at) : "Latest available game data"}</p></div><History size={18} aria-hidden="true" /></div>
             <div className="profile-stats">
-              <div><small>Power</small><strong>{player.power?.toLocaleString() ?? "—"}</strong></div>
-              <div><small>Kills</small><strong>{player.kills?.toLocaleString() ?? "—"}</strong></div>
-              <div><small>Furnace</small><strong>{formatFurnaceLevel(player.furnace_level)}</strong></div>
+              <div><small className="game-label"><Swords size={16} aria-hidden="true"/><span>Power</span></small><strong>{player.power?.toLocaleString() ?? "—"}</strong></div>
+              <div><small className="game-label"><Crosshair size={16} aria-hidden="true"/><span>Kills</span></small><strong>{player.kills?.toLocaleString() ?? "—"}</strong></div>
+              <div><small>Furnace</small><strong><FurnaceLevel level={player.furnace_level}/></strong></div>
               <div><small>Alliance rank</small><strong className={"roster-rank roster-rank--" + rank.toLowerCase()}>{rank}</strong></div>
               <div><small>State</small><strong>{player.state_id ?? "—"}</strong></div>
               <div><small>Alliance</small><strong>{alliance ?? "—"}</strong></div>

@@ -1,10 +1,11 @@
+import { FurnaceLevel } from "../components/FurnaceLevel";
 import { ArrowDown, ArrowUp, ArrowUpDown, Search, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PlayerAvatar } from "../components/PlayerAvatar";
 import { PageHeader } from "../components/Page";
 import { api, type PlayerAffiliationFilter } from "../lib/api";
-import { formatAllianceRank, formatFurnaceLevel } from "../lib/format";
+import { formatAllianceRank } from "../lib/format";
 import { useGroupContext } from "../lib/group-context";
 import { navigate } from "../lib/router";
 import type { Player } from "../lib/types";
@@ -137,7 +138,7 @@ export function PlayersPage() {
         <EmptyState title={submittedQuery ? "No matching players" : "No players in this view"} description={submittedQuery ? "Try a different ID or nickname." : effectiveSelection === "unconfirmed" ? "No profiles without a confirmed primary alliance are available." : "Add the first player roster record from Administration."} action={!submittedQuery && effectiveSelection === "all" && <button className="button button--primary" onClick={() => navigate("/admin?mode=players")}>Add player</button>} />
       ) : (
         <section className="data-panel data-panel--page" aria-busy={refreshing}>
-          <div className="table-wrap"><table><thead><tr>{sortHeader("nickname", "Nickname")}{sortHeader("fid", "ID")}{sortHeader("power", "Power")}{sortHeader("kills", "Kills")}{sortHeader("furnace_level", "Furnace")}{sortHeader("alliance_rank", "Rank")}<th>Alliance</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td><button className="table-link roster-player" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}><PlayerAvatar url={player.avatar_url} /><span>{player.nickname ?? "Nickname unconfirmed"}</span></button></td><td className="mono">{player.fid}</td><td className="number-cell">{player.power?.toLocaleString() ?? "—"}</td><td className="number-cell">{player.kills?.toLocaleString() ?? "—"}</td><td className="roster-furnace">{formatFurnaceLevel(player.furnace_level)}</td><td><span className={`roster-rank roster-rank--${formatAllianceRank(player.alliance_rank).toLowerCase()}`}>{formatAllianceRank(player.alliance_rank)}</span></td><td>{player.observed_alliance_name ?? player.primary_alliance_name ?? <span className="status status--draft">Unconfirmed</span>}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
+          <div className="table-wrap"><table><thead><tr>{sortHeader("nickname", "Nickname")}{sortHeader("fid", "ID")}{sortHeader("power", "Power")}{sortHeader("kills", "Kills")}{sortHeader("furnace_level", "Furnace")}{sortHeader("alliance_rank", "Rank")}<th>Alliance</th><th aria-label="Open record" /></tr></thead><tbody>{players.map((player) => <tr key={player.fid} className="clickable-row"><td><button className="table-link roster-player" onClick={() => navigate(`/players/${encodeURIComponent(player.fid)}`)}><PlayerAvatar url={player.avatar_url} /><span>{player.nickname ?? "Nickname unconfirmed"}</span></button></td><td className="mono">{player.fid}</td><td className="number-cell">{player.power?.toLocaleString() ?? "—"}</td><td className="number-cell">{player.kills?.toLocaleString() ?? "—"}</td><td className="roster-furnace"><FurnaceLevel level={player.furnace_level}/></td><td><span className={`roster-rank roster-rank--${formatAllianceRank(player.alliance_rank).toLowerCase()}`}>{formatAllianceRank(player.alliance_rank)}</span></td><td>{player.observed_alliance_name ?? player.primary_alliance_name ?? <span className="status status--draft">Unconfirmed</span>}</td><td className="row-arrow">→</td></tr>)}</tbody></table></div>
           {players.length < total ? <button className="button button--quiet" disabled={loadingMore || refreshing} onClick={() => void loadMore()}>Load more ({players.length} of {total})</button> : null}
         </section>
       )}

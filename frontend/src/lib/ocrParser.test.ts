@@ -139,3 +139,17 @@ it("never borrows a neighbouring nickname or accepts avatar text for a clipped r
  ["Substitute",628,899,124],combatantFooter];
  expect(parseScreenshot(fixture(words),"foundry_registration","legion_1","clipped").rows).toEqual([{nickname:"Harissa",role:"main",source:"clipped"}]);
 });
+
+// Reconstructed Canyon layout, not live Vision output.
+it("reads Canyon combatants with Power header and mixed roles",()=>{
+ const words:[string,number,number,number][]=[...combatantHeader().filter(w=>w[0]!=="Troop"),["Legion Commander",70,400,140],["Vega",340,420,70],["Harissa",187,729,103],["175,007,327",222,773,120],["Join",701,749,51],["Reaper Hound",187,879,150],["Voted",678,849,61],["Substitute",628,899,124],combatantFooter];
+ const parsed=parseScreenshot(fixture(words),"canyon_registration","legion_1","dialog");
+ expect(parsed.foundry).toEqual({main_count:30,substitute_count:10});
+ expect(parsed.rows).toEqual([{nickname:"Harissa",role:"main",source:"dialog"},{nickname:"Reaper Hound",role:"substitute",source:"dialog"}]);
+ expect(parseScreenshot(fixture(words),"canyon_registration","legion_2","wrong").rows).toEqual([]);
+});
+it("reads compact power in Canyon mail and rejects a different event",()=>{
+ const words:[string,number,number,number][]=[["Canyon Clash",100,80,150],["Legion 1",100,110,100],["Combatants: 30/30",250,200,250],["DrunnaNyx",155,270,120],["229.9M",570,290,80],["R5",155,310,30]];
+ expect(parseScreenshot(fixture(words),"canyon_registration","legion_1","mail").rows).toEqual([{nickname:"DrunnaNyx",role:"main",source:"mail"}]);
+ expect(parseScreenshot(fixture(words),"foundry_registration","legion_1","wrong").rows).toEqual([]);
+});

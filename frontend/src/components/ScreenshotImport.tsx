@@ -75,7 +75,7 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
   const [reviewRows,setReviewRows]=useState<ReviewRow[]>([]);
   const [parseWarnings,setParseWarnings]=useState<string[]>([]);
   const mobilization=eventType==="alliance_mobilization";
-  const foundryReg=eventType==="foundry_registration",foundryResults=eventType==="foundry_results";
+  const foundryReg=eventType==="foundry_registration"||eventType==="canyon_registration",foundryResults=eventType==="foundry_results";
   const [foundryInfo,setFoundryInfo]=useState<FoundryImportInfo>({});
   const supported=eventType==="bear_trap"||eventType==="alliance_championship"||mobilization||foundryReg||foundryResults;
   const buildReview=()=>{

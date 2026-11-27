@@ -83,6 +83,12 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
         """,(group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat())):
             item=dict(r);item["rows"]={};sessions[r["event_id"]].append(item)
         session_by_id={s["id"]:s for v in sessions.values() for s in v}
+        for detail in db.execute("""SELECT f.* FROM foundry_session_details f JOIN event_sessions s ON s.id=f.session_id
+            JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
+            WHERE a.group_id=? AND (? IS NULL OR a.id=?) AND e.event_type='foundry' AND e.status='published' AND e.occurred_on BETWEEN ? AND ?""",
+            (group_id,alliance_id,alliance_id,start.isoformat(),end.isoformat())):
+            if detail["session_id"] in session_by_id:
+                session_by_id[detail["session_id"]]["foundry_details"] = {k: detail[k] for k in ("outcome","own_score","opponent_score","opponent_tag","opponent_name","opponent_state")}
         for r in db.execute("""
             SELECT r.* FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id
             JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
@@ -199,7 +205,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                 values = [s["metrics"]["points"] for s in e["sessions"] if "points" in s["metrics"]]
                 if values and not all(s["eligibility"] == "no_duty" for s in e["sessions"]):
                     contribution_points[e["fid"]] = str(sum(values))
-        event_reports.append({**event,"contribution_points":contribution_points,
+        event_reports.append({**event,**({"foundry_battles":[{"session_key":s["session_key"],"started_at":s["started_at"],"alliance_id":event["alliance_id"],**s.get("foundry_details",{})} for s in ss]} if kind=="foundry" else {}),"contribution_points":contribution_points,
             "contribution_complete":bool(kind == "alliance_mobilization" and ss and all(s["results_complete"] and s["roster_complete"] for s in ss)),
             "session_count":len(ss),"recorded_players":len(entries),"unknown_home_players":unknown_home,
             "evidence":[{k:s[k] for k in ("session_key","host_alliance_id","roster_complete","registration_complete","attendance_complete","results_complete")} for s in ss],

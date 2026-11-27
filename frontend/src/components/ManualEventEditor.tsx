@@ -90,14 +90,14 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     (async()=>{
       const items:Player[]=[];
       for(let offset=0;;offset+=100){
-        const result=await api.players(groupId,"","nickname","asc",{mode:"all"},100,offset);
+        const result=await api.players(groupId,"","nickname","asc",{mode:"all"},100,offset,foundry);
         items.push(...result.items);
         if(items.length>=result.total || !result.items.length)break;
       }
       if(active){setCandidates(items);setLoaded(true)}
     })().catch(e=>{if(active)setError(e instanceof Error?e.message:"Unable to load roster")});
     return ()=>{active=false};
-  },[groupId]);
+  },[groupId,foundry]);
   const blank=(p:Player):ManualRow=>({fid:p.fid,nickname:p.nickname??p.fid,eligibility:"unknown",registration:"unknown",role:null,registered_by:null,attendance:"unknown",metrics:{}});
   const currentRoster=candidates.filter(p=>p.primary_alliance_id===(draft?.host_alliance_id??record.alliance_id)&&p.group_status==="active");
   const visibleRows=draft?[...draft.rows,...(editable&&!draft.roster_complete?currentRoster.filter(p=>!draft.rows.some(r=>r.fid===p.fid)).map(blank):[])]:[];
@@ -286,14 +286,14 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     {editable&&<><div className="manual-controls"><button className="button button--primary" disabled={busy||!loaded||(!dirty&&draft.rows.length===0&&visibleRows.length===0)} onClick={()=>void run(save)}>Save draft</button><button className="button button--secondary" disabled={busy||!loaded} onClick={()=>setReview(v=>!v)}>Review completeness</button>{dirty&&<span>Unsaved changes</span>}</div>
     {review&&!championship&&<div className="manual-review"><h3>Review before publishing</h3><p>Leave unchecked if the information is partial. Missing entries remain unknown.</p>
     <label><input type="checkbox" checked={!!draft.roster_complete} onChange={e=>confirmRoster(e.target.checked)}/>This is the full alliance roster at the time of the event (mark exceptions in the table).</label>
-    {definition.registration&&<label><input type="checkbox" checked={!!draft.registration_complete} onChange={e=>complete("registration_complete",e.target.checked)}/>I entered the complete registration list.</label>}
+    {definition.registration&&!foundry&&<label><input type="checkbox" checked={!!draft.registration_complete} onChange={e=>complete("registration_complete",e.target.checked)}/>I entered the complete registration list.</label>}
     {definition.attendance&&<label><input type="checkbox" checked={!!draft.attendance_complete} onChange={e=>complete("attendance_complete",e.target.checked)}/>{record.event_type==="foundry"?"Review personal points; explicit zero means no-show for a selected player.":"I verified who actually attended, not just who scored points. Use Final attendance review to calculate absences automatically."}</label>}
-    {(record.event_type==="foundry"||!definition.registration&&!definition.attendance)&&<label><input type="checkbox" checked={!!draft.results_complete} onChange={e=>complete("results_complete",e.target.checked)}/>I entered the full results list.</label>}
+    {!definition.registration&&!definition.attendance&&<label><input type="checkbox" checked={!!draft.results_complete} onChange={e=>complete("results_complete",e.target.checked)}/>I entered the full results list.</label>}
     <p>Partial records remain unknown. Final attendance review can calculate absences from a confirmed complete roster and attendance list.</p>
     <button className="button button--primary" disabled={busy} onClick={()=>void run(save)}>Save reviewed draft</button></div>}</>}
     </>}
     {editable&&loaded&&(!bear||hosts.length>0)&&definition.attendance&&editor.sessions.length>0&&<AttendanceFinalReview key={editor.sessions.map(s=>s.id+":"+s.revision).join("|")} event={editor} candidates={candidates} alliances={hosts} allianceId={record.alliance_id} occurredOn={record.occurred_on} disabled={busy||dirty||!loaded} onPublish={completion=>void run(async()=>{apply(await api.publishEvent(groupId,record.id,false,completion),selected);onPublished();setMessage("Event published with automatic attendance.")})}/>}
-    {editable&&editor.sessions.length>0&&<div className="manual-controls">{record.event_type==="bear_trap"&&<label><input type="checkbox" checked={cycleComplete} disabled={dirty||busy} onChange={e=>setCycleComplete(e.target.checked)}/>Legacy manual attendance confirmation (optional). Use Final attendance review for automatic absences.</label>}<label><input type="checkbox" checked={confirmPublish} disabled={dirty||busy} onChange={e=>setConfirmPublish(e.target.checked)}/>I reviewed all recorded sessions (partial publication; no automatic absences)</label><button className="button button--secondary" disabled={busy||dirty||!confirmPublish} onClick={()=>void run(async()=>{apply(await api.publishEvent(groupId,record.id,cycleComplete),selected);setConfirmPublish(false);onPublished();setMessage("Event published.")})}>{definition.attendance?"Publish partial results":"Publish event"}</button></div>}
+    {editable&&editor.sessions.length>0&&<div className="manual-controls">{record.event_type==="bear_trap"&&<label><input type="checkbox" checked={cycleComplete} disabled={dirty||busy} onChange={e=>setCycleComplete(e.target.checked)}/>Legacy manual attendance confirmation (optional). Use Final attendance review for automatic absences.</label>}<label><input type="checkbox" checked={confirmPublish} disabled={dirty||busy} onChange={e=>setConfirmPublish(e.target.checked)}/>I reviewed all recorded sessions (partial publication; no automatic absences)</label><button className="button button--secondary" disabled={busy||dirty||!confirmPublish||foundry&&!editor.sessions.some(s=>s.rows.some(r=>r.metrics.personal_points!==undefined))} onClick={()=>void run(async()=>{apply(await api.publishEvent(groupId,record.id,cycleComplete),selected);setConfirmPublish(false);onPublished();setMessage("Event published.")})}>{definition.attendance?"Publish partial results":"Publish event"}</button></div>}
     </>}
   </section>;
 }

@@ -9,7 +9,7 @@ export function AttendanceFinalReview({event,candidates,alliances,allianceId,occ
  const prior=event.completion??[];
  const historical=event.historical_homes??{};
  const hostIds=new Set(event.sessions.map(s=>s.host_alliance_id??allianceId));
- const suggested=candidates.filter(p=>p.group_status==="active"&&(bear?hostIds.has(historical[p.fid]??p.primary_alliance_id??""):p.primary_alliance_id===allianceId)).map(p=>p.fid);
+ const suggested=candidates.filter(p=>foundry?(historical[p.fid]===allianceId||!historical[p.fid]&&p.group_status==="active"&&p.primary_alliance_id===allianceId):p.group_status==="active"&&(bear?hostIds.has(historical[p.fid]??p.primary_alliance_id??""):p.primary_alliance_id===allianceId)).map(p=>p.fid);
  const initialRoster=bear?[...new Set([...prior.filter(r=>r.roster_member).map(r=>r.fid),...suggested])]:prior.length?prior.filter(r=>r.roster_member).map(r=>r.fid):suggested;
  const [homes,setHomes]=useState<Record<string,string>>(()=>({...historical}));
  const [roster,setRoster]=useState<string[]>(()=>foundry?[...new Set([...initialRoster,...event.sessions.flatMap(s=>s.rows.filter(r=>r.registration==="registered").map(r=>r.fid))])]:initialRoster);

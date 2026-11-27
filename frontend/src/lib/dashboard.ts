@@ -23,3 +23,11 @@ export function overallDistribution(rows:OverallRow[]){
  }
  return {bins,covered,provisional,unscored};
 }
+
+
+export function foundryPerformance(report:AnalyticsReport){
+ const events=report.events.filter(e=>e.event_type==="foundry");
+ const battles=events.flatMap(e=>(e.foundry_battles??[]).map(b=>({...b,date:e.occurred_on,eventId:e.id})));
+ const outcomes=(rows:typeof battles)=>{const wins=rows.filter(b=>b.outcome==="victory").length,losses=rows.filter(b=>b.outcome==="defeat").length;return {wins,losses,unknown:rows.length-wins-losses,rate:wins+losses?Math.round(wins/(wins+losses)*10000)/100:null}};
+ return {...outcomes(battles),battles,byLegion:{legion_1:outcomes(battles.filter(b=>b.session_key==="legion_1")),legion_2:outcomes(battles.filter(b=>b.session_key==="legion_2"))},attendance:combineCounts(events.map(e=>e.metrics.attendance)),registration:combineCounts(events.map(e=>e.metrics.registration)),missedUnregistered:events.reduce((n,e)=>n+(e.metrics.missed_unregistered??0),0),missedRegistered:events.reduce((n,e)=>n+(e.metrics.missed_registered??0),0)};
+}

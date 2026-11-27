@@ -53,7 +53,8 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
     const ranks=all.filter(w=>/^[RР]\s*[0-5]$/iu.test(w.text)&&w.x<maxX*.5).sort((a,b)=>a.y-b.y);
     for(let i=0;i<ranks.length;i++){
       const rank=ranks[i],prev=ranks[i-1],next=ranks[i+1];
-      const header=headers.filter(h=>h.y<rank.y).at(-1);
+      const preceding=headers.filter(h=>h.y<rank.y);
+      const header=preceding[preceding.length-1];
       const top=Math.max(header?.y??-Infinity,rank.y-rank.height*4.5,prev?(prev.y+rank.y)/2-rank.height*.5:-Infinity);
       const bottom=Math.min(rank.y+rank.height*.65,next?(rank.y+next.y)/2:Infinity);
       const region=lines.filter(l=>l.y>top&&l.y<=bottom);

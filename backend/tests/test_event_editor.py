@@ -114,7 +114,7 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
                 row["registration"] = "registered"
                 row["role"] = "substitute" if row["fid"] == "absent" else "main"
                 row["metrics"] = {"personal_points": 0 if row["fid"] == "absent" else 100}
-            payload.update(registration_complete=True,results_complete=True)
+            payload.update(registration_complete=True,results_complete=True,foundry_details={"main_count":sum(r["role"]=="main" for r in rows),"substitute_count":sum(r["role"]=="substitute" for r in rows)})
         result = c.put(root+"/sessions/"+s["id"],json=payload)
         assert result.status_code==200,result.text
         revisions[s["id"]]=1
@@ -186,7 +186,11 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     l1 = [row("no-show",0,"substitute"),row("both",0)]
     l2 = [row("attended",100),row("both",200)]
     def save(sid, revision, rows, complete=True):
-        return c.put(root+"/sessions/"+sid,json={"revision":revision,"rows":rows,"registration_complete":True,"results_complete":complete})
+        return c.put(root+"/sessions/"+sid,json={"revision":revision,"rows":rows,"registration_complete":True,"results_complete":complete,
+            "foundry_details":{"main_count":sum(r["role"]=="main" for r in rows),"substitute_count":sum(r["role"]=="substitute" for r in rows),
+                "outcome":"victory" if sid==ids[0] else "defeat","own_score":200 if sid==ids[0] else 100,"opponent_score":100 if sid==ids[0] else 200}})
+    invalid={"revision":0,"rows":l1,"registration_complete":True,"foundry_details":{"main_count":2,"substitute_count":0}}
+    assert c.put(root+"/sessions/"+ids[0],json=invalid).status_code==409
     assert save(ids[0],0,l1,False).status_code==200
     assert save(ids[1],0,[row("attended",None),row("both",200)]).status_code==200
     review={"roster":roster,"expected_sessions":2,"revisions":dict.fromkeys(ids,1)}
@@ -206,3 +210,4 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     assert event["metrics"]["no_shows"]==2
     assert event["metrics"]["missed_unregistered"]==1
     assert event["metrics"]["missed_registered"]==1
+    assert [b["outcome"] for b in event["foundry_battles"]]==["victory","defeat"]

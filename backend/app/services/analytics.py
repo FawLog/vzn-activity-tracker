@@ -221,8 +221,8 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
             "semantics":{"rates":"known positive / (known positive + known negative); unknown and excused excluded","population":"recorded evidence only; no inferred historical eligibility","bear":"one event is one cycle","legacy":"no session evidence means no analytics","metric_total":"decimal string"}}
 
 
-def activity_cell(entry):
-    kind=entry["event_type"]
+def activity_cell(entry, kind=None):
+    kind = entry["event_type"] if kind is None else kind
     if kind == "foundry":
         outcome = entry.get("cycle_attendance", "unknown")
         if outcome == "positive" and any(s["registration_outcome"] == "positive" and s["attendance_outcome"] == "negative" for s in entry["sessions"]):
@@ -255,8 +255,8 @@ def aggregate(entries, kind):
     out={"observed_events":len(entries),"observed_sessions":len(evidence)}
     if kind == "foundry":
         out["registration"]=counts(e.get("cycle_registration", "positive" if any(s["registration_outcome"] == "positive" for s in e["sessions"]) else "unknown") for e in entries)
-        out["missed_unregistered"]=sum(activity_cell(e) == "not_registered" for e in entries)
-        out["missed_registered"]=sum(activity_cell(e) == "no_show" for e in entries)
+        out["missed_unregistered"]=sum(activity_cell(e, kind) == "not_registered" for e in entries)
+        out["missed_registered"]=sum(activity_cell(e, kind) == "no_show" for e in entries)
     elif kind in ("alliance_championship","canyon"):
         out["registration"]=counts(s["registration_outcome"] for s in evidence)
     if kind=="bear_trap":

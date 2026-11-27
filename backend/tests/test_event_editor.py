@@ -25,9 +25,16 @@ def test_manual_sessions_and_evidence(authenticated_client, settings):
         event_editor.save(path,gid,eid,sid,SessionSave(revision=0,rows=[]))
     with pytest.raises(LookupError):
         event_editor.read(path,"other",eid)
+    # Foundry registration and manual absence flags alone are not battle results.
+    with pytest.raises(ValueError, match="Registration alone must remain a draft"):
+        event_editor.publish(path,gid,eid)
+    assert event_editor.read(path,gid,eid)["status"] == "draft"
+    rows = [{**row, "metrics": {"personal_points": 0}} for row in rows]
+    result = event_editor.save(path,gid,eid,sid,SessionSave(revision=1,attendance_complete=True,roster_complete=True,registration_complete=True,results_complete=True,foundry_details={"main_count":1,"substitute_count":1},rows=rows))
+    assert all(r["metrics"]["personal_points"] == 0 for r in result["sessions"][0]["rows"])
     assert event_editor.publish(path,gid,eid)["status"] == "published"
     with pytest.raises(ValueError,match="draft"):
-        event_editor.save(path,gid,eid,sid,SessionSave(revision=1,rows=[]))
+        event_editor.save(path,gid,eid,sid,SessionSave(revision=2,rows=[]))
 
 
 def test_session_http_save_contract(authenticated_client):

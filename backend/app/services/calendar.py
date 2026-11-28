@@ -52,11 +52,14 @@ class CalendarCreate(CalendarInput):
     interval_minutes: int | None = Field(default=None, ge=60, le=525600)
     occurrence_count: int = Field(default=1, ge=1, le=180)
     reject_existing: bool = False
+    rolling: bool = False
     repeat_months: int | None = Field(default=None, ge=1, le=12)
     repeat_weekdays: list[int] | None = Field(default=None, min_length=1, max_length=7)
 
     @model_validator(mode="after")
     def validate_series(self):
+        if self.rolling and (not self.reject_existing or self.interval_minutes is None or self.interval_minutes < 1440 or not 2 <= self.occurrence_count <= 60):
+            raise ValueError("Automatic renewal requires a fixed interval of at least one day and 2–60 initial occurrences with duplicate protection")
         rules = sum(rule is not None for rule in (self.interval_minutes,self.repeat_months,self.repeat_weekdays))
         if rules != int(self.occurrence_count > 1):
             raise ValueError("Specify exactly one repeat rule for a series")
@@ -160,13 +163,18 @@ def list_occurrences(path, group_id, start: date, end: date):
         if len(rows)>2000:
             raise ValueError("Too many calendar entries; select a shorter range")
         progress=review_status(db,group_id,[row["id"] for row in rows])
-        return {"items":[{**dict(row),**({"review":progress[row["id"]]} if row["id"] in progress else {})} for row in rows]}
+        rolling = {r["series_id"]:r["status"] for r in db.execute(
+            "SELECT r.series_id,r.status FROM calendar_rolling_series r JOIN calendar_series s ON s.id=r.series_id WHERE s.group_id=?",(group_id,))}
+        return {"items":[{**dict(row),**({"review":progress[row["id"]]} if row["id"] in progress else {}),
+                         **({"rolling_status":rolling[row["series_id"]]} if row["series_id"] in rolling else {})} for row in rows]}
 
 
 def create(path, group_id, payload: CalendarCreate):
     # Preserve the v1 request hash when the new opt-in field is false.
     excluded = {"request_key"} if payload.reject_existing else {"request_key", "reject_existing"}
     excluded.update(k for k in ("repeat_months","repeat_weekdays") if getattr(payload,k) is None)
+    if not payload.rolling:
+        excluded.add("rolling")
     offsets = series_offsets(payload)
     fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude=excluded), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     with transaction(path) as db:
@@ -198,6 +206,10 @@ def create(path, group_id, payload: CalendarCreate):
                        (series_id,group_id,payload.interval_minutes or offsets[1],payload.occurrence_count,payload.starts_at))
             if payload.repeat_months is not None or payload.repeat_weekdays is not None:
                 db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"repeat_months":payload.repeat_months,"repeat_weekdays":payload.repeat_weekdays})))
+        if payload.rolling:
+            template = CalendarInput(**{k:getattr(payload,k) for k in CalendarInput.model_fields})
+            db.execute("INSERT INTO calendar_rolling_series(series_id,template_json,next_start,next_sequence) VALUES (?,?,?,?)",
+                       (series_id,template.model_dump_json(),shift(payload.starts_at,payload.interval_minutes*payload.occurrence_count),payload.occurrence_count))
         items=[]
         for sequence,offset in enumerate(offsets):
             occurrence_id=uuid.uuid4().hex
@@ -318,6 +330,15 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
             else:
                 db.execute("UPDATE calendar_occurrences SET schedule_status='cancelled',source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
             audit(db, "cancelled" if payload.action == "cancel" else "rescheduled", row["id"])
+        rolling = db.execute("SELECT * FROM calendar_rolling_series WHERE series_id=?",(rows[0]["series_id"],)).fetchone()
+        if rolling:
+            if payload.action == "cancel":
+                db.execute("UPDATE calendar_rolling_series SET status='stopped' WHERE series_id=?",(rolling["series_id"],))
+            elif rolling["status"] == "active":
+                next_start = shift(rolling["next_start"],payload.shift_minutes)
+                if parse(next_start) < now or not 2000 <= parse(next_start).year <= 2099:
+                    raise ValueError("Shift would move the next renewal outside future supported dates")
+                db.execute("UPDATE calendar_rolling_series SET next_start=? WHERE series_id=?",(next_start,rolling["series_id"]))
         return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (row["id"],)).fetchone()) for row in rows]}
 
 class CalendarCycleCreate(BaseModel):
@@ -832,3 +853,79 @@ def entry_group_members(db,row):
         WHERE c.group_id=? AND c.event_type=? AND c.entry_cycle_date=?
         AND (?='bear_trap' OR c.alliance_id=?) ORDER BY c.starts_at,c.id""",
         (row["group_id"],row["event_type"],row["entry_cycle_date"],row["event_type"],row["alliance_id"]))]
+
+
+# Persist only future occurrences. The independent cursor is never inferred from
+# a manually edited or cancelled occurrence. The initial series count remains
+# immutable, because calendar_series has a legacy 180-occurrence bound.
+ROLLING_HORIZON_DAYS = 60
+
+
+def renew_series(path, series_id, now):
+    with transaction(path) as db:
+        series = db.execute("""SELECT r.*,s.group_id,s.interval_minutes
+            FROM calendar_rolling_series r JOIN calendar_series s ON s.id=r.series_id
+            JOIN alliance_groups g ON g.id=s.group_id
+            WHERE r.series_id=? AND r.status='active' AND g.status='active'""",(series_id,)).fetchone()
+        if not series:
+            return 0
+        template = CalendarInput.model_validate_json(series["template_json"])
+        try:
+            validate_scope(db,series["group_id"],template)
+        except (ValueError,LookupError):
+            return 0
+        start = parse(series["next_start"])
+        interval = timedelta(minutes=series["interval_minutes"])
+        duration = parse(template.ends_at)-parse(template.starts_at) if template.ends_at else None
+        threshold = future_threshold(template.precision,now)
+        horizon = now + timedelta(days=ROLLING_HORIZON_DAYS)
+        sequence = series["next_sequence"]
+        if start < threshold:
+            missed = (threshold-start)//interval
+            if start+missed*interval < threshold:
+                missed += 1
+            start += missed*interval
+            sequence += missed
+        fmt = "%Y-%m-%d" if template.precision=="date" else "%Y-%m-%dT%H:%MZ"
+        count = 0
+        status = "active"
+        while start <= horizon:
+            if start.year > 2099 or (duration and (start+duration).year>2099):
+                status = "stopped"
+                break
+            value = start.strftime(fmt)
+            end = (start+duration).strftime(fmt) if duration else None
+            matches = db.execute("""SELECT starts_at,precision FROM calendar_occurrences
+                WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=? AND phase=?
+                AND starts_at>=? AND starts_at<?""",
+                (series["group_id"],template.event_type,template.scope,template.alliance_id,template.state_id,template.phase,
+                 value[:10],(start.date()+timedelta(days=1)).isoformat())).fetchall()
+            if any(r["starts_at"]==value or (r["starts_at"][:10]==value[:10] and
+                   (r["precision"]=="date" or template.precision=="date")) for r in matches):
+                status = "conflict"
+                break
+            oid = uuid.uuid4().hex
+            db.execute("""INSERT INTO calendar_occurrences(id,group_id,series_id,sequence,event_type,scope,alliance_id,state_id,
+                       starts_at,ends_at,precision,phase,confidence,source)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'estimated','recurrence')""",
+                       (oid,series["group_id"],series_id,sequence,template.event_type,template.scope,template.alliance_id,
+                        template.state_id,value,end,template.precision,template.phase))
+            db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('created','calendar_occurrence',?,'system')",(oid,))
+            count += 1
+            sequence += 1
+            start += interval
+        if start.year>2099:
+            status = "stopped"
+        db.execute("UPDATE calendar_rolling_series SET next_start=?,next_sequence=?,status=? WHERE series_id=?",
+                   (start.strftime(fmt),sequence,status,series_id))
+        return count
+
+
+def renew_schedules(path, now=None):
+    now = now or datetime.now(timezone.utc)
+    with connection(path) as db:
+        ids = [r[0] for r in db.execute("SELECT series_id FROM calendar_rolling_series WHERE status='active'")]
+    total = 0
+    for series_id in ids:
+        total += renew_series(path,series_id,now)
+    return total

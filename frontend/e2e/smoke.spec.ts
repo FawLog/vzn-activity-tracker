@@ -356,6 +356,8 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(scheduleEditor).toBeVisible();
   await scheduleEditor.getByLabel("Event type").selectOption("foundry");
   await expect(scheduleEditor.getByText("4 occurrences · Every 14 days",{exact:true})).toBeVisible();
+  await expect(scheduleEditor.getByRole("checkbox",{name:"Keep schedule up to date automatically"})).toBeChecked();
+  await expect(scheduleEditor.getByText("Automatically extends the estimated schedule 60 days ahead.",{exact:true})).toBeVisible();
   await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await expect(scheduleEditor.getByLabel("Repeat every (days)")).toHaveValue("14");
   await expect(scheduleEditor.getByRole("button",{name:"Save schedule"})).toBeDisabled();

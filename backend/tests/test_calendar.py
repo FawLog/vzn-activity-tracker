@@ -179,3 +179,48 @@ def test_series_shift_collision_is_atomic(authenticated_client):
     assert c.get(target).json()["items"]==preview
     result=c.post(target,json={"action":"shift","shift_minutes":14400,"revisions":{r["id"]:r["revision"] for r in preview}})
     assert result.status_code==200,result.text
+
+
+def test_rolling_calendar_renewal_preserves_overrides_and_stops(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    fields={"event_type":"foundry","scope":"alliance","alliance_id":aid,"state_id":"1001","precision":"date","starts_at":"2090-05-01"}
+    payload={**fields,"occurrence_count":2,"interval_minutes":20160,"reject_existing":True,"rolling":True,"request_key":"rolling-request-0001"}
+    response=c.post(url,json=payload)
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    assert c.post(url,json=payload).json()==response.json()
+    assert c.put(url+"/"+rows[1]["id"],json={**fields,"starts_at":"2090-05-16","revision":1,"schedule_status":"cancelled"}).status_code==200
+    now=datetime(2090,5,20,tzinfo=timezone.utc)
+    assert renew_schedules(settings.database_path,now)==4
+    assert renew_schedules(settings.database_path,now)==0
+    result=c.get(url+"?start=2090-05-01&end=2090-08-01").json()["items"]
+    assert [r["starts_at"] for r in result]==["2090-05-01","2090-05-16","2090-05-29","2090-06-12","2090-06-26","2090-07-10"]
+    assert result[1]["schedule_status"]=="cancelled"
+    assert all(r["rolling_status"]=="active" for r in result)
+    assert all(r["confidence"]=="estimated" for r in result[2:])
+    target=url+"/"+result[2]["id"]+"/future"
+    preview=c.get(target).json()["items"]
+    assert c.post(target,json={"action":"cancel","revisions":{r["id"]:r["revision"] for r in preview}}).status_code==200
+    assert renew_schedules(settings.database_path,datetime(2090,8,1,tzinfo=timezone.utc))==0
+    assert all(r["rolling_status"]=="stopped" for r in c.get(url+"?start=2090-05-01&end=2090-08-01").json()["items"])
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+
+
+def test_rolling_calendar_collision_pauses_without_overwriting(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    fields={"event_type":"foundry","scope":"alliance","alliance_id":aid,"state_id":"1001","precision":"date","starts_at":"2090-05-01"}
+    assert c.post(url,json={**fields,"occurrence_count":2,"interval_minutes":20160,"rolling":True,"reject_existing":True}).status_code==201
+    existing=c.post(url,json={**fields,"starts_at":"2090-05-29"}).json()["items"][0]
+    assert renew_schedules(settings.database_path,datetime(2090,5,20,tzinfo=timezone.utc))==0
+    result=c.get(url+"?start=2090-05-01&end=2090-07-01").json()["items"]
+    assert len(result)==3 and result[-1]==existing
+    assert result[0]["rolling_status"]=="conflict"

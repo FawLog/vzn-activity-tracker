@@ -12,6 +12,7 @@ export interface CalendarReview {
 }
 export interface CalendarOccurrence {
   review?:CalendarReview;
+  rolling_status?:"active"|"stopped"|"conflict";
   entry_cycle_date?:string|null;
   entry_session_key?:string|null;
   id: string;

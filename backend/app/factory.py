@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,6 +15,7 @@ from .api.router import create_api_router
 from .config import Settings, load_settings
 from .database import migrate
 from .services.whiteoutstats import WhiteoutStatsScheduler
+from .services.calendar import renew_schedules
 
 logger = logging.getLogger("vzn.api")
 
@@ -26,9 +28,23 @@ def create_app(settings_override: Settings | None = None) -> FastAPI:
         migrate(settings.database_path)
         scheduler = WhiteoutStatsScheduler(settings.database_path, settings)
         await scheduler.start()
+        stop = asyncio.Event()
+        async def renew_calendar():
+            while not stop.is_set():
+                try:
+                    await asyncio.to_thread(renew_schedules,settings.database_path)
+                except Exception:
+                    logger.exception("Calendar renewal failed")
+                try:
+                    await asyncio.wait_for(stop.wait(),timeout=3600)
+                except TimeoutError:
+                    pass
+        renewal = asyncio.create_task(renew_calendar(),name="calendar-renewal")
         try:
             yield
         finally:
+            stop.set()
+            await renewal
             await scheduler.stop()
 
     app = FastAPI(

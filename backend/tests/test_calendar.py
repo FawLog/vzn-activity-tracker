@@ -249,3 +249,28 @@ def test_edit_recurring_schedule_keeps_manual_exception_and_updates_cursor(authe
     assert renew_schedules(settings.database_path,datetime(2090,6,13,tzinfo=timezone.utc))>0
     next_row=c.get(url+"?start=2090-06-26&end=2090-06-27").json()["items"][0]
     assert (next_row["starts_at"],next_row["ends_at"])==("2090-06-26T17:00Z","2090-06-26T19:00Z")
+
+
+def test_repeated_canyon_cycles_are_atomic_and_future_battle_time_unknown(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar/cycles"
+    common={"event_type":"canyon","scope":"alliance","alliance_id":aid,"state_id":"1001","precision":"date","confidence":"confirmed"}
+    phases=[{**common,"phase":phase,"starts_at":start,"ends_at":end} for phase,start,end in [
+        ("Voting","2090-03-06","2090-03-08"),("Registration","2090-03-08","2090-03-10"),
+        ("Matchmaking","2090-03-10","2090-03-11"),("Battle","2090-03-11",None)]]
+    phases[-1].update(precision="minute",starts_at="2090-03-11T15:00Z",ends_at="2090-03-11T16:00Z")
+    payload={"kind":"canyon","request_key":"repeat-cycle-000001","phases":phases,"occurrence_count":3,"interval_days":28}
+    response=c.post(url,json=payload)
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    assert len(rows)==12 and len({r["cycle_id"] for r in rows})==3
+    assert rows[7]["starts_at"]=="2090-04-08" and rows[7]["ends_at"] is None
+    assert all(r["confidence"]=="estimated" for r in rows[4:])
+    assert c.post(url,json=payload).json()==response.json()
+    assert c.post(url,json={**payload,"request_key":"repeat-cycle-000002"}).status_code==409
+    assert c.post(url,json={**payload,"interval_days":4}).status_code==422
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calendar_cycles").fetchone()[0]==3
+        assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==12
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0

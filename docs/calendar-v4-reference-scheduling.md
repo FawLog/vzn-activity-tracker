@@ -1,0 +1,5 @@
+# Reference-driven scheduling
+
+For single structured runs, the editor calculates an exclusive end from the selected UTC start; date-only multi-day events cover all occupied dates. A short battle without a time remains date-only. The duration is a suggestion, not proof of local timing; manual ends and existing schedules are preserved. SvS preparation and Alliance Showdown retain their documented extended reset-stage exceptions.
+
+Canyon and SvS use structured reference runs and a Monday reset anchor. Preview a finite batch of whole linked cycles using the library's fixed interval (up to 14 cycles within 366 days). Each future Canyon battle has a date but no invented local time. Each cycle has its own identity, and batch creation is atomic and idempotent. Local phase overrides are repeated as estimates. Existing linked records and attendance are untouched. Indefinite rolling renewal of linked cycles, arbitrary multi-run catalogs whose runs may be alternative slots, and separate legion time planning are not included in this change.

@@ -584,6 +584,8 @@ class CalendarCycleCreate(BaseModel):
     kind: Literal["canyon", "svs"]
     request_key: str = Field(min_length=16,max_length=128,pattern=r"^[A-Za-z0-9_-]+$")
     phases: list[CalendarInput] = Field(min_length=2,max_length=4)
+    occurrence_count: int = Field(default=1,ge=1,le=14)
+    interval_days: int | None = Field(default=None,ge=1,le=366)
 
     @model_validator(mode="after")
     def validate_phases(self):
@@ -605,11 +607,41 @@ class CalendarCycleCreate(BaseModel):
                 raise ValueError("Cycle phases must not overlap")
             if parse(p.ends_at or p.starts_at)-parse(first.starts_at)>timedelta(days=31):
                 raise ValueError("Maximum cycle duration is 31 days")
+        if (self.occurrence_count>1)!=(self.interval_days is not None):
+            raise ValueError("Provide a repeat interval for multiple cycles")
+        if self.interval_days is not None:
+            if (self.occurrence_count-1)*self.interval_days>366:
+                raise ValueError("Maximum recurrence horizon is 366 days")
+            if parse(self.phases[-1].ends_at or self.phases[-1].starts_at)>=parse(first.starts_at)+timedelta(days=self.interval_days):
+                raise ValueError("Repeat interval must exceed the cycle duration")
+            if parse(self.phases[-1].ends_at or self.phases[-1].starts_at)+timedelta(days=(self.occurrence_count-1)*self.interval_days)>=datetime(2100,1,1,tzinfo=timezone.utc):
+                raise ValueError("Date outside supported range")
         return self
 
 
+def cycle_occurrences(payload:CalendarCycleCreate):
+    cycles=[payload.phases]
+    for i in range(1,payload.occurrence_count):
+        phases=[]
+        for p in payload.phases:
+            minutes=i*(payload.interval_days or 0)*1440
+            values=p.model_dump()
+            values.update(starts_at=shift(p.starts_at,minutes),ends_at=shift(p.ends_at,minutes),confidence="estimated")
+            if payload.kind=="canyon" and p.phase=="Battle":
+                values.update(starts_at=values["starts_at"][:10],ends_at=None,precision="date")
+            phases.append(CalendarInput.model_validate(values))
+        # Revalidate the generated cycle, including date-only battle ordering.
+        CalendarCycleCreate(kind=payload.kind,request_key=payload.request_key,phases=phases)
+        cycles.append(phases)
+    return cycles
+
+
 def create_cycle(path,group_id,payload:CalendarCycleCreate):
-    fingerprint=hashlib.sha256(json.dumps({"cycle":payload.model_dump(mode="json",exclude={"request_key"})},sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    excluded={"request_key"}
+    if payload.occurrence_count==1:
+        excluded.update(("occurrence_count","interval_days"))
+    fingerprint=hashlib.sha256(json.dumps({"cycle":payload.model_dump(mode="json",exclude=excluded)},sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    cycles=cycle_occurrences(payload)
     with transaction(path) as db:
         require_group(db,group_id,True)
         previous=db.execute("SELECT payload_hash,occurrence_ids FROM calendar_create_requests WHERE group_id=? AND request_key=?",(group_id,payload.request_key)).fetchone()
@@ -617,7 +649,7 @@ def create_cycle(path,group_id,payload:CalendarCycleCreate):
             if previous["payload_hash"]!=fingerprint:
                 raise ValueError("Request key already used for a different schedule")
             return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
-        for p in payload.phases:
+        for p in (p for phases in cycles for p in phases):
             validate_scope(db,group_id,p)
             # Blank legacy phase may represent the same event. Never silently duplicate it.
             existing=db.execute("""SELECT starts_at,precision FROM calendar_occurrences
@@ -627,16 +659,17 @@ def create_cycle(path,group_id,payload:CalendarCycleCreate):
                  (parse(p.starts_at).date()+timedelta(days=1)).isoformat())).fetchall()
             if any(r["starts_at"]==p.starts_at or r["precision"]=="date" or p.precision=="date" for r in existing):
                 raise ValueError("A matching scheduled or cancelled phase already exists; review the calendar")
-        cycle_id=uuid.uuid4().hex
-        db.execute("INSERT INTO calendar_cycles(id,group_id,kind) VALUES (?,?,?)",(cycle_id,group_id,payload.kind))
         items=[]
-        for p in payload.phases:
-            oid=uuid.uuid4().hex
-            db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'manual')""",
-                (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence))
-            audit(db,"created",oid)
-            items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(oid,)).fetchone()))
+        for phases in cycles:
+            cycle_id=uuid.uuid4().hex
+            db.execute("INSERT INTO calendar_cycles(id,group_id,kind) VALUES (?,?,?)",(cycle_id,group_id,payload.kind))
+            for p in phases:
+                oid=uuid.uuid4().hex
+                db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'manual')""",
+                    (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence))
+                audit(db,"created",oid)
+                items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(oid,)).fetchone()))
         db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)",(group_id,payload.request_key,fingerprint,json.dumps([r["id"] for r in items])))
         return {"items":items}
 

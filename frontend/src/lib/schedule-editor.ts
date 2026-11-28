@@ -90,3 +90,8 @@ export function bearCycleDates(fields:ScheduleFields,anchor:string,key:string,co
   if(!Number.isFinite(first)||!Number.isFinite(start)||new Date(first).toISOString().slice(0,16)+"Z"!==anchor||Number(anchor.slice(0,4))<2000||Number(anchor.slice(0,4))>2099||start<first||start-first>=minutes*60000)throw Error("First trap must fall within the first shared Bear cycle.");
   return Array.from({length:count},(_,i)=>new Date(first+i*minutes*60000).toISOString().slice(0,10));
 }
+
+export type EditScope="single"|"all"|"following";
+export type ScopedEditInfo={recurring:boolean;interval_minutes:number|null;protected_count:number;linked:boolean;following_count:number};
+export type ScopedEditPayload={scope:EditScope;schedule:ScheduleUpdate;interval_minutes?:number;preview:boolean;token?:string};
+export type ScopedEditResult=ScopedEditInfo&{items:CalendarOccurrence[];before:CalendarOccurrence[];token:string};

@@ -10,6 +10,7 @@ import type {CycleKind} from "../lib/calendar-cycles";
 import {cycleTypes} from "../lib/calendar-event-options";
 import { CycleEditor, CycleDetails } from "../components/CycleEditor";
 import { CalendarEventLink } from "../components/CalendarEventLink";
+import {CycleBattleWorkspace} from "../components/CycleBattleWorkspace";
 import { EventStageTimeline } from "../components/EventStageTimeline";
 import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
@@ -71,6 +72,7 @@ export function CalendarPage(){
   const selected=detail?.groupId===groupId?detail.row:null;
   const editing=editor?.groupId===groupId?editor:null;
   const reference=selected?gameEventForCalendar(selected.event_type):undefined;
+  const battleCycle=selected?.cycle_id&&["foundry","canyon"].includes(selected.event_type)?selected.cycle_id:null;
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
   const filterCount=Number(scope!=="all")+Number(recordFilter!=="all")+Number(showCancelled);
   const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
@@ -93,7 +95,17 @@ export function CalendarPage(){
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
     {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onEvent={type=>{if(!allowNavigation())return;closeWorkspace();if(cycleTypes[type])setCycleEditor(cycleTypes[type]);else setEditor({groupId,row:null,manualType:type});}} onAdvanced={type=>{closeWorkspace();setEditor({groupId,row:null,manualType:type});}} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
     {editing&&writable&&<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} forecast={editing.forecast} manualType={editing.manualType} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>} 
-    {error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
+    {selected&&battleCycle&&<section className="data-panel calendar-detail calendar-battle-card" aria-label="Battle event">
+      <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{eventLabel(selected.event_type)}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Back to calendar</button></div>
+      <p>{owner(selected)}</p>
+      <CycleBattleWorkspace key={battleCycle} groupId={groupId} cycleId={battleCycle} writable={writable} blocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRefresh={()=>setRetry(n=>n+1)}/>
+      <details className="calendar-battle-settings"><summary>Schedule settings</summary>
+        <p>Selected phase: {selected.phase} · {formatDate(selected.starts_at)} · {status(selected)}</p>
+        <CycleDetails key={battleCycle+":"+retry} groupId={groupId} cycleId={battleCycle} writable={writable&&!workspaceBlocked} onChanged={saved} onSelect={row=>{if(writable&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setEditor({groupId,row});}}}/>
+        {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}
+      </details>
+    </section>}
+    {!battleCycle&&(error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>
       {view!=="Agenda"&&<div className="calendar-weekdays" aria-hidden="true">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span key={d}>{d}</span>)}</div>}
       <div className="calendar-days">{days.map(date=>{
@@ -106,8 +118,8 @@ export function CalendarPage(){
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
         </section>;
       })}</div>
-    </section>}
-    {selected&&<section className="data-panel calendar-detail" aria-label="Schedule details">
+    </section>)}
+    {selected&&!battleCycle&&<section className="data-panel calendar-detail" aria-label="Schedule details">
       <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{(selected.event_type.startsWith("game:")?reference?.name??eventLabel(selected.event_type):eventLabel(selected.event_type))}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Close details</button></div>
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>

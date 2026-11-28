@@ -5,14 +5,12 @@ from test_calendar import setup
 def test_grouped_bear_across_hosts_and_dates(authenticated_client,settings):
     c=authenticated_client
     root,aid=setup(c)
-    # Use the real schema with a second active host; no roster or results.
-    with connection(settings.database_path) as db:
-        db.execute("""INSERT INTO alliances(id,group_id,name,tag,state_id,alliance_type,status)
-            SELECT 'test-academy',group_id,'Academy','ACA',state_id,'academy','active' FROM alliances WHERE id=?""",(aid,))
-        db.commit()
+    academy=c.post(root+"/alliances",json={"name":"Academy","tag":"ACA","state_id":"1001"})
+    assert academy.status_code==201,academy.text
+    academy_id=academy.json()["id"]
     base={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-06-01T15:00Z","precision":"minute","phase":"Trap 1"}
     first=c.post(root+"/calendar",json=base).json()["items"][0]
-    second=c.post(root+"/calendar",json={**base,"alliance_id":"test-academy","starts_at":"2090-06-02T20:00Z"}).json()["items"][0]
+    second=c.post(root+"/calendar",json={**base,"alliance_id":academy_id,"starts_at":"2090-06-02T20:00Z"}).json()["items"][0]
     t1=root+"/calendar/"+first["id"]
     t2=root+"/calendar/"+second["id"]
     p={"revision":1,"cycle_date":"2090-06-01","session_key":"trap_1"}

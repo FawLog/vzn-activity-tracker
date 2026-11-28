@@ -436,6 +436,36 @@ def create_api_router(settings: Settings) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
 
+    @router.get("/groups/{group_id}/calendar/follow")
+    async def get_calendar_follow(request: Request,group_id: str,event_type: str,state_id: str,starts_on: date):
+        require_admin(request,settings)
+        try:
+            return calendar.preview_follow(settings.database_path,group_id,calendar.FollowSchedule(event_type=event_type,state_id=state_id,starts_on=starts_on))
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422,detail=str(error)) from error
+
+    @router.post("/groups/{group_id}/calendar/follow")
+    async def post_calendar_follow(request: Request,group_id: str,payload: calendar.FollowSchedule):
+        require_csrf(request,require_admin(request,settings))
+        try:
+            return calendar.enable_follow(settings.database_path,group_id,payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
+    @router.delete("/groups/{group_id}/calendar/follow/{rule_id}")
+    async def delete_calendar_follow(request: Request,group_id: str,rule_id: str):
+        require_csrf(request,require_admin(request,settings))
+        try:
+            return calendar.stop_follow(settings.database_path,group_id,rule_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
     @router.post("/groups/{group_id}/calendar", status_code=201)
     async def post_calendar(request: Request, group_id: str, payload: calendar.CalendarCreate) -> dict[str, object]:
         session = require_admin(request, settings)

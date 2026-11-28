@@ -4,8 +4,9 @@ import { api, type StateCalendarProfile } from "../lib/api";
 import { eventTypeOptions, eventLabel } from "../lib/format";
 import type { Alliance } from "../lib/types";
 import type { CalendarOccurrence } from "../lib/calendar";
-import { gameEventForCalendar, repeatLabel } from "../lib/game-event-catalog";
-import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, referenceDuration, referenceEnd, stateAge, type RepeatMode } from "../lib/game-forecast";
+import { gameEventForCalendar, eventRepeatLabel, followType } from "../lib/game-event-catalog";
+import { FollowScheduleEditor } from "./FollowScheduleEditor";
+import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, referenceDuration, referenceEnd, referenceRepeat, stateAge, type RepeatMode } from "../lib/game-forecast";
 import { futureChange, precisionChange, scheduleFields, serializeTime, utcInput, templateFields, bearCycleDates, moveScheduleStart, futureEditDates, type FuturePreview, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
 
 import type { RotationForecast } from "../lib/state-rotation";
@@ -16,34 +17,36 @@ type Props={manualType?:string;forecast?:RotationForecast;groupId:string;allianc
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
 export function ScheduleEditor(props:Props){
   const [type,setType]=useState(props.manualType??"bear:batch");
+  const [independent,setIndependent]=useState(false);
+  function choose(value:string){if(!allowNavigation())return;if(cycleTypes[value]){props.onCycle?.(cycleTypes[value]);return;}setType(value);setIndependent(false);}
+  if(!props.row&&!props.forecast&&followType(type)&&!independent)return <FollowScheduleEditor key={type} eventType={type} groupId={props.groupId} alliances={props.alliances} preferred={props.preferred} day={props.day} onEvent={choose} onManual={()=>{if(allowNavigation())setIndependent(true);}} onClose={props.onClose} onSaved={props.onSaved}/>;
   if(!props.row&&!props.forecast&&type==="bear:batch")return <BearScheduleEditor groupId={props.groupId} alliances={props.alliances} preferred={props.preferred} day={props.day} onClose={props.onClose} onSaved={props.onSaved} onEvent={value=>{
     if(cycleTypes[value]){props.onCycle?.(cycleTypes[value]);return;}
-    if(allowNavigation())setType(value);
+    if(allowNavigation()){setType(value);setIndependent(false);}
   }}/>;
-  return <GeneralScheduleEditor {...props} initialType={type==="bear:batch"?"bear_trap":type} onBear={()=>{if(allowNavigation())setType("bear:batch");}}/>;
+  return <GeneralScheduleEditor key={type} {...props} initialType={type==="bear:batch"?"bear_trap":type} onBear={()=>choose("bear:batch")} onFollow={choose}/>;
 }
-function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved,initialType,onBear}:Props&{initialType:string;onBear:()=>void}){
-  const initialInterval=fixedGameInterval(gameEventForCalendar(initialType));
-  const initialRepeat=initialInterval!==null&&initialInterval%1440===0&&initialType!=="alliance_mobilization"?initialInterval:null;
+function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved,initialType,onBear,onFollow}:Props&{initialType:string;onBear:()=>void;onFollow:(type:string)=>void}){
+  const initialRepeat=referenceRepeat(gameEventForCalendar(initialType));
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
   const [autoEnd,setAutoEnd]=useState(!row&&!forecast);
   const [fields,setFields]=useState<ScheduleFields>(()=>{
     if(row)return scheduleFields(row);
     if(forecast)return {...forecast.fields};
-    const next:ScheduleFields={event_type:initialType,scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"};
+    const next:ScheduleFields={event_type:initialType,scope:followType(initialType)?"state":"alliance",alliance_id:followType(initialType)?null:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"};
     return {...next,ends_at:referenceEnd(gameEventForCalendar(initialType),next)};
   });
-  const [count,setCount]=useState(forecast?.count??(!row&&initialRepeat?Math.min(4,1+Math.floor(366*1440/initialRepeat)):1));
+  const [count,setCount]=useState(forecast?.count??(row?1:initialRepeat.count));
   const [renew,setRenew]=useState(!forecast);
   const [groupBear,setGroupBear]=useState(false);
   const [bearAnchor,setBearAnchor]=useState("");
   const [bearKey,setBearKey]=useState("");
   const [advanced,setAdvanced]=useState(!!row);
-  const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
-  const [months,setMonths]=useState(1);
-  const [weekdays,setWeekdays]=useState<number[]>([1,3]);
-  const [days,setDays]=useState(forecast?forecast.interval/1440:initialRepeat?initialRepeat/1440:2);
+  const [repeatMode,setRepeatMode]=useState<RepeatMode>(row||forecast?"fixed":initialRepeat.mode);
+  const [months,setMonths]=useState(initialRepeat.months);
+  const [weekdays,setWeekdays]=useState<number[]>(initialRepeat.weekdays.length?initialRepeat.weekdays:[1,3]);
+  const [days,setDays]=useState(forecast?forecast.interval/1440:initialRepeat.days);
   const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
   const [profiles,setProfiles]=useState<StateCalendarProfile[]>([]);
   const [templates,setTemplates]=useState<ScheduleTemplate[]>([]);
@@ -93,7 +96,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   const changePrecision=(precision:ScheduleFields["precision"])=>setFields(old=>{const next=precisionChange(old,precision);return autoEnd?{...next,ends_at:referenceEnd(gameEventForCalendar(next.event_type),next)}:next;});
   const reference=gameEventForCalendar(fields.event_type);
   const suggested=fixedGameInterval(reference);
-  const rule=reference?.schedule?.repeat;
+  const referencePlan=referenceRepeat(reference,true);
   const minutes=days*({days:1440,hours:60,minutes:1}[intervalUnit]);
   const rolling=!row&&renew&&count>1&&count<=60&&repeatMode==="fixed"&&minutes>=1440;
   const grouping=!row&&groupBear&&fields.event_type==="bear_trap"&&fields.scope==="alliance";
@@ -111,22 +114,23 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey}));
   useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey})||manualDate!==null||!!templateName.trim()||decision!==null,busy);
   function useReference(){
-    if(suggested===null)return;
-    const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
-    setRepeatMode("fixed");setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(4);setReviewed(null);
+    if(suggested!==null){
+      const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
+      setRepeatMode("fixed");setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(Math.min(4,1+Math.floor(366*1440/suggested)));setReviewed(null);
+    }else if(referencePlan.count>1){
+      setRepeatMode(referencePlan.mode);setMonths(referencePlan.months);setWeekdays(referencePlan.weekdays);setCount(referencePlan.count);setReviewed(null);
+    }
   }
   function changeEvent(type:string){
     if(!row&&type==="bear:batch"){onBear();return;}
     if(!row&&cycleTypes[type]){onCycle?.(cycleTypes[type]);return;}
+    if(!row&&followType(type)){onFollow(type);return;}
     setReviewed(null);setGroupBear(false);setBearAnchor("");setBearKey("");
     if(row){patch({event_type:type});return;}
     setAutoEnd(true);
-    setFields(old=>{const next={...old,event_type:type,ends_at:null};return {...next,ends_at:referenceEnd(gameEventForCalendar(type),next)};});
-    const event=gameEventForCalendar(type),interval=fixedGameInterval(event);
-    // Reference cadence is not proof of an alliance's actual local schedule.
-    if(interval!==null&&interval%1440===0&&type!=="alliance_mobilization"){
-      setRepeatMode("fixed");setIntervalUnit("days");setDays(interval/1440);setCount(Math.min(4,1+Math.floor(366*1440/interval)));
-    }else{setCount(1);setRepeatMode("fixed");setDays(2);setIntervalUnit("days");}
+    setFields(old=>{const next={...old,event_type:type,phase:"",ends_at:null};return {...next,ends_at:referenceEnd(gameEventForCalendar(type),next)};});
+    const plan=referenceRepeat(gameEventForCalendar(type));
+    setRepeatMode(plan.mode);setIntervalUnit("days");setDays(plan.days);setMonths(plan.months);setWeekdays(plan.weekdays.length?plan.weekdays:[1,3]);setCount(plan.count);
   }
   const localTemplates=templates.filter(t=>t.alliance_id===fields.alliance_id&&fields.scope==="alliance");
   function applyTemplate(id:string){
@@ -194,6 +198,8 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
         }
       }else{
         if(previewError)throw Error(previewError);
+        if(reference?.id==="hall-of-chief"&&!["Season 1","Season 2"].includes(fields.phase))throw Error("Choose the event season");
+        if(reference?.id==="frostfire-mine"&&fields.precision!=="minute")throw Error("Choose the actual game time slot");
         if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
         const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1||forecast?{reject_existing:true}:{}) ,...(rolling?{rolling:true}:{}) ,...(grouping?{bear_cycle_anchor:bearAnchor,bear_session_key:bearKey}:{})};
         const requestFingerprint=JSON.stringify(payload);
@@ -214,13 +220,16 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
         {!row&&["foundry","canyon"].includes(fields.event_type)&&onCycle&&<button type="button" className="button button--quiet" onClick={()=>onCycle(fields.event_type as CycleKind)}>Use full event cycle</button>}
         <label>Schedule owner<select disabled={!!row?.cycle_id} required value={fields.scope==="alliance"?fields.alliance_id??"":"state:"+fields.state_id} onChange={e=>changeOwner(e.target.value)}><option value="" disabled>Choose owner</option>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}{states.map(s=><option key={s} value={"state:"+s}>State #{s}</option>)}</select></label>
         {!row&&localTemplates.length>0&&<label>Saved alliance template<select value="" onChange={e=>applyTemplate(e.target.value)}><option value="">Choose a template</option>{localTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
+        {!row&&followType(fields.event_type)&&<button type="button" className="button button--quiet" onClick={()=>onFollow(fields.event_type)}>Follow parent event instead</button>}
+        {!row&&reference?.id==="hall-of-chief"&&<label>Event season<select value={fields.phase} onChange={e=>{setAutoEnd(true);setFields(old=>{const next={...old,phase:e.target.value};return {...next,ends_at:referenceEnd(reference,next)};});}}><option value="">Choose season</option><option value="Season 1">Season 1</option><option value="Season 2">Season 2</option></select></label>}
+        {!row&&reference?.id==="frostfire-mine"&&<label>Game time slot (UTC)<select value={fields.precision==="minute"?fields.starts_at.slice(11,16):""} onChange={e=>{const time=e.target.value;if(!time)return;setAutoEnd(true);setFields(old=>{const next={...old,precision:"minute" as const,starts_at:(old.starts_at.slice(0,10)||day)+"T"+time+"Z"};return {...next,ends_at:referenceEnd(reference,next)};});}}><option value="">Choose time slot</option>{reference.schedule?.runs?.map(r=>r.startTimeUtc&&<option key={r.startTimeUtc} value={r.startTimeUtc}>{r.startTimeUtc}</option>)}</select></label>}
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>{const start=e.target.value?serializeTime(e.target.value,fields.precision):"";setFields(old=>{const next=row?moveScheduleStart(old,start):{...old,starts_at:start};return autoEnd?{...next,ends_at:referenceEnd(gameEventForCalendar(next.event_type),next)}:next;});}}/></label>
-        {!row&&referenceDuration(reference,fields.event_type)!==null&&<div className="calendar-repeat-summary"><strong>{fields.ends_at?"Ends (exclusive): "+fields.ends_at:"End time not set"}</strong><small>{autoEnd?(fields.precision==="date"&&referenceDuration(reference,fields.event_type)!%1440?"Game duration; date-only covers occupied dates. Choose UTC time for the exact end.":"From game reference; verify local timing."):"Manual end override."}</small>{!autoEnd&&<button type="button" className="button button--quiet" onClick={()=>{setAutoEnd(true);setFields(old=>({...old,ends_at:referenceEnd(reference,old)}));}}>Use game duration</button>}</div>}
-        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);setGroupBear(false);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
+        {!row&&referenceDuration(reference,fields.event_type,fields.phase)!==null&&<div className="calendar-repeat-summary"><strong>{fields.ends_at?"Ends (exclusive): "+fields.ends_at:"End time not set"}</strong><small>{autoEnd?(fields.precision==="date"&&referenceDuration(reference,fields.event_type,fields.phase)!%1440?"Game duration; date-only covers occupied dates. Choose UTC time for the exact end.":"From game reference; verify local timing."):"Manual end override."}</small>{!autoEnd&&<button type="button" className="button button--quiet" onClick={()=>{setAutoEnd(true);setFields(old=>({...old,ends_at:referenceEnd(reference,old)}));}}>Use game duration</button>}</div>}
+        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Every "+months+" calendar month"+(months===1?"":"s"):"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{(suggested!==null||referencePlan.count>1)&&<button type="button" className="button button--quiet" onClick={useReference}>{referencePlan.mode==="months"?"Use monthly estimate":"Use game repeat rule"}</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);setGroupBear(false);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
         <button type="button" className="button button--quiet calendar-advanced-toggle" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide advanced settings":"Advanced settings"}</button>
         {advanced&&<><label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>{setAutoEnd(false);patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null});}}/></label>
-        <label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>
+        {(!!row||reference?.id!=="hall-of-chief")&&<label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>}
         <label>Confidence<select aria-label="Confidence" value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
         <label>Occurrences (including first)<input type="number" min={1} max={180} required value={count} onChange={e=>setCount(Number(e.target.value))}/></label>
@@ -239,12 +248,10 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
         {advanced&&<><p>State #{fields.state_id} · {profile?.source==="whiteoutstats"?"WhiteoutStats":profile?.source==="manual"?"Saved manual date":"Opening date unavailable"}{profile?.age_days!=null?" · "+profile.age_days+" days old":""}{profile?.last_success_at?" · Last received "+profile.last_success_at:""}{profile?.last_status==="failed"?" · Provider refresh failed; cached date retained":""}</p>
         {profile&&<div className="calendar-controls"><button type="button" className="button button--quiet" disabled={busy||!stateStart} onClick={()=>void saveStateDate(false)}>Save state date override</button>{profile.manual_opened_on&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>void saveStateDate(true)}>Use provider date</button>}</div>}
         {profileError&&<p role="alert">{profileError}</p>}
-        {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{repeatLabel(reference.schedule?.repeat)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
-          {rule?.kind==="every"&&rule.unit==="months"&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setRepeatMode("months");setMonths(rule.every);setCount(4);setReviewed(null);}}>Use calendar-month rule (verify local rotation)</button>}
-          {rule?.kind==="weekly"&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setRepeatMode("weekdays");setWeekdays(rule.weekdays.map(d=>["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].indexOf(d.toLowerCase())));setCount(4);setReviewed(null);}}>Use weekday rule</button>}
+        {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{eventRepeatLabel(reference)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
           {warnings.map(w=><p key={w}>{w}</p>)}
           <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}</>}
-        {!advanced&&warnings.map(w=><p key={w}>{w}</p>)}
+        {!advanced&&<>{reference&&<p>Game reference: {eventRepeatLabel(reference)} · {reference.duration??"Duration not specified"}</p>}{warnings.map(w=><p key={w}>{w}</p>)}</>}
         {count>1&&<div className="calendar-series-preview"><h3>Proposed schedule</h3><p>Future occurrences are estimated. Maximum horizon: 366 days.</p>
           {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map((r,i)=><li key={r.start}>{r.start}{r.end?" — "+r.end:""} · {r.confidence}{cycleDates[i]?" · Cycle "+cycleDates[i]+" · "+bearKey.replaceAll("_"," "):""}</li>)}</ul>}
           <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!previewError} checked={reviewed===fingerprint} onChange={e=>setReviewed(e.target.checked?fingerprint:null)}/>I reviewed these dates and confirmed the local repeat pattern</label>

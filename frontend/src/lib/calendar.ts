@@ -11,6 +11,10 @@ export interface CalendarReview {
   final_attendance_review:boolean|null;
 }
 export interface CalendarOccurrence {
+  follow_rule_id?:string;
+  follow_parent_id?:string;
+  follow_parent_label?:string;
+  follow_active?:boolean;
   review?:CalendarReview;
   rolling_status?:"active"|"stopped"|"conflict";
   entry_cycle_date?:string|null;

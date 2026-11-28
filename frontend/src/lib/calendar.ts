@@ -1,5 +1,17 @@
 export type CalendarView = "Agenda" | "Week" | "Month";
+export type ReviewFlag="reviewed"|"partial"|"not_recorded"|"not_applicable";
+export interface CalendarReview {
+  publication:"draft"|"published";
+  scope:"session"|"event";
+  session_count:number;
+  roster:ReviewFlag;
+  registration:ReviewFlag;
+  attendance:ReviewFlag;
+  results:ReviewFlag;
+  final_attendance_review:boolean|null;
+}
 export interface CalendarOccurrence {
+  review?:CalendarReview;
   id: string;
   group_id: string;
   series_id: string | null;

@@ -533,6 +533,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(scheduleEditor).toHaveCount(0);
     await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1.*15:00 UTC.*Confirmed/})).toBeVisible();
     await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 2.*20:00 UTC.*Confirmed/})).toBeVisible();
+    await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
     await calendar.getByRole("button",{name:/Bear Trap.*Trap 1.*15:00 UTC.*Confirmed/}).click();
     const bearCard=calendar.getByRole("region",{name:"Alliance event",exact:true});
     const bearData=bearCard.getByRole("region",{name:"Shared event data"});
@@ -553,6 +554,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(bearData.getByRole("button",{name:/Trap 1 ·/})).toBeVisible();
     await expect(bearData.getByRole("button",{name:/Trap 2 ·/})).toBeVisible();
     await bearCard.getByRole("button",{name:"Back to calendar",exact:true}).click();
+    await page.unroute("**/api/v1/ocr/status");
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
     await cycleEditor.getByLabel("Event starts (Monday, 00:00 UTC)").fill("2091-06-04");
@@ -622,6 +624,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect((await moved).status()).toBe(200);
     await expect(review).toHaveCount(0);
     // Any phase opens the same cycle-level editor; no separate registration or battle card hunt.
+    await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
     await calendar.getByRole("region",{name:"Jul 03, 2091",exact:true}).getByRole("button",{name:/Canyon Clash.*Voting.*Estimated/}).click();
     const card=calendar.getByRole("region",{name:"Battle event",exact:true});
     const workspace=card.getByRole("region",{name:"Battle event data"});
@@ -647,6 +650,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(workspace.getByRole("button",{name:/Legion 1 · Registration pending/})).toBeVisible();
     await expect(workspace.getByRole("button",{name:/Legion 2 · Registration pending/})).toBeVisible();
     await card.getByRole("button",{name:"Back to calendar"}).click();
+    await page.unroute("**/api/v1/ocr/status");
   }
 
   // Verify Overall default, low-score sorting, missing evidence and responsive table.

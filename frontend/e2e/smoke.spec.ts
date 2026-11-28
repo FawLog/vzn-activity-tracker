@@ -498,6 +498,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.getByRole("button",{name:"Open calendar",exact:true}).click();
   await expect(page).toHaveURL(/\/calendar$/);
+  await page.locator("main").getByRole("button",{name:"More calendar options",exact:true}).click();
   await page.locator("main").getByRole("button",{name:"Event history",exact:true}).click();
   await expect(page).toHaveURL(/\/events$/);
   const foundryEvent = page.getByRole("button", {name:"Foundry Battle",exact:true}).first();

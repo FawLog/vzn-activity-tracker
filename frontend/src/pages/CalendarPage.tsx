@@ -2,6 +2,8 @@ import { allowNavigation } from "../lib/navigation-guard";
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, SlidersHorizontal, Ellipsis } from "lucide-react";
 import { ScheduleEditor } from "../components/ScheduleEditor";
+import { StateForecastPanel } from "../components/StateForecastPanel";
+import type { RotationForecast } from "../lib/state-rotation";
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
 import { CycleEditor, CycleDetails } from "../components/CycleEditor";
@@ -25,6 +27,7 @@ export function CalendarPage(){
   const {selectedGroup,alliances,selectedAlliance}=useGroupContext();
   const groupId=selectedGroup?.id;
   const [showCatalog,setShowCatalog]=useState(false);
+  const [showForecast,setShowForecast]=useState(false);
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [moreOpen,setMoreOpen]=useState(false);
   const [workspaceBlocked,setWorkspaceBlocked]=useState(false);
@@ -37,7 +40,7 @@ export function CalendarPage(){
   const [loaded,setLoaded]=useState<{key:string;items:CalendarOccurrence[]}|null>(null);
   const [failure,setFailure]=useState<{key:string;message:string}|null>(null);
   const [retry,setRetry]=useState(0);
-  const [editor,setEditor]=useState<{groupId:string;row:CalendarOccurrence|null}|null>(null);
+  const [editor,setEditor]=useState<{groupId:string;row:CalendarOccurrence|null;forecast?:RotationForecast}|null>(null);
   const [detail,setDetail]=useState<{groupId:string;row:CalendarOccurrence}|null>(null);
   const {start,end,days}=calendarRange(day,view);
   const key=groupId+"|"+start+"|"+end+"|"+retry;
@@ -53,14 +56,14 @@ export function CalendarPage(){
   },[groupId,start,end,key]);
   const items=loaded?.key===key?loaded.items:null;
   const [pendingOccurrence,setPendingOccurrence]=useState(()=>new URLSearchParams(window.location.search).get("occurrence"));
-  useEffect(()=>{const row=items?.find(r=>r.id===pendingOccurrence);if(row&&groupId&&!editor&&!cycleEditor&&!detail){setDetail({groupId,row});setPendingOccurrence(null);}},[items,groupId,pendingOccurrence,editor,cycleEditor,detail]);
+  useEffect(()=>{const row=items?.find(r=>r.id===pendingOccurrence);if(row&&groupId&&!editor&&!cycleEditor&&!detail&&!showForecast){setDetail({groupId,row});setPendingOccurrence(null);}},[items,groupId,pendingOccurrence,editor,cycleEditor,detail,showForecast]);
   const error=failure?.key===key?failure.message:"";
   const visible=(items??[]).filter(row=>(showCancelled||row.schedule_status!=="cancelled") &&
     (scope==="all"||(scope==="state"?row.scope==="state":row.scope==="alliance"&&row.alliance_id===selectedAlliance?.id)) &&
     (recordFilter==="all"||(recordFilter==="unlinked"?!row.review:row.review?.publication===recordFilter)));
   const owner=(row:CalendarOccurrence)=>row.scope==="state"?"State #"+row.state_id:(alliances.find(a=>a.id===row.alliance_id)?.tag??"Alliance")+" · #"+row.state_id;
   const status=(row:CalendarOccurrence)=>row.schedule_status==="cancelled"?"Cancelled":row.confidence==="confirmed"?"Confirmed":"Estimated";
-  const closeWorkspace=()=>{setDetail(null);setEditor(null);setCycleEditor(null);setPendingOccurrence(null);};
+  const closeWorkspace=()=>{setShowForecast(false);setDetail(null);setEditor(null);setCycleEditor(null);setPendingOccurrence(null);};
   const changeDay=(next:string)=>{if(next===day||workspaceBlocked||!allowNavigation())return;closeWorkspace();setDay(next);};
   if(!groupId)return <div className="page"><EmptyState title="No active group" description="Select a group to view its schedule."/></div>;
   const selected=detail?.groupId===groupId?detail.row:null;
@@ -77,16 +80,17 @@ export function CalendarPage(){
       <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} disabled={workspaceBlocked} onClick={()=>{if(mode===view||!allowNavigation())return;closeWorkspace();setView(mode);}}>{mode}</button>)}</div>
         <div className="calendar-utility"><button className="icon-button" aria-label="Filters" aria-expanded={filtersOpen} title="Filters" onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal size={18}/>{filterCount>0&&<small>{filterCount}</small>}</button><button className="icon-button" aria-label="More calendar options" aria-expanded={moreOpen} title="More calendar options" onClick={()=>setMoreOpen(v=>!v)}><Ellipsis size={20}/></button></div>
       </div>
-      {moreOpen&&<div className="calendar-more"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button><button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>{setShowCatalog(v=>!v);setMoreOpen(false);}}>Game event catalog</button></div>}
+      {moreOpen&&<div className="calendar-more"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button><button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>{setShowCatalog(v=>!v);setMoreOpen(false);}}>Game event catalog</button><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;closeWorkspace();setShowCatalog(false);setMoreOpen(false);setShowForecast(true);}}>State progression &amp; forecast</button></div>}
       {filtersOpen&&<div className="calendar-filter-panel">
       <label className="select-control">Scope<select disabled={workspaceBlocked} value={scope} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setScope(e.target.value);}}><option value="all">All events</option><option value="alliance">Current alliance</option><option value="state">State events</option></select></label>
       <label className="select-control">Actual record<select disabled={workspaceBlocked} value={recordFilter} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setRecordFilter(e.target.value);}}><option value="all">All record statuses</option><option value="unlinked">No linked record</option><option value="draft">Draft records</option><option value="published">Published records</option></select></label>
       <label className="calendar-checkbox"><input type="checkbox" disabled={workspaceBlocked} checked={showCancelled} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setShowCancelled(e.target.checked);}}/>Show cancelled</label>
       </div>}
     </div>
+    {showForecast&&<StateForecastPanel key={groupId} groupId={groupId} preferredState={selectedAlliance?.state_id} writable={writable} onClose={()=>setShowForecast(false)} onReview={forecast=>{if(!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null,forecast});}}/>}
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
     {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
-    {editing&&writable&&<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>} 
+    {editing&&writable&&<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} forecast={editing.forecast} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>} 
     {error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>
       {view!=="Agenda"&&<div className="calendar-weekdays" aria-hidden="true">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span key={d}>{d}</span>)}</div>}

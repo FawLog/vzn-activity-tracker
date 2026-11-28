@@ -293,6 +293,13 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(calendar.getByRole("button",{name:"Game event catalog",exact:true})).toHaveCount(0);
   await expect(calendar.getByLabel("Scope")).toHaveCount(0);
   await calendar.getByRole("button",{name:"More calendar options"}).click();
+  await calendar.getByRole("button",{name:"State progression & forecast",exact:true}).click();
+  const forecastPanel=calendar.getByRole("region",{name:"State progression and forecast"});
+  await expect(forecastPanel).toBeVisible();
+  await expect(forecastPanel.getByText("Reference: Whiteout Survival Data 0.11.0.",{exact:false})).toBeVisible();
+  await forecastPanel.getByRole("button",{name:"Close forecast",exact:true}).click();
+  await expect(forecastPanel).toHaveCount(0);
+  await calendar.getByRole("button",{name:"More calendar options"}).click();
   await calendar.getByRole("button",{name:"Game event catalog",exact:true}).click();
   const catalog=calendar.getByRole("region",{name:"Game event catalog"});
   await expect(catalog).toContainText("65 of 65 events");

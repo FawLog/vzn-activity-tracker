@@ -85,7 +85,11 @@ export function eventCatalogPlugin(): Plugin {
       const root = join(directory, "../..");
       const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
       if (manifest.version !== version) throw new Error("Review event catalog before upgrading whiteout-survival-data");
-      const timeline = JSON.parse(readFileSync(join(root, "data/server-timeline.json"), "utf8")) as {day:number;eventIds:string[]}[];
+      const timeline = JSON.parse(readFileSync(join(root, "data/server-timeline.json"), "utf8")) as {day:number;eventIds:string[];heroIds?:string[];petIds?:string[];expertIds?:string[];fireCrystalLevelIds?:string[];unlocks?:{name:string;requirement?:string}[]}[];
+      const milestones = timeline.map(m=>{
+        if(!Number.isInteger(m.day)||m.day<0)throw Error("Invalid state timeline day");
+        return {day:m.day,eventIds:m.eventIds??[],heroIds:m.heroIds??[],petIds:m.petIds??[],expertIds:m.expertIds??[],fireCrystalLevelIds:m.fireCrystalLevelIds??[],unlocks:(m.unlocks??[]).map(u=>({name:u.name,requirement:u.requirement}))};
+      }).sort((a,b)=>a.day-b.day);
       const imports: string[] = [];
       const rows = files.map((file, index) => {
         const event = JSON.parse(readFileSync(join(directory, file), "utf8"));
@@ -112,7 +116,7 @@ export function eventCatalogPlugin(): Plugin {
           hasVariants: Array.isArray(event.versions) && event.versions.length > 0};
         return "{..."+JSON.stringify(summary)+",icon:"+icon+"}";
       });
-      return imports.join("\n") + "\nexport const catalogVersion = "+JSON.stringify(version)+";\nexport const catalog = ["+rows.join(",")+"];";
+      return imports.join("\n") + "\nexport const catalogVersion = "+JSON.stringify(version)+";\nexport const catalog = ["+rows.join(",")+"];\nexport const stateTimeline = "+JSON.stringify(milestones)+";";
     }
   };
 }

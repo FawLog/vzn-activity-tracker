@@ -8,14 +8,15 @@ import { gameEventForCalendar, repeatLabel, extraCalendarEvents } from "../lib/g
 import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, stateAge, type RepeatMode } from "../lib/game-forecast";
 import { futureChange, precisionChange, scheduleFields, serializeTime, utcInput, templateFields, bearCycleDates, moveScheduleStart, futureEditDates, type FuturePreview, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
 
-type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:"canyon"|"svs")=>void;onClose:()=>void;onSaved:(day:string)=>void};
+import type { RotationForecast } from "../lib/state-rotation";
+type Props={forecast?:RotationForecast;groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:"canyon"|"svs")=>void;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
-export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onClose,onSaved}:Props){
+export function ScheduleEditor({forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved}:Props){
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
-  const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
-  const [count,setCount]=useState(1);
-  const [renew,setRenew]=useState(true);
+  const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):forecast?{...forecast.fields}:{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
+  const [count,setCount]=useState(forecast?.count??1);
+  const [renew,setRenew]=useState(!forecast);
   const [groupBear,setGroupBear]=useState(false);
   const [bearAnchor,setBearAnchor]=useState("");
   const [bearKey,setBearKey]=useState("");
@@ -23,7 +24,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
   const [months,setMonths]=useState(1);
   const [weekdays,setWeekdays]=useState<number[]>([1,3]);
-  const [days,setDays]=useState(2);
+  const [days,setDays]=useState(forecast?forecast.interval/1440:2);
   const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
   const [profiles,setProfiles]=useState<StateCalendarProfile[]>([]);
   const [templates,setTemplates]=useState<ScheduleTemplate[]>([]);
@@ -172,7 +173,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
       }else{
         if(previewError)throw Error(previewError);
         if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
-        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1?{reject_existing:true}:{}) ,...(rolling?{rolling:true}:{}) ,...(grouping?{bear_cycle_anchor:bearAnchor,bear_session_key:bearKey}:{})};
+        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1||forecast?{reject_existing:true}:{}) ,...(rolling?{rolling:true}:{}) ,...(grouping?{bear_cycle_anchor:bearAnchor,bear_session_key:bearKey}:{})};
         const requestFingerprint=JSON.stringify(payload);
         if(request.current?.fingerprint!==requestFingerprint)request.current={fingerprint:requestFingerprint,key:crypto.randomUUID()};
         const result=await api.createSchedule(groupId,{...payload,request_key:request.current.key});
@@ -183,7 +184,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const timeType=fields.precision==="date"?"date":"datetime-local";
   return <section className="data-panel calendar-editor" aria-label="Schedule editor">
     <h2>{row?"Edit scheduled event":"Add event"}</h2>
-    <p>Planning only. No attendance or result records are created.</p>
+    <p>Planning only. No attendance or result records are created.</p>{forecast&&<p>Reference forecast from confirmed state date {forecast.anchor}. Review local timing before saving. Automatic renewal is optional.</p>}
     <form onSubmit={save}>
       <fieldset disabled={busy||decision!==null} className="calendar-editor-fields">
         <label>Event type<select disabled={!!row?.cycle_id} value={fields.event_type} onChange={e=>changeEvent(e.target.value)}>{!row&&onCycle&&<optgroup label="Full event cycles"><option value="cycle:canyon">Canyon Clash — all phases</option><option value="cycle:svs">SvS — all phases</option></optgroup>}{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>

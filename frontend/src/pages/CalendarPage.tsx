@@ -1,6 +1,6 @@
 import { allowNavigation } from "../lib/navigation-guard";
 import { useEffect, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, SlidersHorizontal, Ellipsis } from "lucide-react";
 import { ScheduleEditor, FutureScheduleEditor } from "../components/ScheduleEditor";
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
@@ -11,7 +11,7 @@ import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { navigate } from "../lib/router";
-import { PageHeader } from "../components/Page";
+
 import { api } from "../lib/api";
 import { calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
 import { eventLabel, formatDate } from "../lib/format";
@@ -25,8 +25,10 @@ export function CalendarPage(){
   const {selectedGroup,alliances,selectedAlliance}=useGroupContext();
   const groupId=selectedGroup?.id;
   const [showCatalog,setShowCatalog]=useState(false);
+  const [filtersOpen,setFiltersOpen]=useState(false);
+  const [moreOpen,setMoreOpen]=useState(false);
   const [workspaceBlocked,setWorkspaceBlocked]=useState(false);
-  const [cycleEditor,setCycleEditor]=useState<string|null>(null);
+  const [cycleEditor,setCycleEditor]=useState<"canyon"|"svs"|null>(null);
   const [day,setDay]=useState(()=>{const value=new URLSearchParams(window.location.search).get("day");return value&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value+"T00:00Z").toISOString().slice(0,10)===value&&Number(value.slice(0,4))>=2000&&Number(value.slice(0,4))<=2099?value:utcDay();});
   const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches?"Agenda":"Week");
   const [scope,setScope]=useState("all");
@@ -65,23 +67,26 @@ export function CalendarPage(){
   const editing=editor?.groupId===groupId?editor:null;
   const reference=selected?gameEventForCalendar(selected.event_type):undefined;
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
+  const filterCount=Number(scope!=="all")+Number(recordFilter!=="all")+Number(showCancelled);
   const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
   return <div className="page calendar-page">
-    <PageHeader title="Event Calendar" description={selectedGroup.name+" · Plan events, enter data and review results · All times UTC"} action={<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button>}/>
-    <div className="toolbar calendar-toolbar">
-      <button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>setShowCatalog(v=>!v)}>Game event catalog</button>
-      {writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{if((editing&&!editing.row)||!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}
-      {writable&&<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(cycleEditor===groupId||!allowNavigation())return;closeWorkspace();setCycleEditor(groupId);}}>Plan event cycle</button>}
+    <header className="calendar-top"><div><h1>Event Calendar</h1><p>{selectedGroup.name} · UTC</p></div>{writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{if((editing&&!editing.row)||!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null,future:false});}}><Plus size={16}/>Add event</button>}</header>
+    <div className="calendar-compact-nav">
+      <div className="calendar-date-row"><button className="icon-button" aria-label="Previous period" disabled={workspaceBlocked} onClick={()=>changeDay(moveCalendar(day,view,-1))}><ChevronLeft/></button><h2 className="calendar-period">{view==="Month"?monthLabel(day):formatDate(start)+" – "+formatDate(addDays(end,-1))}</h2><button className="icon-button" aria-label="Next period" disabled={workspaceBlocked} onClick={()=>changeDay(moveCalendar(day,view,1))}><ChevronRight/></button><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>changeDay(utcDay())}>Today</button></div>
+      <div className="calendar-view-row">
       <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} disabled={workspaceBlocked} onClick={()=>{if(mode===view||!allowNavigation())return;closeWorkspace();setView(mode);}}>{mode}</button>)}</div>
-      <div className="calendar-controls"><button className="icon-button" aria-label="Previous period" onClick={()=>changeDay(moveCalendar(day,view,-1))}><ChevronLeft/></button><button className="button button--quiet" onClick={()=>changeDay(utcDay())}>Today</button><button className="icon-button" aria-label="Next period" onClick={()=>changeDay(moveCalendar(day,view,1))}><ChevronRight/></button></div>
+        <div className="calendar-utility"><button className="icon-button" aria-label="Filters" aria-expanded={filtersOpen} title="Filters" onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal size={18}/>{filterCount>0&&<small>{filterCount}</small>}</button><button className="icon-button" aria-label="More calendar options" aria-expanded={moreOpen} title="More calendar options" onClick={()=>setMoreOpen(v=>!v)}><Ellipsis size={20}/></button></div>
+      </div>
+      {moreOpen&&<div className="calendar-more"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button><button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>{setShowCatalog(v=>!v);setMoreOpen(false);}}>Game event catalog</button></div>}
+      {filtersOpen&&<div className="calendar-filter-panel">
       <label className="select-control">Scope<select disabled={workspaceBlocked} value={scope} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setScope(e.target.value);}}><option value="all">All events</option><option value="alliance">Current alliance</option><option value="state">State events</option></select></label>
       <label className="select-control">Actual record<select disabled={workspaceBlocked} value={recordFilter} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setRecordFilter(e.target.value);}}><option value="all">All record statuses</option><option value="unlinked">No linked record</option><option value="draft">Draft records</option><option value="published">Published records</option></select></label>
       <label className="calendar-checkbox"><input type="checkbox" disabled={workspaceBlocked} checked={showCancelled} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setShowCancelled(e.target.checked);}}/>Show cancelled</label>
+      </div>}
     </div>
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
-    {cycleEditor===groupId&&writable&&<CycleEditor key={groupId} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
-    {editing&&writable&&(editing.future&&editing.row?<FutureScheduleEditor key={groupId+editing.row.id+"future"} groupId={groupId} row={editing.row} onClose={()=>setEditor(null)} onSaved={()=>saved()}/>:<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} onClose={()=>setEditor(null)} onSaved={saved}/>)}
-    <h2 className="calendar-period">{view==="Month"?monthLabel(day):formatDate(start)+" – "+formatDate(addDays(end,-1))}</h2>
+    {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
+    {editing&&writable&&(editing.future&&editing.row?<FutureScheduleEditor key={groupId+editing.row.id+"future"} groupId={groupId} row={editing.row} onClose={()=>setEditor(null)} onSaved={()=>saved()}/>:<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>)}
     {error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>
       {view!=="Agenda"&&<div className="calendar-weekdays" aria-hidden="true">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span key={d}>{d}</span>)}</div>}

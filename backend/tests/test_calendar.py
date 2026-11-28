@@ -224,3 +224,28 @@ def test_rolling_calendar_collision_pauses_without_overwriting(authenticated_cli
     result=c.get(url+"?start=2090-05-01&end=2090-07-01").json()["items"]
     assert len(result)==3 and result[-1]==existing
     assert result[0]["rolling_status"]=="conflict"
+
+
+def test_edit_recurring_schedule_keeps_manual_exception_and_updates_cursor(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    fields={"event_type":"foundry","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-05-01T15:00Z","ends_at":"2090-05-01T16:00Z","precision":"minute"}
+    response=c.post(url,json={**fields,"interval_minutes":20160,"occurrence_count":4,"rolling":True,"reject_existing":True})
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    assert c.put(url+"/"+rows[2]["id"],json={**fields,"starts_at":"2090-05-29T18:00Z","ends_at":"2090-05-29T19:00Z","revision":1}).status_code==200
+    target=url+"/"+rows[1]["id"]+"/future"
+    preview=c.get(target).json()["items"]
+    assert [r["id"] for r in preview]==[rows[1]["id"],rows[3]["id"]]
+    result=c.post(target,json={"action":"edit","schedule":{**fields,"starts_at":"2090-05-15T17:00Z","ends_at":"2090-05-15T19:00Z","revision":1},"interval_minutes":20160,"revisions":{r["id"]:r["revision"] for r in preview}})
+    assert result.status_code==200,result.text
+    assert [r["starts_at"] for r in result.json()["items"]]==["2090-05-15T17:00Z","2090-06-12T17:00Z"]
+    assert [r["ends_at"] for r in result.json()["items"]]==["2090-05-15T19:00Z","2090-06-12T19:00Z"]
+    items=c.get(url+"?start=2090-05-01&end=2090-06-14").json()["items"]
+    assert items[0]["starts_at"]==fields["starts_at"] and items[2]["starts_at"]=="2090-05-29T18:00Z"
+    assert renew_schedules(settings.database_path,datetime(2090,6,13,tzinfo=timezone.utc))>0
+    next_row=c.get(url+"?start=2090-06-26&end=2090-06-27").json()["items"][0]
+    assert (next_row["starts_at"],next_row["ends_at"])==("2090-06-26T17:00Z","2090-06-26T19:00Z")

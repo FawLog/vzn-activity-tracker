@@ -224,6 +224,11 @@ class CompletionReview(BaseModel):
 
 def require_planned_sessions(db, event, group_id):
     """Only explicit grouping establishes expected sessions; forecasts alone do not."""
+    if event["event_type"]=="bear_trap":
+        from .calendar import missing_bear_forecasts
+        missing_forecasts=missing_bear_forecasts(db,group_id,event["occurred_on"])
+        if missing_forecasts:
+            raise ValueError("Resolve missing planned Bear forecasts before finalizing: "+", ".join(missing_forecasts))
     missing = db.execute("""
         SELECT c.entry_session_key FROM calendar_occurrences c
         LEFT JOIN calendar_event_links l ON l.occurrence_id=c.id AND l.event_id=?

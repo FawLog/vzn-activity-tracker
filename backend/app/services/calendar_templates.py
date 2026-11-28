@@ -43,7 +43,7 @@ def create_template(path,group_id,payload):
         if any(r["alliance_id"]==payload.schedule.alliance_id and r["name"].casefold()==payload.name.casefold() for r in rows):
             raise ValueError("A template with this name already exists for the alliance")
         oid=uuid.uuid4().hex
-        schedule=payload.schedule.model_dump(mode="json",exclude={"request_key"})
+        schedule=payload.schedule.model_dump(mode="json",exclude={"request_key","bear_cycle_anchor","bear_session_key"})
         schedule["confidence"]="estimated"
         db.execute("INSERT INTO calendar_templates(id,group_id,alliance_id,name,schedule_json) VALUES (?,?,?,?,?)",
                    (oid,group_id,payload.schedule.alliance_id,payload.name,json.dumps(schedule)))

@@ -4,20 +4,22 @@ import {navigate} from "../lib/router";
 import type {CalendarOccurrence} from "../lib/calendar";
 import {CalendarDraftEditor} from "./CalendarDraftEditor";
 import {CalendarReviewPanel} from "./CalendarReviewPanel";
+import {CalendarEventWorkspace} from "./CalendarEventWorkspace";
 import {formatDate} from "../lib/format";
 
-export function CalendarEventLink({groupId,row,writable,onRevision}:{groupId:string;row:CalendarOccurrence;writable:boolean;onRevision:(revision:number)=>void}){
+export function CalendarEventLink({groupId,row,writable,onRevision,onEditingChange,workspaceBlocked}:{groupId:string;row:CalendarOccurrence;writable:boolean;onRevision:(revision:number)=>void;onEditingChange:(blocked:boolean)=>void;workspaceBlocked:boolean}){
   const [data,setData]=useState<CalendarEventLinkState|null>(null);
   const [choice,setChoice]=useState("");
   const [sessionChoice,setSessionChoice]=useState("");
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
   const lock=useRef(false);
+  const [refresh,setRefresh]=useState(0);
   useEffect(()=>{
     const controller=new AbortController();
     api.calendarEventLink(groupId,row.id,controller.signal).then(result=>{if(!controller.signal.aborted)setData(result);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});
     return ()=>controller.abort();
-  },[groupId,row.id]);
+  },[groupId,row.id,refresh]);
   async function save(id:string|null,sessionId?:string){
     if(!data||lock.current)return;
     lock.current=true;setBusy(true);setError("");
@@ -29,7 +31,7 @@ export function CalendarEventLink({groupId,row,writable,onRevision}:{groupId:str
     <p>Planning and results remain independent. Linking does not create attendance or change statistics.</p>
     {error&&<p role="alert">{error}</p>}
     {!data&&!error&&<p>Loading matching records…</p>}
-    {data?.linked?<><p>Linked · {data.linked.status} · {formatDate(data.linked.occurred_on)}{data.linked.session_key?" · "+data.linked.session_key.replaceAll("_"," ")+" · "+data.linked.started_at:""}</p><div className="calendar-controls"><button className="button button--primary" onClick={()=>navigate("/events/"+encodeURIComponent(data.linked!.id))}>Open actual event</button>{writable&&<button className="button button--quiet" disabled={busy} onClick={()=>void save(null)}>Unlink event</button>}</div></>:
+    {data?.linked?<><p>Linked · {data.linked.status} · {formatDate(data.linked.occurred_on)}{data.linked.session_key?" · "+data.linked.session_key.replaceAll("_"," ")+" · "+data.linked.started_at:""}</p><div className="calendar-controls"><button className="button button--primary" disabled={workspaceBlocked} onClick={()=>navigate("/events/"+encodeURIComponent(data.linked!.id))}>Open event history</button>{writable&&<button className="button button--quiet" disabled={busy||workspaceBlocked} onClick={()=>void save(null)}>Unlink event</button>}</div></>:
       data?.eligible?<>{data.items.length?<><label>Matching actual event<select value={choice} disabled={busy||!writable} onChange={e=>setChoice(e.target.value)}><option value="">Choose explicitly</option>{data.items.map(item=><option key={item.id} value={item.id}>{formatDate(item.occurred_on)} · {item.status} · {item.id.slice(0,12)}</option>)}</select></label>{writable&&<button className="button button--quiet" disabled={!choice||busy} onClick={()=>void save(choice)}>Link selected event</button>}</>:<p>No matching event-level record. Check available sessions below. Missing records do not mean the event was missed.</p>}{data.truncated&&<p>Only the first 100 matches are shown.</p>}</>:data?<p>Linking is not supported for this schedule type or phase yet.</p>:null}
     {data?.eligible&&!data.linked?.session_id&&["bear_trap","foundry","canyon"].includes(row.event_type)&&<div className="calendar-editor-fields">
       <h4>Specific trap or legion</h4>
@@ -37,6 +39,7 @@ export function CalendarEventLink({groupId,row,writable,onRevision}:{groupId:str
       {writable&&<button className="button button--primary" disabled={busy||!sessionChoice} onClick={()=>{const s=data.sessions.find(x=>x.id===sessionChoice);if(s)void save(s.event_id,s.id);}}>Link selected session</button>}</>:<p>No matching unlinked session. Verify host and UTC date/time in Events.</p>}
     </div>}
     {data?.review&&<CalendarReviewPanel review={data.review}/>}
+    {data?.linked&&writable&&(!["bear_trap","foundry","canyon"].includes(row.event_type)||data.linked.session_id)&&<CalendarEventWorkspace key={groupId+":"+data.linked.id+":"+(data.linked.session_id??"main")} groupId={groupId} eventId={data.linked.id} sessionId={data.linked.session_id} onEditingChange={onEditingChange} onRefresh={()=>{setRefresh(n=>n+1);onRevision(data.revision);}}/>}
     {writable&&data?.eligible&&!data.linked?.session_id&&<CalendarDraftEditor key={row.id+":"+data.revision} groupId={groupId} row={row} data={data} onCreated={result=>{setData(result);onRevision(result.revision);}}/>}
   </section>;
 }

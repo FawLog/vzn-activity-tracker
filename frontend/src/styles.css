@@ -1016,3 +1016,14 @@ td strong { color: var(--text); font-weight: 650; }
 .calendar-repeat-summary small { color:var(--text-soft); }
 .calendar-advanced-toggle { grid-column:1/-1;justify-self:start; }
 @media(max-width:620px){.calendar-top .button,.calendar-compact-nav .button,.calendar-compact-nav .icon-button{min-height:44px}.calendar-compact-nav .icon-button{min-width:40px}.calendar-date-row .calendar-period{font-size:12px}.calendar-view-row .button{padding-inline:10px}.calendar-filter-panel{align-items:stretch;flex-direction:column}.calendar-filter-panel select{min-height:44px}.calendar-top .button{padding-inline:10px}.calendar-top h1{font-size:23px}}
+
+/* Calendar controls must not inherit full-width text-input sizing. */
+.calendar-editor-fields .calendar-checkbox,.calendar-editor .calendar-checkbox{display:flex;align-items:center;gap:8px;min-height:44px;}
+.calendar-editor input[type="checkbox"],.calendar-editor input[type="radio"],.calendar-compact-nav input[type="checkbox"]{width:18px;min-width:18px;height:18px;min-height:18px;flex:0 0 18px;margin:0;accent-color:var(--cyan);}
+.bear-trap-list{border:0;padding:0;margin:12px 0;display:grid;gap:8px;min-width:0;}
+.bear-trap-slot{display:grid;grid-template-columns:minmax(90px,0.7fr) minmax(110px,1.3fr) minmax(110px,1fr) auto;align-items:center;gap:12px;padding:10px;border:1px solid var(--line);border-radius:var(--radius-sm);min-width:0;}
+.bear-trap-slot label:not(.calendar-checkbox){display:grid;gap:6px;min-width:0;font-size:12px;}
+.bear-trap-slot select,.bear-trap-slot input[type="time"]{width:100%;min-width:0;min-height:40px;box-sizing:border-box;}
+.bear-trap-heading{display:flex;align-items:center;gap:6px;justify-content:space-between;}
+.bear-trap-list>.button{justify-self:start;}
+@media(max-width:620px){.bear-trap-slot{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;}.bear-trap-heading,.bear-trap-slot>.calendar-checkbox{grid-column:1/-1;}.bear-trap-slot select,.bear-trap-slot input[type="time"]{min-height:44px;font-size:16px;}.bear-trap-heading .icon-button{min-height:44px;min-width:44px;}}

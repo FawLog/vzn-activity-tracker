@@ -338,6 +338,19 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   // A calendar workspace is exclusive, and cancelling a transition preserves its fields.
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const transitionEditor=calendar.getByRole("region",{name:"Schedule editor"});
+  await expect(transitionEditor.getByRole("heading",{name:"Bear Trap schedule",exact:true})).toBeVisible();
+  await transitionEditor.getByLabel("Trap 1 time (UTC)",{exact:true}).fill("15:00");
+  await transitionEditor.getByRole("button",{name:"Add another trap",exact:true}).click();
+  await transitionEditor.getByLabel("Trap 2 time (UTC)",{exact:true}).fill("20:00");
+  await expect(transitionEditor.getByLabel("Repeat every (hours)",{exact:true})).toHaveValue("48");
+  await expect(transitionEditor.getByRole("checkbox",{name:"Automatically maintain schedule"})).toBeChecked();
+  await expect(transitionEditor.getByText("31 cycles · 2 traps per cycle.",{exact:false})).toBeVisible();
+  await expect(transitionEditor.getByRole("button",{name:"Save schedule",exact:true})).toBeDisabled();
+  await transitionEditor.getByRole("checkbox",{name:"I reviewed the trap times and repeat interval"}).check();
+  await expect(transitionEditor.getByRole("button",{name:"Save schedule",exact:true})).toBeEnabled();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  page.once("dialog", dialog=>dialog.accept());
+  await transitionEditor.getByLabel("Event type").selectOption("bear_trap");
   await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved transition check");
   page.once("dialog", dialog=>dialog.dismiss());
@@ -350,6 +363,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toBeVisible();
   await calendar.getByRole("button",{name:"Close details"}).click();
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+  await transitionEditor.getByLabel("Event type").selectOption("bear_trap");
   await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved period check");
   page.once("dialog", dialog=>dialog.accept());
@@ -361,6 +375,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});
   await expect(scheduleEditor).toBeVisible();
+  await scheduleEditor.getByLabel("Event type").selectOption("bear_trap");
   await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await scheduleEditor.getByRole("checkbox",{name:"Group recurring Bear traps"}).check();
   await scheduleEditor.getByLabel("Precision").selectOption("minute");
@@ -477,6 +492,22 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect(seriesRows[1].starts_at).toBe("2091-02-24T17:00Z");
     expect(seriesRows[1].ends_at).toBe("2091-02-24T18:00Z");
     await expect(scheduleEditor).toHaveCount(0);
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+    await scheduleEditor.getByLabel("First cycle date (UTC)",{exact:true}).fill("2091-03-01");
+    await scheduleEditor.getByLabel("Trap 1 time (UTC)",{exact:true}).fill("15:00");
+    await scheduleEditor.getByRole("button",{name:"Add another trap",exact:true}).click();
+    await scheduleEditor.getByLabel("Trap 2 time (UTC)",{exact:true}).fill("20:00");
+    await scheduleEditor.getByRole("checkbox",{name:"I reviewed the trap times and repeat interval"}).check();
+    const batchSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/bear-schedule"));
+    await scheduleEditor.getByRole("button",{name:"Save schedule",exact:true}).click();
+    const batchResult=await batchSaved;
+    expect(batchResult.status()).toBe(201);
+    const batchRows=(await batchResult.json()).items;
+    expect(batchRows).toHaveLength(62);
+    expect(batchRows.filter((r:{entry_cycle_date:string})=>r.entry_cycle_date==="2091-03-01")).toHaveLength(2);
+    await expect(scheduleEditor).toHaveCount(0);
+    await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1.*15:00 UTC.*Confirmed/})).toBeVisible();
+    await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 2.*20:00 UTC.*Confirmed/})).toBeVisible();
   }
 
 

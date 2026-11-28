@@ -182,6 +182,11 @@ def list_occurrences(path, group_id, start: date, end: date):
 
 
 def create(path, group_id, payload: CalendarCreate):
+    with transaction(path) as db:
+        return create_in_transaction(db,group_id,payload)
+
+
+def create_in_transaction(db, group_id, payload: CalendarCreate):
     # Preserve the v1 request hash when the new opt-in field is false.
     excluded = {"request_key"} if payload.reject_existing else {"request_key", "reject_existing"}
     excluded.update(k for k in ("repeat_months","repeat_weekdays") if getattr(payload,k) is None)
@@ -191,54 +196,118 @@ def create(path, group_id, payload: CalendarCreate):
         excluded.update(("bear_cycle_anchor","bear_session_key"))
     offsets = series_offsets(payload)
     fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude=excluded), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    require_group(db, group_id, True)
+    if payload.request_key:
+        previous = db.execute("SELECT payload_hash, occurrence_ids FROM calendar_create_requests WHERE group_id=? AND request_key=?", (group_id, payload.request_key)).fetchone()
+        if previous:
+            if previous["payload_hash"] != fingerprint:
+                raise ValueError("Request key already used for a different schedule")
+            return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?", (group_id, oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
+    validate_scope(db, group_id, payload)
+    if payload.reject_existing:
+        # Date-only entries are ambiguous with any timed entry on the same UTC day.
+        # Include cancelled entries so a new forecast cannot silently resurrect them.
+        existing = db.execute("""SELECT starts_at,precision FROM calendar_occurrences
+            WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=? AND phase=?
+            AND starts_at>=? AND starts_at<?""",
+            (group_id,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.phase,
+             payload.starts_at[:10],(parse(shift(payload.starts_at,offsets[-1])).date()+timedelta(days=1)).isoformat())).fetchall()
+        for offset in offsets:
+            start = shift(payload.starts_at, offset)
+            if any(row["starts_at"]==start or
+                   (row["starts_at"][:10]==start[:10] and (row["precision"]=="date" or payload.precision=="date"))
+                   for row in existing):
+                raise ValueError("A matching scheduled or cancelled occurrence already exists; review the calendar")
+    series_id = uuid.uuid4().hex if payload.occurrence_count > 1 else None
+    if series_id:
+        db.execute("INSERT INTO calendar_series(id,group_id,interval_minutes,occurrence_count,anchor) VALUES (?,?,?,?,?)",
+                   (series_id,group_id,payload.interval_minutes or offsets[1],payload.occurrence_count,payload.starts_at))
+        if payload.repeat_months is not None or payload.repeat_weekdays is not None:
+            db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"repeat_months":payload.repeat_months,"repeat_weekdays":payload.repeat_weekdays})))
+        elif payload.bear_cycle_anchor is not None:
+            db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"bear_cycle_anchor":payload.bear_cycle_anchor,"bear_session_key":payload.bear_session_key})))
+    if payload.rolling:
+        template = CalendarInput(**{k:getattr(payload,k) for k in CalendarInput.model_fields})
+        db.execute("INSERT INTO calendar_rolling_series(series_id,template_json,next_start,next_sequence) VALUES (?,?,?,?)",
+                   (series_id,template.model_dump_json(),shift(payload.starts_at,payload.interval_minutes*payload.occurrence_count),payload.occurrence_count))
+    items=[]
+    for sequence,offset in enumerate(offsets):
+        occurrence_id=uuid.uuid4().hex
+        db.execute("""INSERT INTO calendar_occurrences(id,group_id,series_id,sequence,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+          (occurrence_id,group_id,series_id,sequence,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,shift(payload.starts_at,offset),shift(payload.ends_at,offset),payload.precision,payload.phase,payload.confidence if sequence==0 else "estimated","manual" if sequence==0 else "recurrence"))
+        if payload.bear_cycle_anchor is not None:
+            cycle_day,key=bear_assignment(db,group_id,payload.alliance_id,shift(payload.starts_at,offset),payload.bear_cycle_anchor,payload.bear_session_key,payload.interval_minutes,sequence,occurrence_id)
+            db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(cycle_day,key,occurrence_id))
+        audit(db,"created",occurrence_id)
+        items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (occurrence_id,)).fetchone()))
+    if payload.request_key:
+        db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)", (group_id,payload.request_key,fingerprint,json.dumps([item["id"] for item in items])))
+    return {"items":items}
+
+
+class BearTrapSlot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    alliance_id: str = Field(min_length=1,max_length=64)
+    starts_at: str
+
+
+class BearScheduleCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cycle_date: date
+    interval_minutes: int = Field(default=2880,ge=2850,le=10080)
+    traps: list[BearTrapSlot] = Field(min_length=1,max_length=30)
+    rolling: bool = True
+    confirmed: Literal[True]
+    request_key: str = Field(min_length=16,max_length=128,pattern=r"^[A-Za-z0-9_-]+$")
+
+    @model_validator(mode="after")
+    def validate_traps(self):
+        if not 2000<=self.cycle_date.year<=2099:
+            raise ValueError("Date outside supported range")
+        starts=[]
+        for slot in self.traps:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z",slot.starts_at):
+                raise ValueError("Enter each trap's UTC date and minute")
+            starts.append(parse(slot.starts_at))
+        anchor=min(starts)
+        if anchor.date()!=self.cycle_date:
+            raise ValueError("The first trap must start on the selected first cycle date")
+        if any(start-anchor>=timedelta(minutes=self.interval_minutes) for start in starts):
+            raise ValueError("Every trap must start within the first shared cycle")
+        if len({(slot.alliance_id,slot.starts_at) for slot in self.traps})!=len(self.traps):
+            raise ValueError("Duplicate trap time for the same alliance")
+        return self
+
+
+def create_bear_schedule(path,group_id,payload: BearScheduleCreate):
+    """Create all trap series or none, using the existing recurrence/grouping checks."""
+    fingerprint=hashlib.sha256(("bear-batch:"+payload.model_dump_json(exclude={"request_key"})).encode()).hexdigest()
     with transaction(path) as db:
-        require_group(db, group_id, True)
-        if payload.request_key:
-            previous = db.execute("SELECT payload_hash, occurrence_ids FROM calendar_create_requests WHERE group_id=? AND request_key=?", (group_id, payload.request_key)).fetchone()
-            if previous:
-                if previous["payload_hash"] != fingerprint:
-                    raise ValueError("Request key already used for a different schedule")
-                return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?", (group_id, oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
-        validate_scope(db, group_id, payload)
-        if payload.reject_existing:
-            # Date-only entries are ambiguous with any timed entry on the same UTC day.
-            # Include cancelled entries so a new forecast cannot silently resurrect them.
-            existing = db.execute("""SELECT starts_at,precision FROM calendar_occurrences
-                WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=? AND phase=?
-                AND starts_at>=? AND starts_at<?""",
-                (group_id,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.phase,
-                 payload.starts_at[:10],(parse(shift(payload.starts_at,offsets[-1])).date()+timedelta(days=1)).isoformat())).fetchall()
-            for offset in offsets:
-                start = shift(payload.starts_at, offset)
-                if any(row["starts_at"]==start or
-                       (row["starts_at"][:10]==start[:10] and (row["precision"]=="date" or payload.precision=="date"))
-                       for row in existing):
-                    raise ValueError("A matching scheduled or cancelled occurrence already exists; review the calendar")
-        series_id = uuid.uuid4().hex if payload.occurrence_count > 1 else None
-        if series_id:
-            db.execute("INSERT INTO calendar_series(id,group_id,interval_minutes,occurrence_count,anchor) VALUES (?,?,?,?,?)",
-                       (series_id,group_id,payload.interval_minutes or offsets[1],payload.occurrence_count,payload.starts_at))
-            if payload.repeat_months is not None or payload.repeat_weekdays is not None:
-                db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"repeat_months":payload.repeat_months,"repeat_weekdays":payload.repeat_weekdays})))
-            elif payload.bear_cycle_anchor is not None:
-                db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"bear_cycle_anchor":payload.bear_cycle_anchor,"bear_session_key":payload.bear_session_key})))
-        if payload.rolling:
-            template = CalendarInput(**{k:getattr(payload,k) for k in CalendarInput.model_fields})
-            db.execute("INSERT INTO calendar_rolling_series(series_id,template_json,next_start,next_sequence) VALUES (?,?,?,?)",
-                       (series_id,template.model_dump_json(),shift(payload.starts_at,payload.interval_minutes*payload.occurrence_count),payload.occurrence_count))
+        require_group(db,group_id,True)
+        previous=db.execute("SELECT payload_hash,occurrence_ids FROM calendar_create_requests WHERE group_id=? AND request_key=?",(group_id,payload.request_key)).fetchone()
+        if previous:
+            if previous["payload_hash"]!=fingerprint:
+                raise ValueError("Request key already used for a different schedule")
+            return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
+        anchor=min(slot.starts_at for slot in payload.traps)
+        if parse(anchor).date()<datetime.now(timezone.utc).date():
+            raise ValueError("Choose today or a future first cycle")
+        # A full 60-day window is ready immediately. Renewal extends the cursor
+        # on its normal hourly schedule; finite mode creates just four cycles.
+        count=min(60,1+60*1440//payload.interval_minutes) if payload.rolling else 4
         items=[]
-        for sequence,offset in enumerate(offsets):
-            occurrence_id=uuid.uuid4().hex
-            db.execute("""INSERT INTO calendar_occurrences(id,group_id,series_id,sequence,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-              (occurrence_id,group_id,series_id,sequence,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,shift(payload.starts_at,offset),shift(payload.ends_at,offset),payload.precision,payload.phase,payload.confidence if sequence==0 else "estimated","manual" if sequence==0 else "recurrence"))
-            if payload.bear_cycle_anchor is not None:
-                cycle_day,key=bear_assignment(db,group_id,payload.alliance_id,shift(payload.starts_at,offset),payload.bear_cycle_anchor,payload.bear_session_key,payload.interval_minutes,sequence,occurrence_id)
-                db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(cycle_day,key,occurrence_id))
-            audit(db,"created",occurrence_id)
-            items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (occurrence_id,)).fetchone()))
-        if payload.request_key:
-            db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)", (group_id,payload.request_key,fingerprint,json.dumps([item["id"] for item in items])))
+        for i,slot in enumerate(payload.traps,1):
+            owner=db.execute("SELECT state_id FROM alliances WHERE id=? AND group_id=? AND status='active'",(slot.alliance_id,group_id)).fetchone()
+            if owner is None:
+                raise LookupError("Active alliance not found in selected group")
+            series=CalendarCreate(event_type="bear_trap",scope="alliance",alliance_id=slot.alliance_id,state_id=owner["state_id"],
+                starts_at=slot.starts_at,ends_at=shift(slot.starts_at,30),precision="minute",phase=f"Trap {i}",
+                confidence="confirmed",interval_minutes=payload.interval_minutes,occurrence_count=count,
+                reject_existing=True,rolling=payload.rolling,bear_cycle_anchor=anchor,bear_session_key=f"trap_{i}")
+            items.extend(create_in_transaction(db,group_id,series)["items"])
+        db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)",
+                   (group_id,payload.request_key,fingerprint,json.dumps([item["id"] for item in items])))
         return {"items":items}
 
 

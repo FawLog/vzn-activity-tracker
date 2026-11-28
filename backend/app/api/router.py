@@ -415,6 +415,17 @@ def create_api_router(settings: Settings) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.post("/groups/{group_id}/calendar/bear-schedule", status_code=201)
+    async def post_bear_schedule(request: Request,group_id: str,payload: calendar.BearScheduleCreate):
+        session=require_admin(request,settings)
+        require_csrf(request,session)
+        try:
+            return calendar.create_bear_schedule(settings.database_path,group_id,payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
     @router.get("/groups/{group_id}/calendar")
     async def get_calendar(request: Request, group_id: str, start: date, end: date) -> dict[str, object]:
         require_admin(request, settings)

@@ -212,3 +212,57 @@ def test_lone_grouped_bear_cadence_edit_splits_series_and_renews(authenticated_c
     assert upcoming[0]["entry_cycle_date"]=="2090-06-09"
     with connection(settings.database_path) as db:
         assert missing_bear_forecasts(db,root.rsplit("/",1)[1],"2090-06-09")==[]
+
+
+def test_bear_batch_creates_all_traps_and_is_idempotent(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules
+    c=authenticated_client
+    root,aid=setup(c)
+    academy=c.post(root+"/alliances",json={"name":"Academy","tag":"ACA","state_id":"1001"}).json()["id"]
+    url=root+"/calendar/bear-schedule"
+    payload={"cycle_date":"2090-06-01","interval_minutes":2880,"rolling":True,"confirmed":True,"request_key":"bear-batch-test-0001",
+             "traps":[{"alliance_id":aid,"starts_at":"2090-06-01T23:30Z"},{"alliance_id":academy,"starts_at":"2090-06-02T00:30Z"}]}
+    response=c.post(url,json=payload)
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    assert len(rows)==62
+    assert len({r["series_id"] for r in rows})==2
+    first=[r for r in rows if r["sequence"]==0]
+    assert [r["entry_cycle_date"] for r in first]==["2090-06-01","2090-06-01"]
+    assert [r["entry_session_key"] for r in first]==["trap_1","trap_2"]
+    assert [r["ends_at"] for r in first]==["2090-06-02T00:00Z","2090-06-02T01:00Z"]
+    assert [r["confidence"] for r in first]==["confirmed","confirmed"]
+    assert all(r["confidence"]=="estimated" for r in rows if r["sequence"]>0)
+    assert c.post(url,json=payload).json()==response.json()
+    assert c.post(url,json={**payload,"interval_minutes":2850}).status_code==409
+    assert c.post(url,json={**payload,"request_key":"bear-batch-test-0002"}).status_code==409
+    assert renew_schedules(settings.database_path,datetime(2090,7,31,tzinfo=timezone.utc))>0
+    assert renew_schedules(settings.database_path,datetime(2090,7,31,tzinfo=timezone.utc))==0
+    result=c.get(root+"/calendar?start=2090-08-02&end=2090-08-04").json()["items"]
+    assert len(result)==2 and {r["entry_cycle_date"] for r in result}=={"2090-08-02"}
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calendar_rolling_series").fetchone()[0]==2
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+        assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==0
+
+
+def test_bear_batch_conflict_rolls_back_every_slot(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar/bear-schedule"
+    existing={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-06-01T20:00Z","precision":"minute"}
+    assert c.post(root+"/calendar",json=existing).status_code==201
+    payload={"cycle_date":"2090-06-01","interval_minutes":2880,"rolling":True,"confirmed":True,"request_key":"bear-batch-test-0003",
+             "traps":[{"alliance_id":aid,"starts_at":"2090-06-01T15:00Z"},{"alliance_id":aid,"starts_at":"2090-06-01T20:00Z"}]}
+    assert c.post(url,json=payload).status_code==409
+    assert c.post(url,json={**payload,"traps":[payload["traps"][0],{**payload["traps"][1],"alliance_id":"missing"}]}).status_code==404
+    assert c.post(url,json={**payload,"traps":[payload["traps"][0],payload["traps"][0]]}).status_code==422
+    assert c.post(url,json={**payload,"confirmed":False}).status_code==422
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==1
+        assert db.execute("SELECT COUNT(*) FROM calendar_series").fetchone()[0]==0
+        assert db.execute("SELECT COUNT(*) FROM calendar_rolling_series").fetchone()[0]==0
+        assert db.execute("SELECT COUNT(*) FROM calendar_create_requests").fetchone()[0]==0
+    c.headers.pop("X-CSRF-Token")
+    assert c.post(url,json=payload).status_code==403

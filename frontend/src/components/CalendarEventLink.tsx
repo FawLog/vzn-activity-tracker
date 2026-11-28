@@ -1,3 +1,4 @@
+import { allowNavigation, useNavigationGuard } from "../lib/navigation-guard";
 import {useEffect,useRef,useState} from "react";
 import {api,type CalendarEventLinkState} from "../lib/api";
 import {navigate} from "../lib/router";
@@ -16,19 +17,20 @@ export function CalendarEventLink({groupId,row,writable,onRevision,onEditingChan
   const [busy,setBusy]=useState(false);
   const lock=useRef(false);
   const [refresh,setRefresh]=useState(0);
+  useNavigationGuard(false,busy);
   useEffect(()=>{
     const controller=new AbortController();
     api.calendarEventLink(groupId,row.id,controller.signal).then(result=>{if(!controller.signal.aborted)setData(result);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});
     return ()=>controller.abort();
   },[groupId,row.id,refresh]);
   async function save(id:string|null,sessionId?:string){
-    if(!data||lock.current)return;
+    if(!data||lock.current||!allowNavigation())return;
     lock.current=true;setBusy(true);setError("");
     try{const result=await api.setCalendarEventLink(groupId,row.id,id,data.revision,sessionId);setData(result);setChoice("");setSessionChoice("");onRevision(result.revision);}
     catch(e){setError(e instanceof Error?e.message:"Unable to update link");}finally{lock.current=false;setBusy(false);}
   }
   async function start(){
-    if(!data||lock.current)return;
+    if(!data||lock.current||!allowNavigation())return;
     lock.current=true;setBusy(true);onEditingChange(true);setError("");
     try{const result=await api.startCalendarEntry(groupId,row.id,data.revision);setData(result);onRevision(result.revision);}
     catch(e){setError(e instanceof Error?e.message:"Unable to start data entry");}

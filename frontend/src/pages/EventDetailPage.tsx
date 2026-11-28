@@ -1,3 +1,4 @@
+import { allowNavigation } from "../lib/navigation-guard";
 import { ArrowLeft, FileCheck2 } from "lucide-react";
 import { EventCalendarLinks } from "../components/CalendarEventLink";
 import { EventIcon } from "../components/EventIcon";
@@ -27,7 +28,7 @@ export function EventDetailPage({ id }: { id: string }) {
   if (error) return <div className="page"><ErrorState message={error} /></div>;
   if (!record) return <div className="page"><LoadingState label="Loading event record" /></div>;
   const manage=async(action:"delete"|"reopen"|"date")=>{
-    if(editing)return;
+    if(editing||busy||!allowNavigation())return;
     const date=action==="date"?window.prompt("Event date (YYYY-MM-DD)",record.occurred_on):null;
     if(action==="date"&&(!date||date===record.occurred_on))return;
     if(!window.confirm(action==="delete"?"Permanently delete this event and all results?"+(record.status==="published"?" Published statistics will change.":""):action==="reopen"?"Reopen published event for corrections?":"Change event date?"))return;

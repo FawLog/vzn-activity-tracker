@@ -51,14 +51,15 @@ export function CalendarPage(){
   },[groupId,start,end,key]);
   const items=loaded?.key===key?loaded.items:null;
   const [pendingOccurrence,setPendingOccurrence]=useState(()=>new URLSearchParams(window.location.search).get("occurrence"));
-  useEffect(()=>{const row=items?.find(r=>r.id===pendingOccurrence);if(row&&groupId){setDetail({groupId,row});setPendingOccurrence(null);}},[items,groupId,pendingOccurrence]);
+  useEffect(()=>{const row=items?.find(r=>r.id===pendingOccurrence);if(row&&groupId&&!editor&&!cycleEditor&&!detail){setDetail({groupId,row});setPendingOccurrence(null);}},[items,groupId,pendingOccurrence,editor,cycleEditor,detail]);
   const error=failure?.key===key?failure.message:"";
   const visible=(items??[]).filter(row=>(showCancelled||row.schedule_status!=="cancelled") &&
     (scope==="all"||(scope==="state"?row.scope==="state":row.scope==="alliance"&&row.alliance_id===selectedAlliance?.id)) &&
     (recordFilter==="all"||(recordFilter==="unlinked"?!row.review:row.review?.publication===recordFilter)));
   const owner=(row:CalendarOccurrence)=>row.scope==="state"?"State #"+row.state_id:(alliances.find(a=>a.id===row.alliance_id)?.tag??"Alliance")+" · #"+row.state_id;
   const status=(row:CalendarOccurrence)=>row.schedule_status==="cancelled"?"Cancelled":row.confidence==="confirmed"?"Confirmed":"Estimated";
-  const changeDay=(next:string)=>{if(workspaceBlocked||!allowNavigation())return;setDay(next);setDetail(null);};
+  const closeWorkspace=()=>{setDetail(null);setEditor(null);setCycleEditor(null);setPendingOccurrence(null);};
+  const changeDay=(next:string)=>{if(next===day||workspaceBlocked||!allowNavigation())return;closeWorkspace();setDay(next);};
   if(!groupId)return <div className="page"><EmptyState title="No active group" description="Select a group to view its schedule."/></div>;
   const selected=detail?.groupId===groupId?detail.row:null;
   const editing=editor?.groupId===groupId?editor:null;
@@ -69,13 +70,13 @@ export function CalendarPage(){
     <PageHeader title="Event Calendar" description={selectedGroup.name+" · Plan events, enter data and review results · All times UTC"} action={<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button>}/>
     <div className="toolbar calendar-toolbar">
       <button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>setShowCatalog(v=>!v)}>Game event catalog</button>
-      {writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setDetail(null);setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}
-      {writable&&<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setEditor(null);setDetail(null);setCycleEditor(groupId);}}>Plan event cycle</button>}
-      <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setView(mode);setDetail(null);}}>{mode}</button>)}</div>
+      {writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{if((editing&&!editing.row)||!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}
+      {writable&&<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(cycleEditor===groupId||!allowNavigation())return;closeWorkspace();setCycleEditor(groupId);}}>Plan event cycle</button>}
+      <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} disabled={workspaceBlocked} onClick={()=>{if(mode===view||!allowNavigation())return;closeWorkspace();setView(mode);}}>{mode}</button>)}</div>
       <div className="calendar-controls"><button className="icon-button" aria-label="Previous period" onClick={()=>changeDay(moveCalendar(day,view,-1))}><ChevronLeft/></button><button className="button button--quiet" onClick={()=>changeDay(utcDay())}>Today</button><button className="icon-button" aria-label="Next period" onClick={()=>changeDay(moveCalendar(day,view,1))}><ChevronRight/></button></div>
-      <label className="select-control">Scope<select disabled={workspaceBlocked} value={scope} onChange={e=>{if(!allowNavigation())return;setScope(e.target.value);setDetail(null);}}><option value="all">All events</option><option value="alliance">Current alliance</option><option value="state">State events</option></select></label>
-      <label className="select-control">Actual record<select disabled={workspaceBlocked} value={recordFilter} onChange={e=>{if(!allowNavigation())return;setRecordFilter(e.target.value);setDetail(null);}}><option value="all">All record statuses</option><option value="unlinked">No linked record</option><option value="draft">Draft records</option><option value="published">Published records</option></select></label>
-      <label className="calendar-checkbox"><input type="checkbox" disabled={workspaceBlocked} checked={showCancelled} onChange={e=>{if(!allowNavigation())return;setShowCancelled(e.target.checked);setDetail(null);}}/>Show cancelled</label>
+      <label className="select-control">Scope<select disabled={workspaceBlocked} value={scope} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setScope(e.target.value);}}><option value="all">All events</option><option value="alliance">Current alliance</option><option value="state">State events</option></select></label>
+      <label className="select-control">Actual record<select disabled={workspaceBlocked} value={recordFilter} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setRecordFilter(e.target.value);}}><option value="all">All record statuses</option><option value="unlinked">No linked record</option><option value="draft">Draft records</option><option value="published">Published records</option></select></label>
+      <label className="calendar-checkbox"><input type="checkbox" disabled={workspaceBlocked} checked={showCancelled} onChange={e=>{if(!allowNavigation())return;closeWorkspace();setShowCancelled(e.target.checked);}}/>Show cancelled</label>
     </div>
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
     {cycleEditor===groupId&&writable&&<CycleEditor key={groupId} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
@@ -88,7 +89,7 @@ export function CalendarPage(){
         const events=visible.filter(row=>occursOn(row,date));
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>
           <h3>{view==="Month"?Number(date.slice(8)):weekday(date)+" "+formatDate(date)}</h3>
-          {events.map(row=><button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail({groupId,row});}}>
+          {events.map(row=><button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} disabled={workspaceBlocked} onClick={()=>{if(selected?.id===row.id)return;if(allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}>
             <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}{row.cycle_id?" · Linked":""}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small>{row.entry_cycle_date&&<small>Cycle {row.entry_cycle_date} · {row.entry_session_key?.replaceAll("_"," ")}</small>}{row.review&&<small>Record: {row.review.publication} · {row.review.scope}</small>}</span>
           </button>)}
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
@@ -100,7 +101,7 @@ export function CalendarPage(){
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
       {writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected,future:false});setDetail(null);}}>Edit schedule</button>{selected.series_id&&selected.schedule_status==="scheduled"&&selected.starts_at.slice(0,10)>=utcDay()&&<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected,future:true});setDetail(null);}}>Change future series</button>}</div>}
-      {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} onSelect={row=>{if(!workspaceBlocked&&allowNavigation())setDetail({groupId,row})}}/>}
+      {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} onSelect={row=>{if(row.id!==selected.id&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}/>}
       <CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} workspaceBlocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRevision={revision=>{setDetail(current=>current?.groupId===groupId&&current.row.id===selected.id?{groupId,row:{...current.row,revision}}:current);setRetry(n=>n+1);}}/>
       <EventStageTimeline key={selected.id} row={selected}/>
       {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}

@@ -273,6 +273,15 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   });
   await page.reload();
   const calendar=page.locator(".calendar-page");
+  await calendar.getByRole("button",{name:"Game event catalog",exact:true}).click();
+  const catalog=calendar.getByRole("region",{name:"Game event catalog"});
+  await expect(catalog).toContainText("65 of 65 events");
+  await catalog.getByLabel("Find game event").fill("canyon");
+  await catalog.getByRole("button",{name:/Canyon Clash/}).click();
+  await expect(catalog).toContainText("Voting");
+  await expect(catalog).toContainText("Not a confirmed state schedule");
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await catalog.getByRole("button",{name:"Close catalog"}).click();
   await expect(calendar.getByRole("button",{name:/Bear Trap.*15:00 UTC/})).toBeVisible();
   await expect(calendar.getByRole("button",{name:/SvS Preparation.*Time not set/})).toBeVisible();
   await expect(calendar.getByRole("button",{name:/Foundry Battle/})).toHaveCount(0);

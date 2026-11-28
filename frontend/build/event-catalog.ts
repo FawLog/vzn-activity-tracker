@@ -1,0 +1,112 @@
+// Build-time projection of the pinned package; no package-root import in the browser.
+import { createRequire } from "node:module";
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { Plugin } from "vite";
+
+const require = createRequire(import.meta.url);
+const version = "0.11.0";
+// Exact membership of events() in the upstream v0.11.0 registry, not a second copy of event data.
+const files = [
+  "alliance-championship.json",
+  "alliance-mobilization.json",
+  "alliance-showdown.json",
+  "armament-competition.json",
+  "bear-hunt.json",
+  "beast-whisperer.json",
+  "brothers-in-arms.json",
+  "canyon-clash.json",
+  "city-development.json",
+  "crazy-joe.json",
+  "crystal-reactivation-2.json",
+  "deadshot.json",
+  "defeat-nearby-beasts.json",
+  "develop-new-tech-2.json",
+  "develop-new-tech.json",
+  "dreamscape-memory.json",
+  "fishing-tournament.json",
+  "flame-and-fang.json",
+  "foundry-battle.json",
+  "frostdragon-tyrant.json",
+  "frostfire-mine.json",
+  "frosty-fortune-skin-event.json",
+  "ginas-revenge.json",
+  "grow-your-heroes.json",
+  "hall-of-chief.json",
+  "hall-of-heroes.json",
+  "hero-rally.json",
+  "heros-mission.json",
+  "home-beyond.json",
+  "icefire-warhymn-league.json",
+  "journey-of-light.json",
+  "king-of-icefield.json",
+  "lucky-wheel.json",
+  "mercenary-prestige.json",
+  "mia-fortune.json",
+  "officer-project.json",
+  "plan-your-city.json",
+  "power-up.json",
+  "return-to-tundra.json",
+  "romance-season.json",
+  "shining-city-pack.json",
+  "silver-shell-events.json",
+  "snowbusters.json",
+  "stand-of-arms.json",
+  "state-merger.json",
+  "state-transfer-event.json",
+  "sunfire-castle.json",
+  "svs-state-of-power.json",
+  "symphony-of-change.json",
+  "the-labyrinth.json",
+  "treasure-hunter.json",
+  "trial-event.json",
+  "trusted-chief.json",
+  "tundra-adventure.json",
+  "tundra-album-2.json",
+  "tundra-arms-league.json",
+  "tundra-games.json",
+  "tundra-star.json",
+  "tundra-trade-route.json",
+  "tundra-trading-station-guide.json",
+  "vault-of-enigma.json",
+  "vision-of-dawn.json",
+  "war-preparation.json",
+  "wild-brawl.json",
+  "working-overtime-2.json"
+];
+const virtualId = "virtual:wos-event-catalog";
+export function eventCatalogPlugin(): Plugin {
+  return {
+    name: "vzn-event-catalog",
+    resolveId(id) { return id === virtualId ? "\0" + id : undefined; },
+    load(id) {
+      if (id !== "\0" + virtualId) return;
+      const directory = dirname(require.resolve("whiteout-survival-data/data/events/bear-hunt.json"));
+      const root = join(directory, "../..");
+      const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+      if (manifest.version !== version) throw new Error("Review event catalog before upgrading whiteout-survival-data");
+      const imports: string[] = [];
+      const rows = files.map((file, index) => {
+        const event = JSON.parse(readFileSync(join(directory, file), "utf8"));
+        if (typeof event.id !== "string" || typeof event.name !== "string" || typeof event.category !== "string") {
+          throw new Error("Invalid game event: " + file);
+        }
+        let icon = "null";
+        if (typeof event.img === "string" && /^\/images\/events\/[a-zA-Z0-9._-]+\.png$/.test(event.img)) {
+          const path = join(root, event.img.slice(1));
+          if (existsSync(path)) {
+            icon = "icon" + index;
+            imports.push("import " + icon + " from " + JSON.stringify(path.replaceAll("\\", "/") + "?url") + ";");
+          }
+        }
+        const {id, name, category, description, frequency, duration, schedule, requirements, phases} = event;
+        const summary = {id, name, category, description, frequency, duration, schedule, requirements, phases,
+          dayCount: Array.isArray(event.days) ? event.days.length : 0,
+          missionCount: Array.isArray(event.missions) ? event.missions.length : 0,
+          hasVariants: Array.isArray(event.versions) && event.versions.length > 0};
+        return "{..."+JSON.stringify(summary)+",icon:"+icon+"}";
+      });
+      return imports.join("\n") + "\nexport const catalogVersion = "+JSON.stringify(version)+";\nexport const catalog = ["+rows.join(",")+"];";
+    }
+  };
+}

@@ -4,6 +4,7 @@ import { ScheduleEditor, FutureScheduleEditor } from "../components/ScheduleEdit
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
 import { CycleEditor, CycleDetails } from "../components/CycleEditor";
+import { CalendarEventLink } from "../components/CalendarEventLink";
 import { EventStageTimeline } from "../components/EventStageTimeline";
 import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
@@ -23,7 +24,7 @@ export function CalendarPage(){
   const groupId=selectedGroup?.id;
   const [showCatalog,setShowCatalog]=useState(false);
   const [cycleEditor,setCycleEditor]=useState<string|null>(null);
-  const [day,setDay]=useState(()=>utcDay());
+  const [day,setDay]=useState(()=>{const value=new URLSearchParams(window.location.search).get("day");return value&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value+"T00:00Z").toISOString().slice(0,10)===value&&Number(value.slice(0,4))>=2000&&Number(value.slice(0,4))<=2099?value:utcDay();});
   const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches?"Agenda":"Week");
   const [scope,setScope]=useState("all");
   const [showCancelled,setShowCancelled]=useState(false);
@@ -45,6 +46,8 @@ export function CalendarPage(){
     return ()=>controller.abort();
   },[groupId,start,end,key]);
   const items=loaded?.key===key?loaded.items:null;
+  const [pendingOccurrence,setPendingOccurrence]=useState(()=>new URLSearchParams(window.location.search).get("occurrence"));
+  useEffect(()=>{const row=items?.find(r=>r.id===pendingOccurrence);if(row&&groupId){setDetail({groupId,row});setPendingOccurrence(null);}},[items,groupId,pendingOccurrence]);
   const error=failure?.key===key?failure.message:"";
   const visible=(items??[]).filter(row=>(showCancelled||row.schedule_status!=="cancelled") &&
     (scope==="all"||(scope==="state"?row.scope==="state":row.scope==="alliance"&&row.alliance_id===selectedAlliance?.id)));
@@ -58,7 +61,7 @@ export function CalendarPage(){
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
   const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRetry(n=>n+1);};
   return <div className="page calendar-page">
-    <PageHeader title="Event Calendar" description={selectedGroup.name+" · Planned events only · All times UTC"}/>
+    <PageHeader title="Event Calendar" description={selectedGroup.name+" · Schedule and linked records · All times UTC"}/>
     <div className="toolbar calendar-toolbar">
       <button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>setShowCatalog(v=>!v)}>Game event catalog</button>
       {writable&&<button className="button button--primary" onClick={()=>{setCycleEditor(null);setDetail(null);setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}
@@ -92,6 +95,7 @@ export function CalendarPage(){
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
       {writable&&<div className="calendar-controls"><button className="button button--quiet" onClick={()=>{setCycleEditor(null);setEditor({groupId,row:selected,future:false});setDetail(null);}}>Edit schedule</button>{selected.series_id&&selected.schedule_status==="scheduled"&&selected.starts_at.slice(0,10)>=utcDay()&&<button className="button button--quiet" onClick={()=>{setCycleEditor(null);setEditor({groupId,row:selected,future:true});setDetail(null);}}>Change future series</button>}</div>}
       {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} onSelect={row=>setDetail({groupId,row})}/>}
+      <CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} onRevision={revision=>{setDetail({groupId,row:{...selected,revision}});setRetry(n=>n+1);}}/>
       <EventStageTimeline key={selected.id} row={selected}/>
       {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}
       <p>Source: {selected.source==="manual"?"Manual schedule":"Recurring forecast"}{selected.series_id?" · Recurring series":""}</p>

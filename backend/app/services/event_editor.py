@@ -352,6 +352,8 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
             db.execute("UPDATE events SET status='draft',bear_cycle_complete=0,updated_at=CURRENT_TIMESTAMP WHERE id=?", (event_id,))
             db.execute("UPDATE event_sessions SET revision=revision+1 WHERE event_id=?", (event_id,))
         elif action == "date":
+            if db.execute("SELECT 1 FROM calendar_event_links WHERE event_id=?",(event_id,)).fetchone():
+                raise ValueError("Unlink calendar schedules before changing the event date")
             if event["status"] != "draft" or occurred_on is None:
                 raise ValueError("Reopen the event before changing its date")
             if db.execute("SELECT 1 FROM event_session_roster r JOIN event_sessions s ON s.id=r.session_id WHERE s.event_id=?",(event_id,)).fetchone() or db.execute("SELECT 1 FROM event_participants WHERE event_id=?",(event_id,)).fetchone():

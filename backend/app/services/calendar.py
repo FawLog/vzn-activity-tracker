@@ -219,6 +219,9 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
         if row["revision"]!=payload.revision:
             raise ValueError("Calendar entry changed; reload before saving")
         validate_scope(db,group_id,payload)
+        if db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone():
+            if any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","starts_at","ends_at","precision","schedule_status")):
+                raise ValueError("Unlink the actual event before changing its schedule or cancelling it")
         if row["cycle_id"]:
             if any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase")):
                 raise ValueError("Cycle phase identity and owner cannot be changed")
@@ -280,6 +283,8 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
         if not rows or {row["id"]: row["revision"] for row in rows} != payload.revisions:
             raise ValueError("Series changed; review affected occurrences again")
         now = datetime.now(timezone.utc)
+        if any(db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(row["id"],)).fetchone() for row in rows):
+            raise ValueError("Unlink actual events before changing this series")
         moving_ids = {row["id"] for row in rows}
         proposed = []
         for row in rows:
@@ -380,3 +385,82 @@ def get_cycle(path,group_id,cycle_id):
             raise LookupError("Calendar cycle not found")
         rows=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND cycle_id=? ORDER BY starts_at,id",(group_id,cycle_id)).fetchall()
         return {"kind":cycle["kind"],"items":[dict(r) for r in rows]}
+
+# Only types with established alliance-owned result workflows. Bear has a group
+# cycle and host-specific sessions; it needs a separate mapping.
+LINKABLE_TYPES = {"foundry","canyon","alliance_mobilization","alliance_championship"}
+
+
+class CalendarEventLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str | None = Field(max_length=64)
+    revision: int = Field(ge=1)
+
+
+def link_occurrence(db,group_id,occurrence_id):
+    require_group(db,group_id)
+    row=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,occurrence_id)).fetchone()
+    if row is None:
+        raise LookupError("Calendar occurrence not found")
+    return row
+
+
+def link_eligible(row):
+    return (row["scope"]=="alliance" and row["event_type"] in LINKABLE_TYPES
+            and row["schedule_status"]=="scheduled"
+            and not (row["event_type"]=="canyon" and row["cycle_id"] and row["phase"]!="Battle"))
+
+
+def link_candidates(db,row):
+    if not link_eligible(row):
+        return []
+    return [dict(r) for r in db.execute("""SELECT e.id,e.event_type,e.occurred_on,e.status,e.alliance_id
+        FROM events e JOIN alliances a ON a.id=e.alliance_id
+        WHERE a.group_id=? AND a.state_id=? AND e.alliance_id=? AND e.event_type=? AND e.occurred_on=?
+        ORDER BY e.created_at,e.id LIMIT 101""",(row["group_id"],row["state_id"],row["alliance_id"],row["event_type"],row["starts_at"][:10])).fetchall()]
+
+
+def event_link(path,group_id,occurrence_id):
+    with connection(path) as db:
+        row=link_occurrence(db,group_id,occurrence_id)
+        linked=db.execute("""SELECT e.id,e.event_type,e.occurred_on,e.status,e.alliance_id
+            FROM calendar_event_links l JOIN events e ON e.id=l.event_id JOIN alliances a ON a.id=e.alliance_id
+            WHERE l.occurrence_id=? AND a.group_id=?""",(occurrence_id,group_id)).fetchone()
+        candidates=link_candidates(db,row)
+        return {"linked":dict(linked) if linked else None,"items":candidates[:100],"truncated":len(candidates)>100,
+                "eligible":link_eligible(row),"revision":row["revision"]}
+
+
+def set_event_link(path,group_id,occurrence_id,payload):
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        row=link_occurrence(db,group_id,occurrence_id)
+        if row["revision"]!=payload.revision:
+            raise ValueError("Calendar entry changed; reload before linking")
+        if payload.event_id is not None:
+            validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
+            if not link_eligible(row):
+                raise ValueError("This occurrence cannot be linked to an alliance result")
+            event=db.execute("""SELECT e.id FROM events e JOIN alliances a ON a.id=e.alliance_id
+                WHERE e.id=? AND a.group_id=? AND a.state_id=? AND e.alliance_id=? AND e.event_type=? AND e.occurred_on=?""",
+                (payload.event_id,group_id,row["state_id"],row["alliance_id"],row["event_type"],row["starts_at"][:10])).fetchone()
+            if event is None:
+                raise ValueError("Event must match alliance, state, type and UTC start date")
+            old=db.execute("SELECT event_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
+            if old and old["event_id"]!=payload.event_id:
+                raise ValueError("Unlink the existing event first")
+            db.execute("INSERT OR IGNORE INTO calendar_event_links(occurrence_id,event_id) VALUES (?,?)",(occurrence_id,payload.event_id))
+        else:
+            db.execute("DELETE FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,))
+        db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(occurrence_id,))
+        audit(db,"event_linked" if payload.event_id else "event_unlinked",occurrence_id)
+    return event_link(path,group_id,occurrence_id)
+
+
+def event_schedules(path,group_id,event_id):
+    with connection(path) as db:
+        require_group(db,group_id)
+        if not db.execute("SELECT 1 FROM events e JOIN alliances a ON a.id=e.alliance_id WHERE e.id=? AND a.group_id=?",(event_id,group_id)).fetchone():
+            raise LookupError("Event not found in selected group")
+        return {"items":[dict(r) for r in db.execute("""SELECT c.* FROM calendar_occurrences c JOIN calendar_event_links l ON l.occurrence_id=c.id
+            WHERE c.group_id=? AND l.event_id=? ORDER BY c.starts_at,c.id""",(group_id,event_id)).fetchall()]}

@@ -62,8 +62,8 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         if(previewError)throw Error(previewError);
         if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
         const payload={...fields,...intervalPayload(count,minutes,fields.precision),...(count>1?{reject_existing:true}:{})};
-        const fingerprint=JSON.stringify(payload);
-        if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,key:crypto.randomUUID()};
+        const requestFingerprint=JSON.stringify(payload);
+        if(request.current?.fingerprint!==requestFingerprint)request.current={fingerprint:requestFingerprint,key:crypto.randomUUID()};
         const result=await api.createSchedule(groupId,{...payload,request_key:request.current.key});
         onSaved(result.items[0].starts_at.slice(0,10));
       }

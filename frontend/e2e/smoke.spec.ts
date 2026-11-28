@@ -280,12 +280,22 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.route("**/api/v1/groups/*/calendar?*",async route=>{
     const response=await route.fetch();
     expect(response.ok()).toBe(true);
-    const start=new URL(route.request().url()).searchParams.get("start")!;
+    const params=new URL(route.request().url()).searchParams;
+    const start=params.get("start")!,end=params.get("end")!;
+    const isAgenda=(Date.parse(end)-Date.parse(start))/86400000===30;
+    const day=(offset:number)=>new Date(Date.parse(start+"T00:00Z")+offset*86400000).toISOString().slice(0,10);
+    // Keep timed fixtures upcoming regardless of the CI runner's current UTC hour.
+    const fixtureDay=day(1);
     const common={group_id:currentGroupId,series_id:null,sequence:0,state_id:"1002",ends_at:null,source:"manual",revision:1};
     await route.fulfill({response,json:{items:[
-      {...common,id:"calendar-bear",event_type:"bear_trap",scope:"alliance",alliance_id:currentAllianceId,starts_at:start+"T15:00Z",precision:"minute",phase:"Trap 1",confidence:"confirmed",schedule_status:"scheduled"},
-      {...common,id:"calendar-state",event_type:"svs_preparation",scope:"state",alliance_id:null,starts_at:start,precision:"date",phase:"Day 1",confidence:"estimated",schedule_status:"scheduled"},
-      {...common,id:"calendar-cancelled",event_type:"foundry",scope:"alliance",alliance_id:currentAllianceId,starts_at:start+"T20:00Z",precision:"minute",phase:"Legion 1",confidence:"confirmed",schedule_status:"cancelled"}
+      {...common,id:"calendar-bear",event_type:"bear_trap",scope:"alliance",alliance_id:currentAllianceId,starts_at:fixtureDay+"T15:00Z",precision:"minute",phase:"Trap 1",confidence:"confirmed",schedule_status:"scheduled"},
+      {...common,id:"calendar-state",event_type:"svs_preparation",scope:"state",alliance_id:null,starts_at:fixtureDay,precision:"date",phase:"Day 1",confidence:"estimated",schedule_status:"scheduled"},
+      {...common,id:"calendar-cancelled",event_type:"foundry",scope:"alliance",alliance_id:currentAllianceId,starts_at:fixtureDay+"T20:00Z",precision:"minute",phase:"Legion 1",confidence:"confirmed",schedule_status:"cancelled"},
+      ...(isAgenda?[
+        {...common,id:"agenda-ended",event_type:"canyon",scope:"alliance",alliance_id:currentAllianceId,starts_at:day(-2)+"T00:00Z",ends_at:day(-2)+"T00:30Z",precision:"minute",phase:"Past test",confidence:"confirmed",schedule_status:"scheduled"},
+        {...common,id:"agenda-ongoing",event_type:"alliance_championship",scope:"alliance",alliance_id:currentAllianceId,starts_at:day(-2),ends_at:day(3),precision:"date",phase:"",confidence:"confirmed",schedule_status:"scheduled"},
+        {...common,id:"agenda-later",event_type:"game:lucky-wheel",scope:"state",alliance_id:null,starts_at:day(20),ends_at:day(23),precision:"date",phase:"",confidence:"confirmed",schedule_status:"scheduled"}
+      ]:[])
     ]}});
   });
   await page.reload();
@@ -310,7 +320,8 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await catalog.getByRole("button",{name:"Close catalog"}).click();
   await expect(calendar.getByRole("button",{name:/Bear Trap.*15:00 UTC/})).toBeVisible();
-  await expect(calendar.getByRole("button",{name:/SvS Preparation.*Time not set/})).toBeVisible();
+  await expect(calendar.getByRole("button",{name:/SvS Preparation/})).toBeVisible();
+  if(defaultCalendarView==="Agenda")await expect(calendar.getByRole("region",{name:"Agenda schedule"})).not.toContainText("Time not set");
   await expect(calendar.getByRole("button",{name:/Foundry Battle/})).toHaveCount(0);
   await expect.poll(()=>calendar.getByRole("button",{name:/Bear Trap/}).locator("img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
   await calendar.getByRole("button",{name:"Filters",exact:true}).click();
@@ -328,6 +339,20 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await calendar.getByRole("button",{name:mode,exact:true}).click();
     await expect(calendar.getByRole("region",{name:mode+" schedule",exact:true})).toBeVisible();
     await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+    if(mode==="Agenda"){
+      const agenda=calendar.getByRole("region",{name:"Agenda schedule",exact:true});
+      await expect(agenda.getByRole("region",{name:"Ongoing",exact:true}).getByRole("button",{name:/Alliance Championship/})).toHaveCount(1);
+      await expect(agenda.getByRole("button",{name:/Alliance Championship/})).toHaveCount(1);
+      await expect(agenda.getByRole("button",{name:/Lucky Wheel/})).toHaveCount(1);
+      await expect(agenda.getByRole("button",{name:/Past test/})).toHaveCount(0);
+      await expect(agenda.getByRole("region",{name:"Tomorrow",exact:true})).toBeVisible();
+      await expect(agenda).not.toContainText("Time not set");
+      await expect(agenda).not.toContainText("State #");
+      await expect(agenda).not.toContainText("No scheduled events");
+      await expect(agenda).not.toContainText("Cycle ");
+      await expect(agenda).not.toContainText("Record:");
+      await expect(calendar.getByRole("button",{name:"Previous period"})).toBeDisabled();
+    }
     await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
     await page.screenshot({path:testInfo.outputPath("calendar-"+mode.toLowerCase()+".png"),fullPage:true});
   }

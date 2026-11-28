@@ -1042,3 +1042,13 @@ td strong { color: var(--text); font-weight: 650; }
 .calendar-legion-start label{display:grid;gap:6px;min-width:0;}
 .calendar-legion-start input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;font-size:16px;}
 .calendar-battle-settings{margin-top:16px;}
+
+/* Agenda only: short, scannable rows. Week and month layouts remain unchanged. */
+.calendar-schedule--agenda .calendar-day{padding:10px 12px;}
+.calendar-schedule--agenda .calendar-day h3{font-size:13px;margin:0 0 7px;}
+.calendar-schedule--agenda .calendar-entry{min-height:44px;padding:8px 10px;margin-bottom:5px;}
+.calendar-schedule--agenda .calendar-entry:last-child{margin-bottom:0;}
+.calendar-schedule--agenda .calendar-entry-copy{font-size:13px;gap:2px;overflow-wrap:break-word;}
+.calendar-schedule--agenda .calendar-entry-copy small{font-size:12px;line-height:1.35;}
+.calendar-schedule--agenda .calendar-entry .event-icon,.calendar-schedule--agenda .calendar-entry .event-icon img{width:26px;height:26px;}
+.calendar-agenda-empty{padding:16px;margin:0;color:var(--text-soft);font-size:13px;}

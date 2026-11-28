@@ -20,7 +20,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { navigate } from "../lib/router";
 
 import { api } from "../lib/api";
-import { calendarEndLabel, calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
+import { agendaGroups, agendaTime, calendarEndLabel, calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
 import { eventLabel, formatDate } from "../lib/format";
 import { useGroupContext } from "../lib/group-context";
 
@@ -38,7 +38,17 @@ export function CalendarPage(){
   const [workspaceBlocked,setWorkspaceBlocked]=useState(false);
   const [cycleEditor,setCycleEditor]=useState<CycleKind|null>(null);
   const [day,setDay]=useState(()=>{const value=new URLSearchParams(window.location.search).get("day");return value&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value+"T00:00Z").toISOString().slice(0,10)===value&&Number(value.slice(0,4))>=2000&&Number(value.slice(0,4))<=2099?value:utcDay();});
-  const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches?"Agenda":"Week");
+  const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches&&day>=utcDay()?"Agenda":"Week");
+  const [now,setNow]=useState(()=>new Date());
+  useEffect(()=>{
+    if(view!=="Agenda")return;
+    const refresh=()=>setNow(new Date());
+    refresh();
+    const timer=window.setInterval(refresh,15000);
+    window.addEventListener("focus",refresh);
+    document.addEventListener("visibilitychange",refresh);
+    return ()=>{window.clearInterval(timer);window.removeEventListener("focus",refresh);document.removeEventListener("visibilitychange",refresh);};
+  },[view]);
   const [scope,setScope]=useState("all");
   const [showCancelled,setShowCancelled]=useState(false);
   const [recordFilter,setRecordFilter]=useState("all");
@@ -47,7 +57,7 @@ export function CalendarPage(){
   const [retry,setRetry]=useState(0);
   const [editor,setEditor]=useState<{groupId:string;row:CalendarOccurrence|null;forecast?:RotationForecast;manualType?:string}|null>(null);
   const [detail,setDetail]=useState<{groupId:string;row:CalendarOccurrence}|null>(null);
-  const {start,end,days}=calendarRange(day,view);
+  const {start,end,days}=calendarRange(day,view,now);
   const key=groupId+"|"+start+"|"+end+"|"+retry;
   useEffect(()=>{
     if(!groupId||!selectedGroup)return;
@@ -66,6 +76,7 @@ export function CalendarPage(){
   const visible=(items??[]).filter(row=>(showCancelled||row.schedule_status!=="cancelled") &&
     (scope==="all"||(scope==="state"?row.scope==="state":row.scope==="alliance"&&row.alliance_id===selectedAlliance?.id)) &&
     (recordFilter==="all"||(recordFilter==="unlinked"?!row.review:row.review?.publication===recordFilter)));
+  const agenda=view==="Agenda"?agendaGroups(visible,start,end,now):[];
   const owner=(row:CalendarOccurrence)=>row.scope==="state"?"State #"+row.state_id:(alliances.find(a=>a.id===row.alliance_id)?.tag??"Alliance")+" · #"+row.state_id;
   const status=(row:CalendarOccurrence)=>row.schedule_status==="cancelled"?"Cancelled":row.confidence==="confirmed"?"Confirmed":"Estimated";
   const closeWorkspace=()=>{setShowForecast(false);setDetail(null);setEditor(null);setCycleEditor(null);setPendingOccurrence(null);};
@@ -80,13 +91,16 @@ export function CalendarPage(){
   const svsCycle=!!selected?.cycle_id&&selected.event_type.startsWith("svs_");
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
   const filterCount=Number(scope!=="all")+Number(recordFilter!=="all")+Number(showCancelled);
-  const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
+  const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next){setDay(next);if(view==="Agenda"&&next<utcDay())setView("Week");}setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
+  const openRow=(row:CalendarOccurrence)=>{if(selected?.id===row.id)return;if(allowNavigation()){closeWorkspace();setDetail({groupId,row});}};
+  const eventName=(row:CalendarOccurrence)=>row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name??eventLabel(row.event_type):eventLabel(row.event_type);
+  const agendaHeading=(date:string,ongoing:boolean)=>ongoing?"Ongoing":date===utcDay(now)?"Today":date===addDays(utcDay(now),1)?"Tomorrow":weekday(date)+" "+formatDate(date);
   return <div className="page calendar-page">
     <header className="calendar-top"><div><h1>Event Calendar</h1><p>{selectedGroup.name} · UTC</p></div>{writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{if((editing&&!editing.row)||!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null});}}><Plus size={16}/>Add event</button>}</header>
     <div className="calendar-compact-nav">
-      <div className="calendar-date-row"><button className="icon-button" aria-label="Previous period" disabled={workspaceBlocked} onClick={()=>changeDay(moveCalendar(day,view,-1))}><ChevronLeft/></button><h2 className="calendar-period">{view==="Month"?monthLabel(day):formatDate(start)+" – "+formatDate(addDays(end,-1))}</h2><button className="icon-button" aria-label="Next period" disabled={workspaceBlocked} onClick={()=>changeDay(moveCalendar(day,view,1))}><ChevronRight/></button><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>changeDay(utcDay())}>Today</button></div>
+      <div className="calendar-date-row"><button className="icon-button" aria-label="Previous period" disabled={workspaceBlocked||view==="Agenda"&&start<=utcDay(now)} onClick={()=>changeDay(moveCalendar(day,view,-1,now))}><ChevronLeft/></button><h2 className="calendar-period">{view==="Month"?monthLabel(day):formatDate(start)+" – "+formatDate(addDays(end,-1))}</h2><button className="icon-button" aria-label="Next period" disabled={workspaceBlocked} onClick={()=>changeDay(moveCalendar(day,view,1,now))}><ChevronRight/></button><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>changeDay(utcDay())}>Today</button></div>
       <div className="calendar-view-row">
-      <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} disabled={workspaceBlocked} onClick={()=>{if(mode===view||!allowNavigation())return;closeWorkspace();setView(mode);}}>{mode}</button>)}</div>
+      <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} disabled={workspaceBlocked} onClick={()=>{if(mode===view||!allowNavigation())return;closeWorkspace();if(mode==="Agenda"){setNow(new Date());setDay(utcDay());}setView(mode);}}>{mode}</button>)}</div>
         <div className="calendar-utility"><button className="icon-button" aria-label="Filters" aria-expanded={filtersOpen} title="Filters" onClick={()=>setFiltersOpen(v=>!v)}><SlidersHorizontal size={18}/>{filterCount>0&&<small>{filterCount}</small>}</button><button className="icon-button" aria-label="More calendar options" aria-expanded={moreOpen} title="More calendar options" onClick={()=>setMoreOpen(v=>!v)}><Ellipsis size={20}/></button></div>
       </div>
       {moreOpen&&<div className="calendar-more"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button><button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>{setShowCatalog(v=>!v);setMoreOpen(false);}}>Game event catalog</button><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;closeWorkspace();setShowCatalog(false);setMoreOpen(false);setShowForecast(true);}}>State progression &amp; forecast</button></div>}
@@ -114,7 +128,19 @@ export function CalendarPage(){
     {!sharedCard&&(error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>
       {view!=="Agenda"&&<div className="calendar-weekdays" aria-hidden="true">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span key={d}>{d}</span>)}</div>}
-      <div className="calendar-days">{days.map(date=>{
+      {view==="Agenda"?<div className="calendar-days">
+        {agenda.length?agenda.map(group=><section key={group.ongoing?"ongoing":group.day} className={"calendar-day"+(group.day===utcDay(now)?" calendar-day--today":"")} aria-label={agendaHeading(group.day,group.ongoing)}>
+          <h3>{agendaHeading(group.day,group.ongoing)}{group.ongoing?"":group.day===utcDay(now)||group.day===addDays(utcDay(now),1)?" · "+formatDate(group.day):""}</h3>
+          {group.items.map(row=>{
+            const dayNumber=group.ongoing?eventDay(row,group.day):null;
+            const stage=group.ongoing?stagesOn(row,group.day).map(s=>s.name).join(" / "):"";
+            const summary=[row.phase,dayNumber,stage?stage+" (est.)":null,agendaTime(row,group.day,group.ongoing),row.schedule_status==="cancelled"?"Cancelled":null].filter(Boolean).join(" · ");
+            return <button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} title={status(row)} disabled={workspaceBlocked} onClick={()=>openRow(row)}>
+              <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{eventName(row)}</strong>{summary&&<small>{summary}</small>}</span>
+            </button>;
+          })}
+        </section>):<p className="calendar-agenda-empty">No upcoming events in this period.</p>}
+      </div>:<div className="calendar-days">{days.map(date=>{
         const events=visible.filter(row=>occursOn(row,date));
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>
           <h3>{view==="Month"?Number(date.slice(8)):weekday(date)+" "+formatDate(date)}</h3>
@@ -123,12 +149,12 @@ export function CalendarPage(){
           </button>)}
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
         </section>;
-      })}</div>
+      })}</div>}
     </section>)}
     {selected&&!sharedCard&&<section className="data-panel calendar-detail" aria-label="Schedule details">
       <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{svsCycle?"State of Power (SvS)":(selected.event_type.startsWith("game:")?reference?.name??eventLabel(selected.event_type):eventLabel(selected.event_type))}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Close details</button></div>
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
-      <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+calendarEndLabel(selected.ends_at,selected.precision):""}</p>
+      <p>{formatDate(selected.starts_at)}{selected.precision==="minute"?" · "+calendarTime(selected,selected.starts_at.slice(0,10)):""}{selected.ends_at?" — until "+calendarEndLabel(selected.ends_at,selected.precision):""}</p>
       {selected.follow_rule_id?<FollowScheduleDetails key={selected.id} groupId={groupId} row={selected} writable={writable&&!workspaceBlocked} onStopped={()=>saved()}/>:writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected});setDetail(null);}}>Edit schedule</button></div>}
       {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} writable={writable&&!workspaceBlocked} onChanged={saved} onSelect={row=>{if(row.id!==selected.id&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}/>}
       {selected.scope==="alliance"&&["bear_trap","foundry","canyon"].includes(selected.event_type)&&<details><summary>Advanced event data</summary><CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} workspaceBlocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRevision={revision=>{setDetail(current=>current?.groupId===groupId&&current.row.id===selected.id?{groupId,row:{...current.row,revision}}:current);setRetry(n=>n+1);}}/></details>}

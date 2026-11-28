@@ -54,13 +54,60 @@ export function addMonths(day:string,count:number):string {
   date.setUTCMonth(date.getUTCMonth()+count);
   return utcDay(date);
 }
-export function calendarRange(day:string,view:CalendarView) {
-  const start=view==="Month"?weekStart(monthStart(day)):weekStart(day);
-  const end=view==="Month"?addDays(start,42):addDays(start,7);
-  return {start,end,days:Array.from({length:view==="Month"?42:7},(_,i)=>addDays(start,i))};
+export const AGENDA_DAYS=30;
+export function calendarRange(day:string,view:CalendarView,now=new Date()) {
+  const start=view==="Agenda"?(day<utcDay(now)?utcDay(now):day):view==="Month"?weekStart(monthStart(day)):weekStart(day);
+  const length=view==="Agenda"?AGENDA_DAYS:view==="Month"?42:7;
+  const end=addDays(start,length);
+  return {start,end,days:Array.from({length},(_,i)=>addDays(start,i))};
 }
-export function moveCalendar(day:string,view:CalendarView,direction:number):string {
+export function moveCalendar(day:string,view:CalendarView,direction:number,now=new Date()):string {
+  if(view==="Agenda"){
+    const today=utcDay(now),start=day<today?today:day;
+    const target=addDays(start,direction*AGENDA_DAYS);
+    return target<today?today:target;
+  }
   return view==="Month"?addMonths(day,direction):addDays(day,direction*7);
+}
+export type AgendaGroup={day:string;ongoing:boolean;items:CalendarOccurrence[]};
+// A date-only event has no asserted clock time. Its occupied dates remain
+// visible through the last day; a timed point without an end has no invented duration.
+export function agendaGroups(rows:CalendarOccurrence[],start:string,end:string,now=new Date()):AgendaGroup[]{
+  const today=utcDay(now),minute=now.toISOString().slice(0,16)+"Z";
+  const first=start<today?today:start;
+  const current:CalendarOccurrence[]=[],byDay=new Map<string,CalendarOccurrence[]>();
+  const seen=new Set<string>();
+  for(const row of rows){
+    if(seen.has(row.id))continue;
+    seen.add(row.id);
+    const day=row.starts_at.slice(0,10);
+    const active=row.schedule_status==="scheduled"&&!!row.ends_at&&
+      (row.precision==="date"?row.starts_at<=today&&row.ends_at>today:row.starts_at<=minute&&row.ends_at>minute);
+    if(active&&first===today){current.push(row);continue;}
+    if(day<first||day>=end)continue;
+    if(day===today&&row.precision==="minute"&&row.starts_at<minute)continue;
+    if(day===today&&row.ends_at&&(row.precision==="date"?row.ends_at<=today:row.ends_at<=minute))continue;
+    const items=byDay.get(day)??[];
+    items.push(row);byDay.set(day,items);
+  }
+  const compare=(a:CalendarOccurrence,b:CalendarOccurrence)=>a.starts_at.localeCompare(b.starts_at)||a.id.localeCompare(b.id);
+  const groups:AgendaGroup[]=[];
+  if(current.length)groups.push({day:today,ongoing:true,items:current.sort((a,b)=>(a.ends_at??"").localeCompare(b.ends_at??"")||compare(a,b))});
+  for(const [day,items] of [...byDay.entries()].sort(([a],[b])=>a.localeCompare(b)))groups.push({day,ongoing:false,items:items.sort(compare)});
+  return groups;
+}
+const agendaDate=(day:string)=>new Intl.DateTimeFormat("en",{month:"short",day:"numeric",timeZone:"UTC"}).format(new Date(day+"T00:00Z"));
+export function agendaTime(row:CalendarOccurrence,day:string,ongoing:boolean):string|null{
+  const end=row.ends_at?calendarEndInput(row.ends_at,row.precision):null;
+  if(row.precision==="date"){
+    // Display the last occupied date, never a fake midnight or "Time not set".
+    return end&&(ongoing||end!==row.starts_at)? "Ends "+(end===day?"today":agendaDate(end)):null;
+  }
+  const start=row.starts_at.slice(11,16)+" UTC";
+  if(!end)return ongoing?null:start;
+  const endDay=end.slice(0,10),endClock=end.slice(11);
+  const finish=(endDay===day?"":agendaDate(endDay)+" ")+endClock+" UTC";
+  return ongoing?"Ends "+finish:start+" · Ends "+finish;
 }
 export function occursOn(row:CalendarOccurrence,day:string):boolean {
   const next=addDays(day,1);

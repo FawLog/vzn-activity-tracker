@@ -6,7 +6,7 @@ import type { Alliance } from "../lib/types";
 import type { CalendarOccurrence } from "../lib/calendar";
 import { gameEventForCalendar, repeatLabel, extraCalendarEvents } from "../lib/game-event-catalog";
 import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, stateAge, type RepeatMode } from "../lib/game-forecast";
-import { futureChange, precisionChange, shiftedStart, scheduleFields, serializeTime, utcInput, type ScheduleFields } from "../lib/schedule-editor";
+import { futureChange, precisionChange, shiftedStart, scheduleFields, serializeTime, utcInput, templateFields, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
 
 type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:"canyon"|"svs")=>void;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
@@ -23,6 +23,16 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const [days,setDays]=useState(2);
   const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
   const [profiles,setProfiles]=useState<StateCalendarProfile[]>([]);
+  const [templates,setTemplates]=useState<ScheduleTemplate[]>([]);
+  const [templateName,setTemplateName]=useState("");
+  const [templateError,setTemplateError]=useState("");
+  const [templateMessage,setTemplateMessage]=useState("");
+  useEffect(()=>{
+    if(row)return;
+    const controller=new AbortController();
+    api.scheduleTemplates(groupId,controller.signal).then(r=>{if(!controller.signal.aborted)setTemplates(r.items);}).catch(()=>{if(!controller.signal.aborted)setTemplateError("Saved templates unavailable.");});
+    return ()=>controller.abort();
+  },[groupId,row]);
   const [manualDate,setManualDate]=useState<{stateId:string;value:string}|null>(null);
   const [profileError,setProfileError]=useState("");
   useEffect(()=>{
@@ -71,7 +81,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   }
   const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays,renew});
   const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew}));
-  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew})||manualDate!==null,busy);
+  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew})||manualDate!==null||!!templateName.trim(),busy);
   function useReference(){
     if(suggested===null)return;
     const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
@@ -86,6 +96,36 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
     if(interval!==null&&interval%1440===0&&type!=="alliance_mobilization"){
       setRepeatMode("fixed");setIntervalUnit("days");setDays(interval/1440);setCount(Math.min(4,1+Math.floor(366*1440/interval)));
     }else{setCount(1);setRepeatMode("fixed");setDays(2);setIntervalUnit("days");}
+  }
+  const localTemplates=templates.filter(t=>t.alliance_id===fields.alliance_id&&fields.scope==="alliance");
+  function applyTemplate(id:string){
+    const template=localTemplates.find(t=>t.id===id);
+    if(!template||!allowNavigation())return;
+    try{
+      const data=template.schedule;
+      const next=templateFields(data,fields.starts_at.slice(0,10)||day);
+      setFields(next);setCount(data.occurrence_count);setRenew(!!data.rolling);
+      setRepeatMode(data.repeat_months?"months":data.repeat_weekdays?.length?"weekdays":"fixed");
+      setMonths(data.repeat_months??1);setWeekdays(data.repeat_weekdays??[1,3]);
+      const interval=data.interval_minutes??2880,unit=interval%1440===0?"days":interval%60===0?"hours":"minutes";
+      setIntervalUnit(unit);setDays(interval/({days:1440,hours:60,minutes:1}[unit]));
+      setTemplateName("");setManualDate(null);setReviewed(null);setTemplateError("");setTemplateMessage("Template loaded. Verify the next date and local times before saving.");
+    }catch(e){setTemplateError(message(e));}
+  }
+  async function saveTemplate(){
+    if(lock.current||!templateName.trim()||fields.scope!=="alliance"||previewError)return;
+    lock.current=true;setBusy(true);setTemplateError("");setTemplateMessage("");
+    try{
+      const schedule={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,reject_existing:true,rolling};
+      const saved=await api.saveScheduleTemplate(groupId,templateName.trim(),schedule);
+      setTemplates(old=>[...old,saved]);setTemplateName("");setTemplateMessage("Template saved. No calendar entries were created.");
+    }catch(e){setTemplateError(message(e));}finally{lock.current=false;setBusy(false);}
+  }
+  async function deleteTemplate(template:ScheduleTemplate){
+    if(lock.current||!window.confirm("Delete saved template "+template.name+"? Scheduled events will not change."))return;
+    lock.current=true;setBusy(true);setTemplateError("");setTemplateMessage("");
+    try{await api.deleteScheduleTemplate(groupId,template.id);setTemplates(old=>old.filter(t=>t.id!==template.id));setTemplateMessage("Template deleted.");}
+    catch(e){setTemplateError(message(e));}finally{lock.current=false;setBusy(false);}
   }
   async function save(e:FormEvent){
     e.preventDefault();if(lock.current)return;
@@ -115,13 +155,14 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
       <fieldset disabled={busy} className="calendar-editor-fields">
         <label>Event type<select disabled={!!row?.cycle_id} value={fields.event_type} onChange={e=>changeEvent(e.target.value)}>{!row&&onCycle&&<optgroup label="Full event cycles"><option value="cycle:canyon">Canyon Clash — all phases</option><option value="cycle:svs">SvS — all phases</option></optgroup>}{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>
         <label>Schedule owner<select disabled={!!row?.cycle_id} required value={fields.scope==="alliance"?fields.alliance_id??"":"state:"+fields.state_id} onChange={e=>changeOwner(e.target.value)}><option value="" disabled>Choose owner</option>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}{states.map(s=><option key={s} value={"state:"+s}>State #{s}</option>)}</select></label>
+        {!row&&localTemplates.length>0&&<label>Saved alliance template<select value="" onChange={e=>applyTemplate(e.target.value)}><option value="">Choose a template</option>{localTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>patch({starts_at:e.target.value?serializeTime(e.target.value,fields.precision):""})}/></label>
         {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
         <button type="button" className="button button--quiet calendar-advanced-toggle" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide advanced settings":"Advanced settings"}</button>
         {advanced&&<><label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null})}/></label>
         <label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>
-        <label>Confidence<select value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
+        <label>Confidence<select aria-label="Confidence" value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
         <label>Occurrences (including first)<input type="number" min={1} max={180} required value={count} onChange={e=>setCount(Number(e.target.value))}/></label>
         {count>1&&<label>Repeat pattern<select value={repeatMode} onChange={e=>setRepeatMode(e.target.value as RepeatMode)}><option value="fixed">Fixed interval</option><option value="months">Calendar months</option><option value="weekdays">Selected weekdays</option></select></label>}
@@ -133,6 +174,8 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
         </>}
       </fieldset>
       {!row&&<>
+        {advanced&&fields.scope==="alliance"&&<section className="calendar-series-preview" aria-label="Alliance templates"><h3>Alliance templates</h3><p>Save the current event type, UTC time, duration and repeat pattern for reuse. Saving a template does not schedule an event.</p><div className="calendar-editor-fields"><label>Template name<input maxLength={80} value={templateName} onChange={e=>setTemplateName(e.target.value)} disabled={busy}/></label><button type="button" className="button button--secondary" disabled={busy||!templateName.trim()||!!previewError||!fields.alliance_id} onClick={()=>void saveTemplate()}>Save as template</button></div>{localTemplates.map(t=><div key={t.id} className="calendar-controls"><span>{t.name}</span><button type="button" className="button button--quiet" disabled={busy} onClick={()=>void deleteTemplate(t)} aria-label={"Delete template "+t.name}>Delete</button></div>)}</section>}
+        {templateError&&<p role="alert">{templateError}</p>}{templateMessage&&<p role="status">{templateMessage}</p>}
         {advanced&&<><p>State #{fields.state_id} · {profile?.source==="whiteoutstats"?"WhiteoutStats":profile?.source==="manual"?"Saved manual date":"Opening date unavailable"}{profile?.age_days!=null?" · "+profile.age_days+" days old":""}{profile?.last_success_at?" · Last received "+profile.last_success_at:""}{profile?.last_status==="failed"?" · Provider refresh failed; cached date retained":""}</p>
         {profile&&<div className="calendar-controls"><button type="button" className="button button--quiet" disabled={busy||!stateStart} onClick={()=>void saveStateDate(false)}>Save state date override</button>{profile.manual_opened_on&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>void saveStateDate(true)}>Use provider date</button>}</div>}
         {profileError&&<p role="alert">{profileError}</p>}

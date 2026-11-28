@@ -29,7 +29,7 @@ from ..security import verify_password
 from ..services import records, event_editor, vision_ocr, analytics, calendar
 from ..services.event_editor import SessionCreate, SessionSave
 from ..services import groups
-from ..services import whiteoutstats, state_calendar
+from ..services import whiteoutstats, state_calendar, calendar_templates
 from ..services.sessions import (
     clear_login_failures,
     create_session,
@@ -380,6 +380,36 @@ def create_api_router(settings: Settings) -> APIRouter:
         require_csrf(request, session)
         try:
             return state_calendar.update_date(settings.database_path, group_id, state_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.get("/groups/{group_id}/calendar/templates")
+    async def get_calendar_templates(request: Request, group_id: str):
+        require_admin(request, settings)
+        try:
+            return calendar_templates.list_templates(settings.database_path, group_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
+    @router.post("/groups/{group_id}/calendar/templates", status_code=201)
+    async def post_calendar_template(request: Request, group_id: str, payload: calendar_templates.TemplateCreate):
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return calendar_templates.create_template(settings.database_path, group_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.delete("/groups/{group_id}/calendar/templates/{template_id}")
+    async def delete_calendar_template(request: Request, group_id: str, template_id: str):
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return calendar_templates.delete_template(settings.database_path, group_id, template_id)
         except LookupError as error:
             raise _not_found(str(error)) from error
         except ValueError as error:

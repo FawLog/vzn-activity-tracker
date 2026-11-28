@@ -5,10 +5,10 @@ import {cycleDraft,type CycleKind} from "../lib/calendar-cycles";
 import {weekStart,type CalendarOccurrence} from "../lib/calendar";
 import {serializeTime,utcInput,type ScheduleFields} from "../lib/schedule-editor";
 import type {Alliance} from "../lib/types";
-type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;onClose:()=>void;onSaved:(day:string)=>void};
-export function CycleEditor({groupId,alliances,preferred,day,onClose,onSaved}:Props){
+type Props={initialKind?:CycleKind;groupId:string;alliances:Alliance[];preferred?:string;day:string;onClose:()=>void;onSaved:(day:string)=>void};
+export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,day,onClose,onSaved}:Props){
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
-  const [kind,setKind]=useState<CycleKind>("canyon");
+  const [kind,setKind]=useState<CycleKind>(initialKind);
   const [owner,setOwner]=useState(active.find(a=>a.id===preferred)?.id??active[0]?.id??"");
   const [anchor,setAnchor]=useState(weekStart(day));
   const [phases,setPhases]=useState<ScheduleFields[]>([]);
@@ -42,7 +42,7 @@ export function CycleEditor({groupId,alliances,preferred,day,onClose,onSaved}:Pr
     finally{lock.current=false;setBusy(false);}
   }
   return <section className="data-panel calendar-editor" aria-label="Cycle editor">
-    <h2>Plan event cycle</h2><p>Review every phase. This creates linked calendar entries only, never actual event results.</p>
+    <h2>Add event cycle</h2><p>Review every phase. This creates linked calendar entries only, never actual event results.</p>
     <fieldset disabled={busy} className="calendar-editor-fields">
       <label>Cycle type<select value={kind} onChange={e=>{setKind(e.target.value as CycleKind);invalidate();}}><option value="canyon">Canyon Clash</option><option value="svs">SvS</option></select></label>
       <label>{kind==="svs"?"State (via active alliance)":"Alliance"}<select value={owner} onChange={e=>{setOwner(e.target.value);invalidate();}}>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}</select></label>

@@ -997,3 +997,22 @@ td strong { color: var(--text); font-weight: 650; }
 .upcoming-time{text-align:right;max-width:40%;font-variant-numeric:tabular-nums}
 .upcoming-time .upcoming-estimated{color:var(--amber)}
 @media(max-width:620px){.upcoming-events{padding:12px}.upcoming-controls select,.upcoming-controls .button{min-height:44px}.upcoming-controls select{font-size:16px}.upcoming-row{gap:7px}.upcoming-time strong{font-size:12px}}
+
+/* Calendar v4: keep operational dates above the fold. */
+.calendar-top { display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:12px;border-bottom:1px solid var(--line); }
+.calendar-top h1 { font-size:clamp(23px,3vw,34px);line-height:1.15;letter-spacing:-.03em;margin:0 0 4px; }
+.calendar-top p { color:var(--text-soft);font-size:12px;margin:0; }
+.calendar-top .button { flex-shrink:0; }
+.calendar-compact-nav { display:grid;gap:8px;margin:12px 0;min-width:0; }
+.calendar-date-row,.calendar-view-row { display:flex;align-items:center;gap:6px;min-width:0; }
+.calendar-date-row .calendar-period { flex:1;text-align:center;margin:0;font-size:14px;min-width:0; }
+.calendar-view-row { justify-content:space-between; }
+.calendar-view-row .calendar-controls { flex-wrap:nowrap; }
+.calendar-utility { display:flex;align-items:center;gap:2px; }
+.calendar-utility .icon-button { position:relative; }
+.calendar-utility small { font-size:10px;color:var(--cyan); }
+.calendar-filter-panel,.calendar-more { display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface); }
+.calendar-repeat-summary { grid-column:1/-1;display:grid;gap:6px;padding:10px;border:1px solid var(--line);border-radius:var(--radius-sm); }
+.calendar-repeat-summary small { color:var(--text-soft); }
+.calendar-advanced-toggle { grid-column:1/-1;justify-self:start; }
+@media(max-width:620px){.calendar-top .button,.calendar-compact-nav .button,.calendar-compact-nav .icon-button{min-height:44px}.calendar-compact-nav .icon-button{min-width:40px}.calendar-date-row .calendar-period{font-size:12px}.calendar-view-row .button{padding-inline:10px}.calendar-filter-panel{align-items:stretch;flex-direction:column}.calendar-filter-panel select{min-height:44px}.calendar-top .button{padding-inline:10px}.calendar-top h1{font-size:23px}}

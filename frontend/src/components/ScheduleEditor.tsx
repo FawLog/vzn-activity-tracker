@@ -8,13 +8,14 @@ import { gameEventForCalendar, repeatLabel, extraCalendarEvents } from "../lib/g
 import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, stateAge, type RepeatMode } from "../lib/game-forecast";
 import { futureChange, precisionChange, shiftedStart, scheduleFields, serializeTime, utcInput, type ScheduleFields } from "../lib/schedule-editor";
 
-type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onClose:()=>void;onSaved:(day:string)=>void};
+type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:"canyon"|"svs")=>void;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
-export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSaved}:Props){
+export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onClose,onSaved}:Props){
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
   const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
   const [count,setCount]=useState(1);
+  const [advanced,setAdvanced]=useState(!!row);
   const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
   const [months,setMonths]=useState(1);
   const [weekdays,setWeekdays]=useState<number[]>([1,3]);
@@ -74,6 +75,16 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
     const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
     setRepeatMode("fixed");setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(4);setReviewed(null);
   }
+  function changeEvent(type:string){
+    if(!row&&(type==="cycle:canyon"||type==="cycle:svs")){onCycle?.(type==="cycle:canyon"?"canyon":"svs");return;}
+    patch({event_type:type});setReviewed(null);
+    if(row)return;
+    const event=gameEventForCalendar(type),interval=fixedGameInterval(event);
+    // Reference cadence is not proof of an alliance's actual local schedule.
+    if(interval!==null&&interval%1440===0&&type!=="alliance_mobilization"){
+      setRepeatMode("fixed");setIntervalUnit("days");setDays(interval/1440);setCount(Math.min(4,1+Math.floor(366*1440/interval)));
+    }else{setCount(1);setRepeatMode("fixed");setDays(2);setIntervalUnit("days");}
+  }
   async function save(e:FormEvent){
     e.preventDefault();if(lock.current)return;
     lock.current=true;setBusy(true);setError("");
@@ -96,15 +107,17 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
   }
   const timeType=fields.precision==="date"?"date":"datetime-local";
   return <section className="data-panel calendar-editor" aria-label="Schedule editor">
-    <h2>{row?"Edit scheduled event":"Add scheduled event"}</h2>
+    <h2>{row?"Edit scheduled event":"Add event"}</h2>
     <p>Planning only. No attendance or result records are created.</p>
     <form onSubmit={save}>
       <fieldset disabled={busy} className="calendar-editor-fields">
-        <label>Event type<select disabled={!!row?.cycle_id} value={fields.event_type} onChange={e=>patch({event_type:e.target.value})}>{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>
+        <label>Event type<select disabled={!!row?.cycle_id} value={fields.event_type} onChange={e=>changeEvent(e.target.value)}>{!row&&onCycle&&<optgroup label="Full event cycles"><option value="cycle:canyon">Canyon Clash — all phases</option><option value="cycle:svs">SvS — all phases</option></optgroup>}{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>
         <label>Schedule owner<select disabled={!!row?.cycle_id} required value={fields.scope==="alliance"?fields.alliance_id??"":"state:"+fields.state_id} onChange={e=>changeOwner(e.target.value)}><option value="" disabled>Choose owner</option>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}{states.map(s=><option key={s} value={"state:"+s}>State #{s}</option>)}</select></label>
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>patch({starts_at:e.target.value?serializeTime(e.target.value,fields.precision):""})}/></label>
-        <label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null})}/></label>
+        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);}}>One-time event</button></div><small>Future dates are estimates. This version creates a finite series.</small></div>}
+        <button type="button" className="button button--quiet calendar-advanced-toggle" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide advanced settings":"Advanced settings"}</button>
+        {advanced&&<><label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null})}/></label>
         <label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>
         <label>Confidence<select value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
@@ -115,24 +128,25 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         {count>1&&repeatMode==="fixed"&&<><label>Repeat every ({intervalUnit})<input type="number" min={1} step={intervalUnit==="hours"?"any":1} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label><label>Repeat unit<select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value as typeof intervalUnit)}><option value="days">Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label></>}
         <label>State start date (optional, reference only)<input type="date" value={stateStart} onChange={e=>setManualDate({stateId:fields.state_id,value:e.target.value})}/></label>
         </>}
+        </>}
       </fieldset>
       {!row&&<>
-        <p>State #{fields.state_id} · {profile?.source==="whiteoutstats"?"WhiteoutStats":profile?.source==="manual"?"Saved manual date":"Opening date unavailable"}{profile?.age_days!=null?" · "+profile.age_days+" days old":""}{profile?.last_success_at?" · Last received "+profile.last_success_at:""}{profile?.last_status==="failed"?" · Provider refresh failed; cached date retained":""}</p>
+        {advanced&&<><p>State #{fields.state_id} · {profile?.source==="whiteoutstats"?"WhiteoutStats":profile?.source==="manual"?"Saved manual date":"Opening date unavailable"}{profile?.age_days!=null?" · "+profile.age_days+" days old":""}{profile?.last_success_at?" · Last received "+profile.last_success_at:""}{profile?.last_status==="failed"?" · Provider refresh failed; cached date retained":""}</p>
         {profile&&<div className="calendar-controls"><button type="button" className="button button--quiet" disabled={busy||!stateStart} onClick={()=>void saveStateDate(false)}>Save state date override</button>{profile.manual_opened_on&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>void saveStateDate(true)}>Use provider date</button>}</div>}
         {profileError&&<p role="alert">{profileError}</p>}
         {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{repeatLabel(reference.schedule?.repeat)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
-          {suggested!==null&&<button type="button" className="button button--quiet" disabled={busy} onClick={useReference}>Use game repeat rule</button>}
           {rule?.kind==="every"&&rule.unit==="months"&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setRepeatMode("months");setMonths(rule.every);setCount(4);setReviewed(null);}}>Use calendar-month rule (verify local rotation)</button>}
           {rule?.kind==="weekly"&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setRepeatMode("weekdays");setWeekdays(rule.weekdays.map(d=>["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].indexOf(d.toLowerCase())));setCount(4);setReviewed(null);}}>Use weekday rule</button>}
           {warnings.map(w=><p key={w}>{w}</p>)}
-          <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}
+          <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}</>}
+        {!advanced&&warnings.map(w=><p key={w}>{w}</p>)}
         {count>1&&<div className="calendar-series-preview"><h3>Proposed schedule</h3><p>Future occurrences are estimated. Maximum horizon: 366 days.</p>
           {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map(r=><li key={r.start}>{r.start}{r.end?" — "+r.end:""} · {r.confidence}</li>)}</ul>}
           <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!previewError} checked={reviewed===fingerprint} onChange={e=>setReviewed(e.target.checked?fingerprint:null)}/>I reviewed these dates and confirmed the local repeat pattern</label>
         </div>}
       </>}
       {error&&<p role="alert">{error}</p>}
-      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||(!row&&count>1&&(!!previewError||reviewed!==fingerprint))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
+      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||(!row&&count>1&&(!!previewError||reviewed!==fingerprint))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
     </form>
   </section>;
 }

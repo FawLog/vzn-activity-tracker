@@ -290,6 +290,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   });
   await page.reload();
   const calendar=page.locator(".calendar-page");
+  await expect(calendar.getByRole("button",{name:"Game event catalog",exact:true})).toHaveCount(0);
+  await expect(calendar.getByLabel("Scope")).toHaveCount(0);
+  await calendar.getByRole("button",{name:"More calendar options"}).click();
   await calendar.getByRole("button",{name:"Game event catalog",exact:true}).click();
   const catalog=calendar.getByRole("region",{name:"Game event catalog"});
   await expect(catalog).toContainText("65 of 65 events");
@@ -303,11 +306,13 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(calendar.getByRole("button",{name:/SvS Preparation.*Time not set/})).toBeVisible();
   await expect(calendar.getByRole("button",{name:/Foundry Battle/})).toHaveCount(0);
   await expect.poll(()=>calendar.getByRole("button",{name:/Bear Trap/}).locator("img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+  await calendar.getByRole("button",{name:"Filters",exact:true}).click();
   await calendar.getByLabel("Scope").selectOption("state");
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toHaveCount(0);
   await expect(calendar.getByRole("button",{name:/SvS Preparation/})).toBeVisible();
   await calendar.getByLabel("Scope").selectOption("all");
   await calendar.getByLabel("Show cancelled").check();
+  await calendar.getByRole("button",{name:"Filters",exact:true}).click();
   await expect(calendar.getByRole("button",{name:/Foundry Battle.*Cancelled/})).toBeVisible();
   await calendar.getByRole("button",{name:/Bear Trap/}).click();
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toContainText("Manual schedule");
@@ -324,8 +329,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
   // A calendar workspace is exclusive, and cancelling a transition preserves its fields.
-  await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+  await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const transitionEditor=calendar.getByRole("region",{name:"Schedule editor"});
+  await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved transition check");
   page.once("dialog", dialog=>dialog.dismiss());
   await calendar.getByRole("button",{name:/Bear Trap/}).click();
@@ -336,7 +342,8 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(transitionEditor).toHaveCount(0);
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toBeVisible();
   await calendar.getByRole("button",{name:"Close details"}).click();
-  await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+  await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+  await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved period check");
   page.once("dialog", dialog=>dialog.accept());
   await calendar.getByRole("button",{name:"Next period"}).click();
@@ -344,11 +351,12 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
   await page.unroute("**/api/v1/groups/*/calendar?*");
-  await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+  await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});
   await expect(scheduleEditor).toBeVisible();
   await scheduleEditor.getByLabel("Event type").selectOption("foundry");
-  await scheduleEditor.getByRole("button",{name:"Use game repeat rule"}).click();
+  await expect(scheduleEditor.getByText("4 occurrences · Every 14 days",{exact:true})).toBeVisible();
+  await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await expect(scheduleEditor.getByLabel("Repeat every (days)")).toHaveValue("14");
   await expect(scheduleEditor.getByRole("button",{name:"Save schedule"})).toBeDisabled();
   await scheduleEditor.getByRole("checkbox",{name:"I reviewed these dates and confirmed the local repeat pattern"}).check();
@@ -370,9 +378,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
 
   // Real write/read/edit flow, isolated to one viewport and a distant date.
   if(testInfo.project.name==="desktop-1440"){
-    await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("game:lucky-wheel");
     await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-03");
+    await scheduleEditor.getByRole("button",{name:"One-time event",exact:true}).click();
+    await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
     const verificationPhase="Verification "+Date.now();
     await scheduleEditor.getByLabel("Phase (optional)").fill(verificationPhase);
     const created=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
@@ -388,6 +398,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
     expect((await updated).status()).toBe(200);
     await expect(scheduleEditor).toHaveCount(0);
+    await calendar.getByRole("button",{name:"Filters",exact:true}).click();
     await calendar.getByLabel("Show cancelled").check();
     await expect(calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Cancelled")})).toBeVisible();
   }

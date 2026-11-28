@@ -22,6 +22,7 @@ export interface GameEventSummary {
   schedule?:{repeat?:RepeatRule;runs?:GameRun[]};
   requirements?:string[];
   phases?:{name:string;description:string}[];
+  unlockDay?:number;
   dayCount:number;
   missionCount:number;
   hasVariants:boolean;

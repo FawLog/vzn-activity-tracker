@@ -13,6 +13,7 @@ export function EventCatalogSummary({event}:{event:GameEventSummary}){
     {!!event.stages.length&&<details><summary>Scoring stage names</summary><ol>{event.stages.map((stage,i)=><li key={stage.id+"-"+i}>{stage.id}: {stage.name??"Stage name unavailable"}</li>)}</ol></details>}
     {(event.dayCount>0||event.missionCount>0||event.hasVariants)&&<p>Reference data available: {[event.dayCount?event.dayCount+" scoring stages":null,event.missionCount?event.missionCount+" missions":null,event.hasVariants?"event variants":null].filter(Boolean).join(" · ")}. See tasks and rewards below.</p>}
     <details><summary>Tasks and rewards</summary><EventRewards key={event.id} event={event}/></details>
+    {event.scheduleOverride&&<p><a href={event.scheduleOverride.source} target="_blank" rel="noreferrer">Official schedule supplement</a> · checked {event.scheduleOverride.checkedOn}. {event.scheduleOverride.note}</p>}
     <small>Source: whiteout-survival-data {catalogVersion}. Verify against the in-game event.</small>
   </div>;
 }

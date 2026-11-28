@@ -28,3 +28,10 @@ describe("pinned game catalog",()=>{
     expect(repeatLabel(undefined)).toBe("Repeat rule unavailable");
   });
 });
+
+it("supplements Foundry phases without changing upstream cadence",()=>{
+ const event=gameEventForCalendar("foundry")!;
+ expect(event.schedule?.runs?.map(r=>r.label)).toEqual(["Voting","Registration","Matchmaking","Battle"]);
+ expect(event.scheduleOverride?.source).toContain("centurygames.helpshift.com");
+ expect(event.schedule?.repeat).toEqual({kind:"every",every:2,unit:"weeks"});
+});

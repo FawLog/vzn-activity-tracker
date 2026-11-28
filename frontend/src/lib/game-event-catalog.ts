@@ -22,6 +22,7 @@ export interface GameEventSummary {
   frequency?:string;
   duration?:string;
   schedule?:{repeat?:RepeatRule;runs?:GameRun[]};
+  scheduleOverride?:{source:string;checkedOn:string;note:string};
   requirements?:string[];
   phases?:{name:string;description:string}[];
   unlockDay?:number;

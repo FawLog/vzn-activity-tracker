@@ -18,8 +18,8 @@ def copy_migrations(tmp_path: Path) -> Path:
 def test_migrations_are_idempotent(tmp_path: Path) -> None:
     database_path = str(tmp_path / "idempotent.sqlite3")
 
-    assert database.migrate(database_path) == 20
-    assert database.migrate(database_path) == 20
+    assert database.migrate(database_path) == 21
+    assert database.migrate(database_path) == 21
 
 
 def test_modified_applied_migration_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,7 +40,7 @@ def test_modified_applied_migration_is_rejected(tmp_path: Path, monkeypatch: pyt
 
 def test_migration_versions_must_be_contiguous(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     migration_directory = copy_migrations(tmp_path)
-    (migration_directory / "0022_gap.sql").write_text("SELECT 1;\n", encoding="utf-8")
+    (migration_directory / "0023_gap.sql").write_text("SELECT 1;\n", encoding="utf-8")
     monkeypatch.setattr(database, "MIGRATIONS_DIR", migration_directory)
 
     with pytest.raises(RuntimeError, match="unique, contiguous"):
@@ -71,8 +71,9 @@ def test_applied_migration_file_cannot_disappear(
     (migration_directory / "0018_calendar_entry_grouping.sql").unlink()
     (migration_directory / "0019_calendar_rolling.sql").unlink()
     (migration_directory / "0020_calendar_templates.sql").unlink()
+    (migration_directory / "0021_foundry_cycles.sql").unlink()
 
-    with pytest.raises(RuntimeError, match="files are missing: 0006, 0007, 0008, 0009, 0010, 0011, 0012, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020"):
+    with pytest.raises(RuntimeError, match="files are missing: 0006, 0007, 0008, 0009, 0010, 0011, 0012, 0013, 0014, 0015, 0016, 0017, 0018, 0019, 0020, 0021"):
         database.migrate(database_path)
 
 
@@ -81,7 +82,7 @@ def test_v2_database_data_is_preserved_by_multi_alliance_migration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     migration_directory = copy_migrations(tmp_path)
-    for migration in [*migration_directory.glob("000[3456789]_*.sql"), *migration_directory.glob("0010_*.sql"), *migration_directory.glob("0011_*.sql"), *migration_directory.glob("0012_*.sql"), *migration_directory.glob("0013_*.sql"), *migration_directory.glob("0014_*.sql"), *migration_directory.glob("0015_*.sql"), *migration_directory.glob("0016_*.sql"), *migration_directory.glob("0017_*.sql"), *migration_directory.glob("0018_*.sql"), *migration_directory.glob("0019_*.sql"), *migration_directory.glob("0020_*.sql")]:
+    for migration in [*migration_directory.glob("000[3456789]_*.sql"), *migration_directory.glob("0010_*.sql"), *migration_directory.glob("0011_*.sql"), *migration_directory.glob("0012_*.sql"), *migration_directory.glob("0013_*.sql"), *migration_directory.glob("0014_*.sql"), *migration_directory.glob("0015_*.sql"), *migration_directory.glob("0016_*.sql"), *migration_directory.glob("0017_*.sql"), *migration_directory.glob("0018_*.sql"), *migration_directory.glob("0019_*.sql"), *migration_directory.glob("0020_*.sql"), *migration_directory.glob("0021_*.sql")]:
         migration.unlink()
     monkeypatch.setattr(database, "MIGRATIONS_DIR", migration_directory)
     database_path = str(tmp_path / "legacy.sqlite3")
@@ -94,7 +95,7 @@ def test_v2_database_data_is_preserved_by_multi_alliance_migration(
                           VALUES ('legacy-event', 'legacy-fid', 'unknown', 'main', 0)""")
         legacy.execute("INSERT INTO audit_log(action, entity_type, entity_id, actor) VALUES ('created', 'event', 'legacy-event', 'admin')")
     monkeypatch.setattr(database, "MIGRATIONS_DIR", Path(__file__).resolve().parents[1] / "migrations")
-    assert database.migrate(database_path) == 20
+    assert database.migrate(database_path) == 21
     with sqlite3.connect(database_path) as migrated:
         assert migrated.execute("SELECT nickname FROM players WHERE fid = 'legacy-fid'").fetchone()[0] == "Legacy Player"
         assert migrated.execute("SELECT alliance_id FROM events WHERE id = 'legacy-event'").fetchone()[0] is None
@@ -125,6 +126,7 @@ def test_avatar_hostname_migration_is_exact_and_idempotent(
     (migration_directory / "0018_calendar_entry_grouping.sql").unlink()
     (migration_directory / "0019_calendar_rolling.sql").unlink()
     (migration_directory / "0020_calendar_templates.sql").unlink()
+    (migration_directory / "0021_foundry_cycles.sql").unlink()
     assert database.migrate(database_path) == 6
 
     obsolete = "https://gof-format-avatar.akamaized.net/avatar.png?size=64"
@@ -140,8 +142,8 @@ def test_avatar_hostname_migration_is_exact_and_idempotent(
         connection.commit()
 
     monkeypatch.setattr(database, "MIGRATIONS_DIR", Path(__file__).resolve().parents[1] / "migrations")
-    assert database.migrate(database_path) == 20
-    assert database.migrate(database_path) == 20
+    assert database.migrate(database_path) == 21
+    assert database.migrate(database_path) == 21
     with sqlite3.connect(database_path) as connection:
         urls = [row[0] for row in connection.execute(
             "SELECT avatar_url FROM player_whiteoutstats_profiles ORDER BY player_fid"

@@ -323,7 +323,12 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
         if db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone():
             if any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","starts_at","ends_at","precision","schedule_status")):
                 raise ValueError("Unlink the actual event before changing its schedule or cancelling it")
-        if row["entry_cycle_date"] and any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","starts_at","ends_at","precision","schedule_status")):
+        linked_legion=bool(row["cycle_id"] and row["event_type"] in {"foundry","canyon"} and row["phase"] in {"Legion 1","Legion 2"})
+        if linked_legion and row["entry_cycle_date"]:
+            require_open_cycle_for_grouping(db,group_id,row["event_type"],row["entry_cycle_date"],row["alliance_id"])
+            if payload.starts_at[:10]!=row["entry_cycle_date"]:
+                raise ValueError("Legion must stay on the shared battle date")
+        if not linked_legion and row["entry_cycle_date"] and any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","starts_at","ends_at","precision","schedule_status")):
             grouping=bear_series_rule(db,row["series_id"])
             if not grouping or any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","precision")):
                 raise ValueError("Clear the session grouping before changing its identity")
@@ -339,6 +344,10 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
                 raise ValueError("Cycle phase identity and owner cannot be changed")
             siblings=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND cycle_id=? AND id!=? ORDER BY starts_at",(group_id,row["cycle_id"],occurrence_id)).fetchall()
             for sibling in siblings:
+                if linked_legion and sibling["phase"] in {"Legion 1","Legion 2"}:
+                    if payload.precision==sibling["precision"]=="minute" and payload.starts_at==sibling["starts_at"]:
+                        raise ValueError("Choose distinct legion start times")
+                    continue
                 if parse(sibling["starts_at"])<parse(row["starts_at"]):
                     if parse(payload.starts_at)<=parse(sibling["starts_at"]) or (sibling["ends_at"] and parse(payload.starts_at)<parse(sibling["ends_at"])):
                         raise ValueError("Phase would cross an earlier cycle phase")
@@ -581,29 +590,40 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
 
 class CalendarCycleCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["canyon", "svs"]
+    kind: Literal["canyon", "foundry", "svs"]
     request_key: str = Field(min_length=16,max_length=128,pattern=r"^[A-Za-z0-9_-]+$")
-    phases: list[CalendarInput] = Field(min_length=2,max_length=4)
+    phases: list[CalendarInput] = Field(min_length=2,max_length=5)
     occurrence_count: int = Field(default=1,ge=1,le=14)
     interval_days: int | None = Field(default=None,ge=1,le=366)
 
     @model_validator(mode="after")
     def validate_phases(self):
-        expected = {"canyon":[("canyon","Voting"),("canyon","Registration"),("canyon","Matchmaking"),("canyon","Battle")],
-                    "svs":[("svs_preparation","Preparation"),("svs_battle","Battle")]}[self.kind]
-        if [(p.event_type,p.phase) for p in self.phases] != expected:
+        actual=[(p.event_type,p.phase) for p in self.phases]
+        if self.kind=="svs":
+            valid=[[("svs_preparation","Preparation"),("svs_battle","Battle")]]
+        else:
+            prep=[(self.kind,p) for p in ("Voting","Registration","Matchmaking")]
+            valid=[prep+[(self.kind,"Battle")],prep+[(self.kind,"Legion 1")],prep+[(self.kind,"Legion 1"),(self.kind,"Legion 2")]]
+        if actual not in valid:
             raise ValueError("Invalid cycle phases or order")
         first = self.phases[0]
         if self.kind=="svs" and first.scope!="state":
             raise ValueError("SvS cycle requires state scope")
-        if self.kind=="canyon" and first.scope!="alliance":
-            raise ValueError("Canyon cycle requires alliance scope")
+        if self.kind!="svs" and first.scope!="alliance":
+            raise ValueError("Battle cycle requires alliance scope")
         for i,p in enumerate(self.phases):
             if (p.scope,p.alliance_id,p.state_id)!=(first.scope,first.alliance_id,first.state_id):
                 raise ValueError("All phases must have the same owner")
-            if i and parse(p.starts_at)<=parse(self.phases[i-1].starts_at):
+            parallel=i>0 and p.phase=="Legion 2" and self.phases[i-1].phase=="Legion 1"
+            if parallel:
+                prior=self.phases[i-1]
+                if p.starts_at[:10]!=prior.starts_at[:10] or (p.precision==prior.precision=="minute" and p.starts_at==prior.starts_at):
+                    raise ValueError("Legions require a shared battle date and distinct known times")
+                if self.phases[2].ends_at and parse(p.starts_at)<parse(self.phases[2].ends_at):
+                    raise ValueError("Battle must follow matchmaking")
+            if i and not parallel and parse(p.starts_at)<=parse(self.phases[i-1].starts_at):
                 raise ValueError("Phases must be chronological")
-            if i and self.phases[i-1].ends_at and parse(p.starts_at)<parse(self.phases[i-1].ends_at):
+            if i and not parallel and self.phases[i-1].ends_at and parse(p.starts_at)<parse(self.phases[i-1].ends_at):
                 raise ValueError("Cycle phases must not overlap")
             if parse(p.ends_at or p.starts_at)-parse(first.starts_at)>timedelta(days=31):
                 raise ValueError("Maximum cycle duration is 31 days")
@@ -612,9 +632,9 @@ class CalendarCycleCreate(BaseModel):
         if self.interval_days is not None:
             if (self.occurrence_count-1)*self.interval_days>366:
                 raise ValueError("Maximum recurrence horizon is 366 days")
-            if parse(self.phases[-1].ends_at or self.phases[-1].starts_at)>=parse(first.starts_at)+timedelta(days=self.interval_days):
+            if max(parse(p.ends_at or p.starts_at) for p in self.phases)>=parse(first.starts_at)+timedelta(days=self.interval_days):
                 raise ValueError("Repeat interval must exceed the cycle duration")
-            if parse(self.phases[-1].ends_at or self.phases[-1].starts_at)+timedelta(days=(self.occurrence_count-1)*self.interval_days)>=datetime(2100,1,1,tzinfo=timezone.utc):
+            if max(parse(p.ends_at or p.starts_at) for p in self.phases)+timedelta(days=(self.occurrence_count-1)*self.interval_days)>=datetime(2100,1,1,tzinfo=timezone.utc):
                 raise ValueError("Date outside supported range")
         return self
 
@@ -627,7 +647,7 @@ def cycle_occurrences(payload:CalendarCycleCreate):
             minutes=i*(payload.interval_days or 0)*1440
             values=p.model_dump()
             values.update(starts_at=shift(p.starts_at,minutes),ends_at=shift(p.ends_at,minutes),confidence="estimated")
-            if payload.kind=="canyon" and p.phase=="Battle":
+            if payload.kind!="svs" and p.phase in {"Battle","Legion 1","Legion 2"}:
                 values.update(starts_at=values["starts_at"][:10],ends_at=None,precision="date")
             phases.append(CalendarInput.model_validate(values))
         # Revalidate the generated cycle, including date-only battle ordering.
@@ -651,6 +671,10 @@ def create_cycle(path,group_id,payload:CalendarCycleCreate):
             return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
         for p in (p for phases in cycles for p in phases):
             validate_scope(db,group_id,p)
+            if p.phase in {"Legion 1","Legion 2"}:
+                require_open_cycle_for_grouping(db,group_id,p.event_type,p.starts_at[:10],p.alliance_id)
+                if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=? AND entry_cycle_date=? AND entry_session_key=?""",(group_id,p.alliance_id,p.event_type,p.starts_at[:10],"legion_"+p.phase[-1])).fetchone():
+                    raise ValueError("Legion already assigned in this cycle")
             # Blank legacy phase may represent the same event. Never silently duplicate it.
             existing=db.execute("""SELECT starts_at,precision FROM calendar_occurrences
                 WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=?
@@ -668,6 +692,8 @@ def create_cycle(path,group_id,payload:CalendarCycleCreate):
                 db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'manual')""",
                     (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence))
+                if p.phase in {"Legion 1","Legion 2"}:
+                    db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(p.starts_at[:10],"legion_"+p.phase[-1],oid))
                 audit(db,"created",oid)
                 items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(oid,)).fetchone()))
         db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)",(group_id,payload.request_key,fingerprint,json.dumps([r["id"] for r in items])))
@@ -706,7 +732,7 @@ def link_occurrence(db,group_id,occurrence_id):
 def link_eligible(row):
     return (row["scope"]=="alliance" and row["event_type"] in LINKABLE_TYPES
             and row["schedule_status"]=="scheduled"
-            and not (row["event_type"]=="canyon" and row["cycle_id"] and row["phase"]!="Battle"))
+            and not (row["event_type"] in {"canyon","foundry"} and row["cycle_id"] and row["phase"] not in {"Battle","Legion 1","Legion 2"}))
 
 
 def session_candidates(db,row,event_id=None):
@@ -1089,6 +1115,8 @@ def set_entry_grouping(path,group_id,occurrence_id,payload):
             raise ValueError("Unlink the actual record before changing session grouping")
         kind=row["event_type"]
         require_open_cycle_for_grouping(db,group_id,kind,row["entry_cycle_date"],row["alliance_id"])
+        if row["cycle_id"] and row["phase"] in {"Legion 1","Legion 2"}:
+            raise ValueError("Legion grouping is assigned by the linked event cycle")
         if payload.cycle_date is not None:
             validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
             if not link_eligible(row) or kind not in {"bear_trap","foundry","canyon"}:

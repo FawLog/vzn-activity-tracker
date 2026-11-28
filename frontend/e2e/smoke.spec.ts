@@ -556,6 +556,15 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await bearCard.getByText("Schedule settings",{exact:true}).click();
     await bearCard.getByRole("button",{name:"Edit schedule",exact:true}).click();
     await expect(scheduleEditor.getByText("This occurrence is protected.",{exact:false})).toBeVisible();
+    await scheduleEditor.getByLabel("Correct start time (UTC)").fill("20:30");
+    page.once("dialog", dialog=>dialog.accept());
+    const corrected=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/correct-time"));
+    await scheduleEditor.getByRole("button",{name:"Save corrected time"}).click();
+    expect((await corrected).status()).toBe(200);
+    await expect(scheduleEditor).toHaveCount(0);
+    await calendar.getByRole("button",{name:/Bear Trap.*Trap 2.*20:30 UTC.*Confirmed/}).click();
+    await bearCard.getByText("Schedule settings",{exact:true}).click();
+    await bearCard.getByRole("button",{name:"Edit schedule",exact:true}).click();
     await scheduleEditor.getByRole("button",{name:"Edit future occurrences",exact:true}).click();
     await expect(scheduleEditor.getByRole("radio",{name:"This and following events",exact:true})).toBeChecked();
     await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveValue("2091-03-03T20:00");

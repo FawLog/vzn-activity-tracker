@@ -534,6 +534,71 @@ def future_rows(db, group_id, occurrence_id):
     return [dict(r) for r in rows if parse(r["starts_at"]) >= future_threshold(r["precision"], now)]
 
 
+class BearTimeCorrection(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    revision: int=Field(ge=1)
+    starts_at: str
+
+
+def correct_bear_time(path,group_id,occurrence_id,payload):
+    """Correct a clock-time typo without moving the event to another date or cycle."""
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        row=link_occurrence(db,group_id,occurrence_id)
+        if row["revision"]!=payload.revision:
+            raise ValueError("Schedule changed; reopen the event before correcting it")
+        if row["event_type"]!="bear_trap" or row["scope"]!="alliance" or row["precision"]!="minute" or row["schedule_status"]!="scheduled":
+            raise ValueError("Choose a timed, scheduled Bear trap")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z",payload.starts_at) or payload.starts_at[:10]!=row["starts_at"][:10]:
+            raise ValueError("Correct the time on the same UTC date; changing the date requires separate review")
+        start=parse(payload.starts_at)
+        if parse(row["starts_at"])<datetime.now(timezone.utc) and start>datetime.now(timezone.utc):
+            raise ValueError("A historical trap cannot be moved into the future")
+        if payload.starts_at==row["starts_at"]:
+            return dict(row)
+        offset=int((start-parse(row["starts_at"])).total_seconds()//60)
+        finish=shift(row["ends_at"],offset)
+        fields={k:row[k] for k in CalendarInput.model_fields}
+        CalendarInput.model_validate({**fields,"starts_at":payload.starts_at,"ends_at":finish})
+        if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND event_type='bear_trap'
+                AND alliance_id=? AND id<>? AND (starts_at=? OR (precision='date' AND starts_at=?))""",
+                (group_id,row["alliance_id"],occurrence_id,payload.starts_at,payload.starts_at[:10])).fetchone():
+            raise ValueError("Another Bear trap is already scheduled at this time")
+        grouping=bear_series_rule(db,row["series_id"])
+        if grouping and row["entry_cycle_date"]:
+            series,_=series_metadata(db,row["series_id"])
+            interval=timedelta(minutes=series["interval_minutes"])
+            canonical=parse(grouping["bear_cycle_anchor"])+interval*row["sequence"]
+            if canonical.date().isoformat()!=row["entry_cycle_date"] or not -interval<start-canonical<interval:
+                raise ValueError("Correction would leave the configured Bear cycle")
+        link=db.execute("SELECT event_id,session_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
+        sid=None
+        if link:
+            session=db.execute("""SELECT s.*,e.occurred_on,e.event_type,a.group_id FROM event_sessions s
+                JOIN events e ON e.id=s.event_id JOIN alliances a ON a.id=e.alliance_id
+                WHERE s.id=? AND e.id=?""",(link["session_id"],link["event_id"])).fetchone()
+            if not session or session["group_id"]!=group_id or session["event_type"]!="bear_trap" or session["host_alliance_id"]!=row["alliance_id"] or session["occurred_on"]!=(row["entry_cycle_date"] or row["starts_at"][:10]) or row["entry_session_key"] and session["session_key"]!=row["entry_session_key"] or session["started_at"][:16]!=row["starts_at"][:16]:
+                raise ValueError("Existing session identity or time differs; review the linked record")
+            sid=session["id"]
+        elif db.execute("""SELECT 1 FROM event_sessions s JOIN events e ON e.id=s.event_id
+                WHERE e.event_type='bear_trap' AND s.host_alliance_id=? AND
+                (substr(s.started_at,1,16)=? OR (e.occurred_on=? AND s.session_key=?))""",
+                (row["alliance_id"],row["starts_at"][:16],row["entry_cycle_date"] or row["starts_at"][:10],row["entry_session_key"])).fetchone():
+            raise ValueError("An unlinked actual session exists; review the existing record before correcting its time")
+        if db.execute("""SELECT 1 FROM event_sessions s JOIN events e ON e.id=s.event_id
+            WHERE e.event_type='bear_trap' AND s.host_alliance_id=? AND substr(s.started_at,1,16)=? AND s.id IS NOT ?""",
+            (row["alliance_id"],payload.starts_at[:16],sid)).fetchone():
+            raise ValueError("Another actual Bear session already uses this time")
+        if sid:
+            db.execute("UPDATE event_sessions SET started_at=?,revision=revision+1 WHERE id=?",(start.isoformat(),sid))
+            db.execute("UPDATE events SET updated_at=CURRENT_TIMESTAMP WHERE id=?",(link["event_id"],))
+            db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('session_time_corrected','event',?,'admin')",(link["event_id"],))
+        db.execute("""UPDATE calendar_occurrences SET starts_at=?,ends_at=?,source='manual',revision=revision+1,
+            updated_at=CURRENT_TIMESTAMP WHERE id=?""",(payload.starts_at,finish,occurrence_id))
+        audit(db,"time_corrected",occurrence_id)
+        return dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(occurrence_id,)).fetchone())
+
+
 def next_editable_occurrence(path, group_id, occurrence_id):
     """Read-only jump from a historical or linked occurrence to its own series."""
     with connection(path) as db:

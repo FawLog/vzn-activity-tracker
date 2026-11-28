@@ -345,3 +345,39 @@ def test_jump_from_linked_historical_bear_to_future_preserves_actual_record(auth
         assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(historical["id"],)).fetchone()[0]==start
         assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==1
     assert c.get(url+"/"+historical["id"]+"/next-editable").json()["item"]["starts_at"]==new_time
+
+
+def test_bear_clock_correction_keeps_link_and_data_and_future_dates(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    payload={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2020-11-28T00:00Z",
+        "ends_at":"2020-11-28T00:30Z","precision":"minute","phase":"Trap 2","occurrence_count":3,"interval_minutes":2880,
+        "reject_existing":True,"bear_cycle_anchor":"2020-11-27T15:00Z","bear_session_key":"trap_2"}
+    result=c.post(url,json=payload)
+    assert result.status_code==201,result.text
+    rows=result.json()["items"]
+    target=url+"/"+rows[0]["id"]
+    linked=c.post(target+"/start-entry",json={"revision":rows[0]["revision"],"confirmed":True}).json()
+    sid=linked["linked"]["session_id"]
+    eid=linked["linked"]["id"]
+    with connection(settings.database_path) as db:
+        before=dict(db.execute("SELECT * FROM event_sessions WHERE id=?",(sid,)).fetchone())
+        db.execute("UPDATE event_sessions SET results_complete=1 WHERE id=?",(sid,))
+        db.execute("UPDATE events SET status='published',bear_cycle_complete=1 WHERE id=?",(eid,))
+        db.commit()
+    body={"revision":linked["revision"],"starts_at":"2020-11-28T00:30Z"}
+    assert c.post(target+"/correct-time",json={**body,"starts_at":"2020-11-29T00:30Z"}).status_code==409
+    updated=c.post(target+"/correct-time",json=body)
+    assert updated.status_code==200,updated.text
+    row=updated.json()
+    assert row["starts_at"]=="2020-11-28T00:30Z" and row["ends_at"]=="2020-11-28T01:00Z"
+    assert row["entry_cycle_date"]==rows[0]["entry_cycle_date"]
+    assert c.post(target+"/correct-time",json=body).status_code==409
+    with connection(settings.database_path) as db:
+        session=dict(db.execute("SELECT * FROM event_sessions WHERE id=?",(sid,)).fetchone())
+        assert session=={**before,"started_at":"2020-11-28T00:30:00+00:00","revision":before["revision"]+1,"results_complete":1}
+        assert db.execute("SELECT status,bear_cycle_complete FROM events WHERE id=?",(eid,)).fetchone()[:]==("published",1)
+        for future in rows[1:]:
+            assert dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(future["id"],)).fetchone())==future
+    assert c.get(target+"/event-link").json()["linked"]["session_id"]==sid

@@ -20,13 +20,22 @@ export function ScheduleEditor(props:Props){
   const [type,setType]=useState(props.manualType??"bear:batch");
   const [futureTarget,setFutureTarget]=useState<CalendarOccurrence|null>(null);
   const [jumpBusy,setJumpBusy]=useState(false);
+  const [correction,setCorrection]=useState(props.row?.starts_at.slice(11,16)??"");
   const [jumpError,setJumpError]=useState("");
   const jumpLock=useRef(false);
-  useNavigationGuard(false,jumpBusy);
+  useNavigationGuard(!futureTarget&&!!props.row&&correction!==props.row.starts_at.slice(11,16),jumpBusy);
   async function jump(){
     if(!props.row||jumpLock.current||!allowNavigation())return;
     jumpLock.current=true;setJumpBusy(true);setJumpError("");
     try{const result=await api.nextEditableSchedule(props.groupId,props.row.id);if(!result.item)throw Error("No editable future occurrences remain in this series.");setFutureTarget(result.item);}
+    catch(e){setJumpError(message(e));}finally{jumpLock.current=false;setJumpBusy(false);}
+  }
+  async function correct(){
+    const row=props.row;
+    if(!row||jumpLock.current||!/^\d{2}:\d{2}$/.test(correction)||correction===row.starts_at.slice(11,16))return;
+    if(!window.confirm("Correct the time of this trap only? Linked results and future occurrences remain unchanged."))return;
+    jumpLock.current=true;setJumpBusy(true);setJumpError("");
+    try{const result=await api.correctBearTime(props.groupId,row.id,row.revision,row.starts_at.slice(0,10)+"T"+correction+"Z");props.onSaved(result.starts_at.slice(0,10));}
     catch(e){setJumpError(message(e));}finally{jumpLock.current=false;setJumpBusy(false);}
   }
   const [independent,setIndependent]=useState(false);
@@ -42,6 +51,11 @@ export function ScheduleEditor(props:Props){
     <h2>{source.phase||"Bear Trap"} schedule</h2>
     <p>{source.starts_at} · {source.review?"Linked event record":"Past occurrence"}</p>
     <p>This occurrence is protected. Its historical date and event data remain unchanged.</p>
+    {source.precision==="minute"&&source.schedule_status==="scheduled"&&<div className="calendar-editor-fields">
+      <label>Correct start time (UTC)<input type="time" value={correction} disabled={jumpBusy} onChange={e=>setCorrection(e.target.value)}/></label>
+      <p>Correct this trap only. The linked session time and event end update together; results and future dates are preserved.</p>
+      <button type="button" className="button button--primary" disabled={jumpBusy||!correction||correction===source.starts_at.slice(11,16)} onClick={()=>void correct()}>Save corrected time</button>
+    </div>}
     {source.series_id&&<button type="button" className="button button--primary" disabled={jumpBusy} onClick={()=>void jump()}>{jumpBusy?"Finding next occurrence…":"Edit future occurrences"}</button>}
     {jumpError&&<p role="alert">{jumpError}</p>}
     <button type="button" className="button button--quiet" disabled={jumpBusy} onClick={()=>{if(allowNavigation())props.onClose();}}>Close editor</button>

@@ -309,3 +309,4 @@ def test_foundry_linked_legions_share_one_result_identity(authenticated_client,s
     with connection(settings.database_path) as db:
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==1
         assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==2
+

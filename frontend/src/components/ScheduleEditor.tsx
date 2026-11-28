@@ -8,7 +8,7 @@ import {CalendarEndField} from "./CalendarEndField";
 import { gameEventForCalendar, eventRepeatLabel, followType } from "../lib/game-event-catalog";
 import { FollowScheduleEditor } from "./FollowScheduleEditor";
 import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, referenceDuration, referenceEnd, referenceRepeat, stateAge, type RepeatMode } from "../lib/game-forecast";
-import { futureChange, precisionChange, scheduleFields, serializeTime, utcInput, templateFields, bearCycleDates, moveScheduleStart, futureEditDates, type FuturePreview, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
+import { precisionChange, scheduleFields, serializeTime, utcInput, templateFields, bearCycleDates, moveScheduleStart, type EditScope, type ScopedEditInfo, type ScopedEditPayload, type ScopedEditResult, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
 
 import type { RotationForecast } from "../lib/state-rotation";
 import { BearScheduleEditor } from "./BearScheduleEditor";
@@ -80,8 +80,10 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   }
   const [reviewed,setReviewed]=useState<string|null>(null);
   const [status,setStatus]=useState(row?.schedule_status??"scheduled");
-  const [decision,setDecision]=useState<FuturePreview|null>(null);
-  const [editScope,setEditScope]=useState<"single"|"future">("single");
+  const [editInfo,setEditInfo]=useState<ScopedEditInfo|null>(null);
+  const [decision,setDecision]=useState<{key:string;result:ScopedEditResult}|null>(null);
+  const [editScope,setEditScope]=useState<EditScope>("single");
+  const [reviewError,setReviewError]=useState("");
   const [editHours,setEditHours]=useState(48);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
@@ -113,7 +115,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   }
   const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays,renew,groupBear,bearAnchor,bearKey});
   const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey}));
-  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey})||manualDate!==null||!!templateName.trim()||decision!==null,busy);
+  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey})||manualDate!==null||!!templateName.trim()||editInfo!==null,busy);
   function useReference(){
     if(suggested!==null){
       const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
@@ -163,12 +165,21 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
     try{await api.deleteScheduleTemplate(groupId,template.id);setTemplates(old=>old.filter(t=>t.id!==template.id));setTemplateMessage("Template deleted.");}
     catch(e){setTemplateError(message(e));}finally{lock.current=false;setBusy(false);}
   }
-  const eligibleSeries=!!row?.series_id&&row.schedule_status==="scheduled"&&row.starts_at>=(row.precision==="date"?new Date().toISOString().slice(0,10):new Date().toISOString().slice(0,16)+"Z")&&
-    (["event_type","scope","alliance_id","state_id","phase","precision"] as const).every(k=>fields[k]===row[k]);
-  let editedDates:ReturnType<typeof futureEditDates>=[],editError="";
-  if(decision&&editScope==="future"&&status==="scheduled"){
-    try{editedDates=futureEditDates(decision,fields,editHours);}catch(e){editError=message(e);}
-  }
+  const scopedPayload:ScopedEditPayload|null=row&&editInfo?{scope:editScope,schedule:{...fields,revision:row.revision,schedule_status:status},
+    ...(editScope!=="single"&&status!=="cancelled"&&editInfo.interval_minutes!==null&&editHours*60!==editInfo.interval_minutes?{interval_minutes:Math.round(editHours*60)}:{}),preview:true}:null;
+  const scopedKey=scopedPayload?JSON.stringify(scopedPayload):"";
+  const validInterval=editScope==="single"||status==="cancelled"||editInfo?.interval_minutes==null||Number.isFinite(editHours)&&editHours>=1&&editHours<=8760&&Number.isInteger(editHours*60);
+  useEffect(()=>{
+    setDecision(null);setReviewError("");
+    if(!row||!scopedKey||!validInterval)return;
+    const controller=new AbortController();
+    const payload=JSON.parse(scopedKey) as ScopedEditPayload;
+    api.scopedScheduleEdit(groupId,row.id,payload,controller.signal).then(result=>{
+      if(!controller.signal.aborted)setDecision({key:scopedKey,result});
+    }).catch(e=>{if(!controller.signal.aborted)setReviewError(message(e));});
+    return ()=>controller.abort();
+  },[groupId,row,scopedKey,validInterval]);
+  const reviewedEdit=decision?.key===scopedKey?decision.result:null;
   async function save(e:FormEvent){
     e.preventDefault();if(lock.current)return;
     lock.current=true;setBusy(true);setError("");
@@ -178,25 +189,18 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
       if(fields.ends_at&&fields.ends_at<=fields.starts_at)throw new Error("End must follow start");
       if(row){
         const schedule={...fields,revision:row.revision,schedule_status:status};
-        if(eligibleSeries&&!decision){
-          const result=await api.previewScheduleFuture(groupId,row.id);
-          if(result.items[0]?.id!==row.id||result.items[0]?.revision!==row.revision)throw Error("Schedule changed; reopen the event before editing.");
-          setDecision(result);setEditScope("single");setEditHours((result.interval_minutes??2880)/60);
-          return;
-        }
-        if(decision&&editScope==="future"){
-          if(status==="cancelled"){
-            await api.changeScheduleFuture(groupId,row.id,futureChange(decision.items,"cancel",0));
-          }else{
-            if(editError)throw Error(editError);
-            await api.changeScheduleFuture(groupId,row.id,{action:"edit",schedule,
-              ...(decision.interval_minutes!==null?{interval_minutes:Math.round(editHours*60)}:{}),
-              revisions:Object.fromEntries(decision.items.map(r=>[r.id,r.revision]))});
+        if(!editInfo){
+          const info=await api.scopedScheduleInfo(groupId,row.id);
+          if(info.recurring){
+            setEditScope("single");setEditHours((info.interval_minutes??2880)/60);setEditInfo(info);
+            return;
           }
-          onSaved((status==="cancelled"?row.starts_at:fields.starts_at).slice(0,10));
+          const result=await api.scopedScheduleEdit(groupId,row.id,{scope:"single",schedule,preview:false});
+          onSaved(result.items[0].starts_at.slice(0,10));
         }else{
-          const result=await api.updateSchedule(groupId,row.id,schedule);
-          onSaved(result.starts_at.slice(0,10));
+          if(!scopedPayload||!reviewedEdit)throw Error("Review the affected occurrences before saving.");
+          const result=await api.scopedScheduleEdit(groupId,row.id,{...scopedPayload,preview:false,token:reviewedEdit.token});
+          onSaved(result.items[0]?.starts_at.slice(0,10)??row.starts_at.slice(0,10));
         }
       }else{
         if(previewError)throw Error(previewError);
@@ -216,7 +220,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
     <h2>{row?"Edit scheduled event":"Add event"}</h2>
     <p>Planning only. No attendance or result records are created.</p>{forecast&&<p>Reference forecast from confirmed state date {forecast.anchor}. Review local timing before saving. Automatic renewal is optional.</p>}
     <form onSubmit={save}>
-      <fieldset disabled={busy||decision!==null} className="calendar-editor-fields">
+      <fieldset disabled={busy||editInfo!==null} className="calendar-editor-fields">
         <label>Event type<select disabled={!!row?.cycle_id} value={row?fields.event_type:creationType(fields.event_type)} onChange={e=>changeEvent(e.target.value)}>{row?<>{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}{(fields.event_type.startsWith("game:")||["svs_matchmaking","svs_triage"].includes(fields.event_type))&&<option value={fields.event_type}>{fields.event_type.startsWith("game:")?gameEventForCalendar(fields.event_type)?.name??fields.event_type:eventLabel(fields.event_type)}</option>}</>:creationEventOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></label>
         {!row&&fields.event_type==="bear_trap"&&<button type="button" className="button button--quiet" onClick={onBear}>Use multi-trap editor</button>}
         {!row&&["foundry","canyon"].includes(fields.event_type)&&onCycle&&<button type="button" className="button button--quiet" onClick={()=>onCycle(fields.event_type as CycleKind)}>Use full event cycle</button>}
@@ -259,20 +263,22 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
           <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!previewError} checked={reviewed===fingerprint} onChange={e=>setReviewed(e.target.checked?fingerprint:null)}/>I reviewed these dates and confirmed the local repeat pattern</label>
         </div>}
       </>}
-      {decision&&<section className="calendar-series-preview" aria-label="Recurring event changes">
-        <h3>{status==="cancelled"?"Cancel recurring event":"Edit recurring event"}</h3>
+      {editInfo&&<section className="calendar-series-preview" aria-label="Recurring event changes">
+        <h3>Apply changes to</h3>
         <fieldset disabled={busy}>
           <label><input type="radio" name="edit-scope" checked={editScope==="single"} onChange={()=>setEditScope("single")}/>This event only</label>
-          <label><input type="radio" name="edit-scope" checked={editScope==="future"} onChange={()=>setEditScope("future")}/>This and following events</label>
-          {editScope==="future"&&status!=="cancelled"&&decision.interval_minutes!==null&&<label>Repeat every (hours)<input type="number" min={1} max={8760} step="any" value={editHours} onChange={e=>setEditHours(Number(e.target.value))}/></label>}
+          <label><input type="radio" name="edit-scope" checked={editScope==="all"} disabled={!editInfo.following_count} onChange={()=>setEditScope("all")}/>This and following events</label>
+          <label><input type="radio" name="edit-scope" checked={editScope==="following"} disabled={!editInfo.following_count} onChange={()=>setEditScope("following")}/>Following events only</label>
+          {editScope!=="single"&&status!=="cancelled"&&editInfo.interval_minutes!==null&&<label>Repeat every (hours)<input type="number" min={1} max={8760} step="any" value={editHours} onChange={e=>setEditHours(Number(e.target.value))}/></label>}
         </fieldset>
-        {editScope==="future"&&<><p>{decision.items.length} scheduled occurrences affected. Past events, linked records, cancelled dates and other manual exceptions are protected. {status==="cancelled"?"Automatic renewal will stop.":"Automatic renewal uses the updated time and interval."}</p>
-          {row?.event_type==="bear_trap"&&row.entry_cycle_date&&<p>Shared Bear cycle identities are retained for time changes. Cadence changes are rejected if other traps share the cycle or exceptions require review.</p>}
-          {editError?<p role="alert">{editError}</p>:<ul>{decision.items.map((r,i)=><li key={r.id}>{r.starts_at}{status==="cancelled"?" · Cancelled":" → "+editedDates[i]?.start+(editedDates[i]?.end?" — "+calendarEndLabel(editedDates[i].end,fields.precision):"")}</li>)}</ul>}</>}
-        <button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setDecision(null);setError("");}}>Back to editing</button>
+        {row?.cycle_id&&<p>Changes apply to this phase in the selected cycle or matching following cycles. Other phases and their links remain intact.</p>}
+        {editScope==="following"&&<p>The selected occurrence and its results will not change.</p>}
+        {editScope!=="single"&&editInfo.protected_count>0&&<p>{editInfo.protected_count} earlier, linked or manually changed following entries remain protected.</p>}
+        {!validInterval?<p role="alert">Choose a valid repeat interval.</p>:reviewError?<p role="alert">{reviewError}</p>:reviewedEdit?<><p>{reviewedEdit.items.length} scheduled occurrences affected. Linked event results are preserved.</p><ul>{reviewedEdit.before.map((r,i)=><li key={r.id}>{r.starts_at}{reviewedEdit.items[i].schedule_status==="cancelled"?" · Cancelled":" → "+reviewedEdit.items[i].starts_at+(reviewedEdit.items[i].ends_at?" — "+calendarEndLabel(reviewedEdit.items[i].ends_at,reviewedEdit.items[i].precision):"")}</li>)}</ul></>:<p>Checking affected occurrences…</p>}
+        <button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setEditInfo(null);setDecision(null);setError("");}}>Back to editing</button>
       </section>}
       {error&&<p role="alert">{error}</p>}
-      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||!validCalendarEnd(fields.ends_at,fields.precision)||!!editError||(!row&&(!!previewError||(count>1&&reviewed!==fingerprint)))} type="submit">{busy?"Saving…":decision?"Save changes":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
+      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||!validCalendarEnd(fields.ends_at,fields.precision)||(!!editInfo&&(!reviewedEdit||!validInterval))||(!row&&(!!previewError||(count>1&&reviewed!==fingerprint)))} type="submit">{busy?"Saving…":editInfo?"Save changes":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
     </form>
   </section>;
 }

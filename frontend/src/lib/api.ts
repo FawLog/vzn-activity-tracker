@@ -2,7 +2,7 @@ import type { AnalyticsReport } from "./analytics";
 import type { CycleCreate, CycleSeries, CycleReconcilePlan, CycleReconcilePayload, CycleCadencePlan } from "./calendar-cycles";
 import type { CalendarOccurrence, CalendarReview } from "./calendar";
 import type { BearSchedulePayload } from "./bear-schedule";
-import type { ScheduleCreate, ScheduleUpdate, FutureChange, FuturePreview, ScheduleTemplate, ScheduleTemplateInput } from "./schedule-editor";
+import type { ScheduleCreate, ScheduleUpdate, FutureChange, FuturePreview, ScheduleTemplate, ScheduleTemplateInput, ScopedEditInfo, ScopedEditPayload, ScopedEditResult } from "./schedule-editor";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
@@ -69,6 +69,8 @@ export const api = {
   createBearSchedule: (groupId:string,payload:BearSchedulePayload) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/bear-schedule`,{method:"POST",body:JSON.stringify(payload)}),
   createSchedule: (groupId:string,payload:ScheduleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar`,{method:"POST",body:JSON.stringify(payload)}),
   updateSchedule: (groupId:string,id:string,payload:ScheduleUpdate) => request<CalendarOccurrence>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}`,{method:"PUT",body:JSON.stringify(payload)}),
+  scopedScheduleInfo:(groupId:string,id:string)=>request<ScopedEditInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/scoped-edit`),
+  scopedScheduleEdit:(groupId:string,id:string,payload:ScopedEditPayload,signal?:AbortSignal)=>request<ScopedEditResult>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/scoped-edit`,{method:"POST",body:JSON.stringify(payload),signal}),
   previewScheduleFuture: (groupId:string,id:string) => request<FuturePreview>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`),
   changeScheduleFuture: (groupId:string,id:string,payload:FutureChange) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`,{method:"POST",body:JSON.stringify(payload)}),
   stateCalendarProfiles: (groupId:string,signal?:AbortSignal) => request<{items:StateCalendarProfile[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/state-calendar-profiles`,{signal}),

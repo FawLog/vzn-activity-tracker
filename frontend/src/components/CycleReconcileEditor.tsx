@@ -53,7 +53,7 @@ export function CycleReconcileEditor({groupId,cycleId,series,onChanged}:{groupId
     }catch(e){setError(e instanceof Error?e.message:"Unable to update cycle");}
     finally{lock.current=false;setBusy(false);}
   }
-  return <section className="calendar-editor-fields" aria-label="Cycle reconciliation">
+  return <section className="calendar-editor-fields calendar-cycle-reconcile" aria-label="Cycle reconciliation">
     <button className="button button--quiet" type="button" disabled={busy} onClick={()=>{setOpen(v=>!v);setDays(0);setFollowing(false);setReview(false);setPlan(null);setCadenceMode(false);setCadence(null);setError("");}}>{open?"Close cycle review":"Review cycle dates"}</button>
     {open&&<><p>Confirm dates against the game calendar, or shift only untouched future forecasts. Unknown battle times remain unset. Confirmed, edited, cancelled, started and linked cycles are protected from shifts.</p>
       {series&&series.status!=="stopped"&&<label className="calendar-checkbox"><input type="checkbox" disabled={busy} checked={cadenceMode} onChange={e=>{setCadenceMode(e.target.checked);setReview(false);setCadence(null);setError("");}}/>Change repeat interval</label>}

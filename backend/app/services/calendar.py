@@ -353,6 +353,9 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
                         raise ValueError("Phase would cross an earlier cycle phase")
                 elif parse(payload.starts_at)>=parse(sibling["starts_at"]) or (payload.ends_at and parse(payload.ends_at)>parse(sibling["starts_at"])):
                     raise ValueError("Phase would cross a later cycle phase")
+            if any(row[k]!=getattr(payload,k) for k in ("starts_at","ends_at","precision")):
+                proposed=[{**dict(row),**payload.model_dump()}]+[dict(s) for s in siblings]
+                validate_cycle_overlap(db,group_id,proposed,{r["id"] for r in proposed})
         db.execute("""UPDATE calendar_occurrences SET event_type=?,scope=?,alliance_id=?,state_id=?,starts_at=?,ends_at=?,precision=?,phase=?,confidence=?,schedule_status=?,source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND group_id=?""",
           (payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.starts_at,payload.ends_at,payload.precision,payload.phase,payload.confidence,payload.schedule_status,occurrence_id,group_id))
         audit(db,"cancelled" if payload.schedule_status=="cancelled" else "updated",occurrence_id)

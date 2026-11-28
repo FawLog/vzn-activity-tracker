@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,legionPhases,initialCycleCount} from "./calendar-cycles";
+import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,legionPhases,initialCycleCount,moveCyclePhaseStart} from "./calendar-cycles";
 describe("reviewed event cycle draft",()=>{
   it("keeps Canyon battle time unknown and all dates estimated",()=>{
     const rows=cycleDraft("canyon","2028-01-03","4284","a");
@@ -44,4 +44,24 @@ it("initializes the whole-cycle renewal window for each reference cadence",()=>{
  expect(initialCycleCount(28,true,1)).toBe(3);
  expect(initialCycleCount(14,false,3)).toBe(3);
  expect(initialCycleCount(null,true,1)).toBe(1);
+});
+
+
+it("preserves reviewed phase duration and uses the phase reference after a precision change",()=>{
+ const rows=cycleDraft("foundry","2026-11-30","4284","a");
+ expect(moveCyclePhaseStart(rows[0],"2026-11-29").ends_at).toBe("2026-12-01");
+ const custom={...rows[0],ends_at:"2026-12-01"};
+ expect(moveCyclePhaseStart(custom,"2026-11-29").ends_at).toBe("2026-11-30");
+ const timed={...rows[1],precision:"minute" as const,starts_at:"",ends_at:null};
+ expect(moveCyclePhaseStart(timed,"2026-12-02T03:00Z").ends_at).toBe("2026-12-04T03:00Z");
+ expect(moveCyclePhaseStart(rows[3],"2026-12-06").ends_at).toBeNull();
+ expect(moveCyclePhaseStart({...rows[3],precision:"minute",starts_at:""},"2026-12-06T15:00Z").ends_at).toBe("2026-12-06T16:00Z");
+});
+
+it("rejects a future date-only battle that would overlap a timed matchmaking phase",()=>{
+ const rows=cycleDraft("foundry","2026-11-30","4284","a");
+ rows[2]={...rows[2],precision:"minute",starts_at:"2026-12-04T08:00Z",ends_at:"2026-12-06T08:00Z"};
+ rows[3]={...rows[3],precision:"minute",starts_at:"2026-12-06T15:00Z",ends_at:"2026-12-06T16:00Z"};
+ expect(cycleOccurrences("foundry",rows,1,14)).toHaveLength(1);
+ expect(()=>cycleOccurrences("foundry",rows,2,14)).toThrow(/overlap/);
 });

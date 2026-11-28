@@ -34,3 +34,52 @@ def test_cycle_renewal_is_atomic_idempotent_and_preserves_history(authenticated_
     with connection(settings.database_path) as db:
         assert db.execute("SELECT status FROM calendar_cycle_series").fetchone()[0]=="conflict"
         assert not db.execute("SELECT 1 FROM calendar_occurrences WHERE phase='Voting' AND starts_at='2090-07-10'").fetchone()
+
+
+def test_reconcile_one_and_following_protects_manual_exceptions(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    rows=create(c,root,aid)
+    url=root+"/calendar/cycles/"
+    one=url+rows[5]["cycle_id"]+"/reconcile"
+    plan=c.get(one).json()
+    payload={"action":"confirm","revisions":{r["id"]:r["revision"] for r in plan["confirm_items"]},"series_revision":plan["series_revision"]}
+    assert c.post(one,json=payload).status_code==200
+    assert c.post(one,json=payload).status_code==409
+    target=url+rows[0]["cycle_id"]+"/reconcile"
+    plan=c.get(target+"?following=true").json()
+    assert len(plan["items"])==20 and plan["protected_cycles"]==1
+    payload={"action":"shift","following":True,"shift_days":1,"revisions":{r["id"]:r["revision"] for r in plan["items"]},"series_revision":plan["series_revision"]}
+    response=c.post(target,json=payload)
+    assert response.status_code==200,response.text
+    assert c.post(target,json=payload).status_code==409
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(rows[0]["id"],)).fetchone()[0]=="2090-03-07"
+        assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(rows[5]["id"],)).fetchone()[0]==rows[5]["starts_at"]
+        assert db.execute("SELECT entry_cycle_date FROM calendar_occurrences WHERE id=?",(rows[3]["id"],)).fetchone()[0]=="2090-03-13"
+    assert renew_schedules(settings.database_path,datetime(2090,5,1,tzinfo=timezone.utc))>0
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT 1 FROM calendar_occurrences WHERE phase='Voting' AND starts_at='2090-05-16'").fetchone()
+    plan=c.get(target).json()
+    assert c.post(target,json={"action":"stop","series_revision":plan["series_revision"]}).status_code==200
+    assert renew_schedules(settings.database_path,datetime(2090,9,1,tzinfo=timezone.utc))==0
+    c.headers.pop("X-CSRF-Token")
+    assert c.post(target,json={"action":"stop","series_revision":plan["series_revision"]}).status_code==403
+
+
+def test_cycle_shift_rejects_protected_overlap_and_stale_revision(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    rows=create(c,root,aid,rolling=False)
+    url=root+"/calendar/cycles/"
+    first=url+rows[0]["cycle_id"]+"/reconcile"
+    second=url+rows[5]["cycle_id"]+"/reconcile"
+    plan=c.get(second).json()
+    assert c.post(second,json={"action":"confirm","revisions":{r["id"]:r["revision"] for r in plan["confirm_items"]},"series_revision":plan["series_revision"]}).status_code==200
+    plan=c.get(first+"?following=true").json()
+    data={"action":"shift","following":True,"shift_days":14,"revisions":{r["id"]:r["revision"] for r in plan["items"]},"series_revision":plan["series_revision"]}
+    assert c.post(first,json=data).status_code==409
+    assert c.get(first).json()["items"][0]["starts_at"]==rows[0]["starts_at"]
+    data["shift_days"]=1
+    data["revisions"][rows[0]["id"]]=999
+    assert c.post(first,json=data).status_code==409

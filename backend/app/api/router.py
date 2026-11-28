@@ -466,6 +466,27 @@ def create_api_router(settings: Settings) -> APIRouter:
         except LookupError as error:
             raise _not_found(str(error)) from error
 
+    @router.get("/groups/{group_id}/calendar/cycles/{cycle_id}/reconcile")
+    async def get_cycle_reconcile(request: Request,group_id: str,cycle_id: str,following: bool=False):
+        require_admin(request,settings)
+        try:
+            return calendar.preview_cycle_reconcile(settings.database_path,group_id,cycle_id,following)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
+    @router.post("/groups/{group_id}/calendar/cycles/{cycle_id}/reconcile")
+    async def post_cycle_reconcile(request: Request,group_id: str,cycle_id: str,payload: calendar.CycleReconcile):
+        session=require_admin(request,settings)
+        require_csrf(request,session)
+        try:
+            return calendar.reconcile_cycle(settings.database_path,group_id,cycle_id,payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
     @router.put("/groups/{group_id}/calendar/{occurrence_id}")
     async def put_calendar(request: Request, group_id: str, occurrence_id: str, payload: calendar.CalendarUpdate) -> dict[str, object]:
         session = require_admin(request, settings)

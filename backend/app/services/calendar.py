@@ -662,7 +662,32 @@ def cycle_owner(phase):
     return "a:"+phase.alliance_id if phase.scope=="alliance" else "s:"+phase.state_id
 
 
+def cycle_span(rows):
+    def end(r):
+        start=parse(r["starts_at"])
+        return parse(r["ends_at"]) if r["ends_at"] else start+timedelta(days=1 if r["precision"]=="date" else 0,minutes=0 if r["precision"]=="date" else 1)
+    return min(parse(r["starts_at"]) for r in rows),max(end(r) for r in rows)
+
+
+def validate_cycle_overlap(db,group_id,rows,ignore_ids=()):
+    first,last=cycle_span(rows)
+    p=rows[0]
+    types=tuple(sorted({r["event_type"] for r in rows}))
+    marks=",".join("?" for _ in types)
+    candidates=db.execute(f"""SELECT * FROM calendar_occurrences
+        WHERE group_id=? AND event_type IN ({marks}) AND scope=? AND alliance_id IS ? AND state_id=?
+        AND starts_at<? AND (starts_at>=? OR ends_at>?)""",
+        (group_id,*types,p["scope"],p["alliance_id"],p["state_id"],(last.date()+timedelta(days=1)).isoformat(),first.date().isoformat(),first.date().isoformat())).fetchall()
+    for other in candidates:
+        if other["id"] in ignore_ids:
+            continue
+        lo,hi=cycle_span([other])
+        if lo<last and hi>first:
+            raise ValueError("Cycle overlaps an existing schedule; review the calendar")
+
+
 def validate_cycle_insert(db,group_id,phases):
+    validate_cycle_overlap(db,group_id,[p.model_dump() for p in phases])
     for p in phases:
         validate_scope(db,group_id,p)
         if p.phase in {"Legion 1","Legion 2"}:
@@ -754,6 +779,156 @@ def get_cycle(path,group_id,cycle_id):
         kind=db.execute("SELECT kind FROM calendar_cycles WHERE id=?",(cycle_id,)).fetchone()[0]
         series=cycle_series(db,group_id,cycle_id)
         return {"kind":kind,"items":rows,"series":{k:series[k] for k in ("id","interval_days","status","revision","sequence")} if series else None}
+
+
+class CycleReconcile(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    action: Literal["confirm","shift","stop"]
+    following: bool=False
+    shift_days: int=Field(default=0,ge=-366,le=366)
+    revisions: dict[str,int]=Field(default_factory=dict,max_length=500)
+    series_revision: int|None=Field(default=None,ge=1)
+
+    @model_validator(mode="after")
+    def valid_action(self):
+        if (self.action=="shift")!=bool(self.shift_days):
+            raise ValueError("Only a shift requires a nonzero number of days")
+        if self.following and self.action!="shift":
+            raise ValueError("Only shifts may affect following cycles")
+        return self
+
+
+def cycle_has_results(db,rows):
+    for row in rows:
+        if db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(row["id"],)).fetchone():
+            return True
+        if row["event_type"] in {"foundry","canyon"} and row["phase"] in {"Battle","Legion 1","Legion 2"}:
+            if db.execute("SELECT 1 FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=?",
+                (row["alliance_id"],row["event_type"],row["entry_cycle_date"] or row["starts_at"][:10])).fetchone():
+                return True
+    return False
+
+
+def cycle_has_external_grouping(db,rows):
+    for r in rows:
+        if r["entry_cycle_date"] and db.execute("""SELECT 1 FROM calendar_occurrences
+            WHERE group_id=? AND event_type=? AND alliance_id=? AND entry_cycle_date=? AND cycle_id IS NOT ?""",
+            (r["group_id"],r["event_type"],r["alliance_id"],r["entry_cycle_date"],r["cycle_id"])).fetchone():
+            return True
+    return False
+
+
+def movable_cycle(db,rows,now):
+    return bool(rows and all(r["confidence"]=="estimated" and (r["revision"]==1 or r["source"]=="recurrence")
+        and r["schedule_status"]=="scheduled" and parse(r["starts_at"])>now for r in rows)
+        and not cycle_has_results(db,rows) and not cycle_has_external_grouping(db,rows))
+
+
+def cycle_reconcile_plan(db,group_id,cycle_id,following,now):
+    require_group(db,group_id)
+    rows=cycle_rows(db,group_id,cycle_id)
+    series=cycle_series(db,group_id,cycle_id)
+    if following and not series:
+        raise ValueError("This legacy cycle has no recurring series")
+    eligible=[]
+    protected=0
+    if movable_cycle(db,rows,now):
+        eligible.append(rows)
+        if following:
+            members=db.execute("""SELECT m.cycle_id FROM calendar_cycle_series_members m
+                WHERE m.series_id=? AND m.sequence>? ORDER BY m.sequence LIMIT 101""",(series["id"],series["sequence"])).fetchall()
+            if len(members)>100:
+                raise ValueError("Too many cycles for one review; choose a later forecast")
+            for member in members:
+                group=cycle_rows(db,group_id,member["cycle_id"])
+                if movable_cycle(db,group,now):
+                    eligible.append(group)
+                else:
+                    protected+=1
+    else:
+        protected=1
+    can_confirm=bool(rows and all(r["schedule_status"]=="scheduled" for r in rows) and not cycle_has_results(db,rows)
+        and cycle_span(rows)[1]>now and any(r["confidence"]=="estimated" for r in rows))
+    return {"items":[r for group in eligible for r in group],
+        "protected_cycles":protected,"can_confirm":can_confirm,"confirm_items":[r for r in rows if r["confidence"]=="estimated"],
+        "series_revision":series["revision"] if series else None,"series_status":series["status"] if series else None}
+
+
+def preview_cycle_reconcile(path,group_id,cycle_id,following=False):
+    with connection(path) as db:
+        return cycle_reconcile_plan(db,group_id,cycle_id,following,datetime.now(timezone.utc))
+
+
+def validate_shifted_cycles(db,group_id,proposed,ids,now):
+    by_cycle={}
+    for row in proposed:
+        by_cycle.setdefault(row["cycle_id"],[]).append(row)
+    ranges=[]
+    for cid,rows in by_cycle.items():
+        first,last=cycle_span(rows)
+        if first<=now:
+            raise ValueError("Cannot move a forecast into the past")
+        for r in rows:
+            CalendarInput.model_validate({k:r[k] for k in CalendarInput.model_fields})
+            if r["phase"] in {"Battle","Legion 1","Legion 2"} and r["event_type"] in {"canyon","foundry"}:
+                if db.execute("SELECT 1 FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=?",
+                    (r["alliance_id"],r["event_type"],r["entry_cycle_date"] or r["starts_at"][:10])).fetchone():
+                    raise ValueError("A result record already exists on the target battle date")
+            if r["entry_session_key"]:
+                for existing in db.execute("""SELECT id FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=? AND entry_cycle_date=? AND entry_session_key=?""",
+                    (group_id,r["alliance_id"],r["event_type"],r["entry_cycle_date"],r["entry_session_key"])):
+                    if existing["id"] not in ids:
+                        raise ValueError("Target date already has this legion identity")
+        validate_cycle_overlap(db,group_id,rows,ids)
+        if any(lo<last and hi>first for lo,hi in ranges):
+            raise ValueError("Proposed cycles overlap")
+        ranges.append((first,last))
+
+
+def reconcile_cycle(path,group_id,cycle_id,payload):
+    now=datetime.now(timezone.utc)
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        plan=cycle_reconcile_plan(db,group_id,cycle_id,payload.following,now)
+        series=cycle_series(db,group_id,cycle_id)
+        if plan["series_revision"]!=payload.series_revision:
+            raise ValueError("Schedule series changed; refresh the preview")
+        if payload.action=="stop":
+            if not series or series["status"] not in {"active","conflict"}:
+                raise ValueError("No automatic renewal to stop")
+            db.execute("UPDATE calendar_cycle_series SET status='stopped',revision=revision+1 WHERE id=?",(series["id"],))
+            for r in cycle_rows(db,group_id,cycle_id):
+                audit(db,"cycle_renewal_stopped",r["id"])
+            return {"items":cycle_rows(db,group_id,cycle_id)}
+        rows=plan["confirm_items"] if payload.action=="confirm" and plan["can_confirm"] else plan["items"] if payload.action=="shift" else []
+        if not rows or {r["id"]:r["revision"] for r in rows}!=payload.revisions:
+            raise ValueError("Cycle is protected or changed; refresh the preview")
+        if payload.action=="confirm":
+            for r in rows:
+                db.execute("UPDATE calendar_occurrences SET confidence='confirmed',source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(r["id"],))
+                audit(db,"confirmed",r["id"])
+        else:
+            proposed=[{**r,"starts_at":shift(r["starts_at"],payload.shift_days*1440),"ends_at":shift(r["ends_at"],payload.shift_days*1440),
+                "entry_cycle_date":shift(r["entry_cycle_date"],payload.shift_days*1440)} for r in rows]
+            ids={r["id"] for r in rows}
+            validate_shifted_cycles(db,group_id,proposed,ids,now)
+            if payload.following and series and series["status"] in {"active","conflict"}:
+                template=[CalendarInput.model_validate(p) for p in json.loads(series["template_json"])]
+                moved=project_cycle(series["kind"],template,payload.shift_days)
+                # Refuse a new renewal cursor that is outside supported dates or already past.
+                next_cycle=project_cycle(series["kind"],moved,series["next_sequence"]*series["interval_days"])
+                if parse(next_cycle[0].starts_at)<=now:
+                    raise ValueError("New renewal anchor would be in the past")
+                db.execute("UPDATE calendar_cycle_series SET template_json=?,revision=revision+1 WHERE id=?",(json.dumps([p.model_dump(mode="json") for p in moved]),series["id"]))
+            # Clear moved keys first to avoid transient unique-index collisions.
+            for r in proposed:
+                if r["entry_session_key"]:
+                    db.execute("UPDATE calendar_occurrences SET entry_cycle_date=NULL,entry_session_key=NULL WHERE id=?",(r["id"],))
+            for r in proposed:
+                db.execute("""UPDATE calendar_occurrences SET starts_at=?,ends_at=?,entry_cycle_date=?,entry_session_key=?,source=?,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (r["starts_at"],r["ends_at"],r["entry_cycle_date"],r["entry_session_key"],"recurrence" if payload.following else "manual",r["id"]))
+                audit(db,"rescheduled",r["id"])
+        return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(r["id"],)).fetchone()) for r in rows]}
 
 
 def renew_cycle_series(path,series_id,now):

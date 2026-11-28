@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ScheduleEditor, FutureScheduleEditor } from "../components/ScheduleEditor";
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
+import { CycleEditor, CycleDetails } from "../components/CycleEditor";
 import { EventStageTimeline } from "../components/EventStageTimeline";
 import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
@@ -21,6 +22,7 @@ export function CalendarPage(){
   const {selectedGroup,alliances,selectedAlliance}=useGroupContext();
   const groupId=selectedGroup?.id;
   const [showCatalog,setShowCatalog]=useState(false);
+  const [cycleEditor,setCycleEditor]=useState<string|null>(null);
   const [day,setDay]=useState(()=>utcDay());
   const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches?"Agenda":"Week");
   const [scope,setScope]=useState("all");
@@ -54,18 +56,20 @@ export function CalendarPage(){
   const editing=editor?.groupId===groupId?editor:null;
   const reference=selected?gameEventForCalendar(selected.event_type):undefined;
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
-  const saved=(next?:string)=>{setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRetry(n=>n+1);};
+  const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRetry(n=>n+1);};
   return <div className="page calendar-page">
     <PageHeader title="Event Calendar" description={selectedGroup.name+" · Planned events only · All times UTC"}/>
     <div className="toolbar calendar-toolbar">
       <button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>setShowCatalog(v=>!v)}>Game event catalog</button>
-      {writable&&<button className="button button--primary" onClick={()=>{setDetail(null);setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}
+      {writable&&<button className="button button--primary" onClick={()=>{setCycleEditor(null);setDetail(null);setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}
+      {writable&&<button className="button button--quiet" onClick={()=>{setEditor(null);setDetail(null);setCycleEditor(groupId);}}>Plan event cycle</button>}
       <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} onClick={()=>{setView(mode);setDetail(null);}}>{mode}</button>)}</div>
       <div className="calendar-controls"><button className="icon-button" aria-label="Previous period" onClick={()=>changeDay(moveCalendar(day,view,-1))}><ChevronLeft/></button><button className="button button--quiet" onClick={()=>changeDay(utcDay())}>Today</button><button className="icon-button" aria-label="Next period" onClick={()=>changeDay(moveCalendar(day,view,1))}><ChevronRight/></button></div>
       <label className="select-control">Scope<select value={scope} onChange={e=>{setScope(e.target.value);setDetail(null);}}><option value="all">All events</option><option value="alliance">Current alliance</option><option value="state">State events</option></select></label>
       <label className="calendar-checkbox"><input type="checkbox" checked={showCancelled} onChange={e=>{setShowCancelled(e.target.checked);setDetail(null);}}/>Show cancelled</label>
     </div>
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
+    {cycleEditor===groupId&&writable&&<CycleEditor key={groupId} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
     {editing&&writable&&(editing.future&&editing.row?<FutureScheduleEditor key={groupId+editing.row.id+"future"} groupId={groupId} row={editing.row} onClose={()=>setEditor(null)} onSaved={()=>saved()}/>:<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} onClose={()=>setEditor(null)} onSaved={saved}/>)}
     <h2 className="calendar-period">{view==="Month"?monthLabel(day):formatDate(start)+" – "+formatDate(addDays(end,-1))}</h2>
     {error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
@@ -76,7 +80,7 @@ export function CalendarPage(){
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>
           <h3>{view==="Month"?Number(date.slice(8)):weekday(date)+" "+formatDate(date)}</h3>
           {events.map(row=><button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} onClick={()=>setDetail({groupId,row})}>
-            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small></span>
+            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}{row.cycle_id?" · Linked":""}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small></span>
           </button>)}
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
         </section>;
@@ -87,6 +91,7 @@ export function CalendarPage(){
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
       {writable&&<div className="calendar-controls"><button className="button button--quiet" onClick={()=>{setEditor({groupId,row:selected,future:false});setDetail(null);}}>Edit schedule</button>{selected.series_id&&selected.schedule_status==="scheduled"&&selected.starts_at.slice(0,10)>=utcDay()&&<button className="button button--quiet" onClick={()=>{setEditor({groupId,row:selected,future:true});setDetail(null);}}>Change future series</button>}</div>}
+      {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} onSelect={row=>setDetail({groupId,row})}/>}
       <EventStageTimeline key={selected.id} row={selected}/>
       {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}
       <p>Source: {selected.source==="manual"?"Manual schedule":"Recurring forecast"}{selected.series_id?" · Recurring series":""}</p>

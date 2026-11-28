@@ -1,0 +1,3 @@
+# Calendar v2.3b: reviewed linked cycles
+
+Canyon and SvS use explicit officer-reviewed phase entries sharing a cycle ID. Canyon templates start on Monday and leave the battle time unknown; SvS uses the extended preparation day and 12-hour battle reference, all estimated until confirmed. Only preparation and battle are included for SvS; matchmaking and field triage remain reference-only because precise boundaries are unavailable. Atomic creation, idempotency, scoped reads and duplicate protection include cancelled phases. Existing standalone events are not automatically linked. Individual phase edits cannot change identity, owner or cross adjacent phases. No cycle-wide rescheduling, repeating cycles or automatic actual event linkage in this increment.

@@ -135,3 +135,31 @@ def test_advanced_calendar_rules_and_catalog_types(authenticated_client,settings
     assert r.status_code==201,r.text
     assert [x["starts_at"] for x in r.json()["items"]]==["2092-01-01","2092-01-03","2092-01-08","2092-01-10"]
     assert c.post(url,json={**weekly,"repeat_weekdays":[0]}).status_code==422
+
+def test_linked_cycle_atomic_idempotent_and_scoped(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar/cycles"
+    common={"event_type":"canyon","scope":"alliance","alliance_id":aid,"state_id":"1001","precision":"date","confidence":"estimated"}
+    phases=[{**common,"phase":phase,"starts_at":start,"ends_at":end} for phase,start,end in [
+        ("Voting","2090-03-06","2090-03-08"),("Registration","2090-03-08","2090-03-10"),
+        ("Matchmaking","2090-03-10","2090-03-11"),("Battle","2090-03-11",None)]]
+    payload={"kind":"canyon","request_key":"cycle-request-000001","phases":phases}
+    response=c.post(url,json=payload)
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    assert len({r["cycle_id"] for r in rows})==1
+    assert rows[-1]["precision"]=="date" and rows[-1]["ends_at"] is None
+    assert c.post(url,json=payload).json()==response.json()
+    assert c.get(url+"/"+rows[0]["cycle_id"]).json()["items"]==rows
+    assert c.post(url,json={**payload,"request_key":"cycle-request-000002"}).status_code==409
+    assert c.post(url,json={**payload,"phases":phases[::-1]}).status_code==422
+    assert c.put(root+"/calendar/"+rows[0]["id"],json={**phases[0],"revision":1,"phase":"Battle"}).status_code==409
+    assert c.put(root+"/calendar/"+rows[0]["id"],json={**phases[0],"revision":1,"ends_at":"2090-03-09"}).status_code==409
+    assert c.get("/api/v1/groups/missing/calendar/cycles/"+rows[0]["cycle_id"]).status_code==404
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calendar_cycles").fetchone()[0]==1
+        assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==4
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+    c.headers.pop("X-CSRF-Token")
+    assert c.post(url,json=payload).status_code==403

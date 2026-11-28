@@ -348,12 +348,13 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("game:lucky-wheel");
     await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-03");
-    await scheduleEditor.getByLabel("Phase (optional)").fill("Verification");
+    const verificationPhase="Verification "+Date.now();
+    await scheduleEditor.getByLabel("Phase (optional)").fill(verificationPhase);
     const created=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
     await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
     expect((await created).status()).toBe(201);
     await expect(scheduleEditor).toHaveCount(0);
-    const entry=calendar.getByRole("button",{name:/Lucky Wheel.*Verification/});
+    const entry=calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Confirmed")});
     await expect(entry).toBeVisible();
     await entry.click();
     await calendar.getByRole("button",{name:"Edit schedule",exact:true}).click();
@@ -363,7 +364,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect((await updated).status()).toBe(200);
     await expect(scheduleEditor).toHaveCount(0);
     await calendar.getByLabel("Show cancelled").check();
-    await expect(calendar.getByRole("button",{name:/Lucky Wheel.*Verification.*Cancelled/})).toBeVisible();
+    await expect(calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Cancelled")})).toBeVisible();
   }
 
 

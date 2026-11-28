@@ -129,3 +129,24 @@ def test_cadence_rejects_overlap_with_protected_cycle(authenticated_client,setti
     with connection(settings.database_path) as db:
         assert db.execute("SELECT interval_days FROM calendar_cycle_series").fetchone()[0]==14
         assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(rows[10]["id"],)).fetchone()[0]=="2090-04-03"
+
+
+def test_individual_phase_edit_cannot_overlap_another_cycle(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    rows=create(c,root,aid,rolling=False)
+    phase=rows[5]
+    from app.services.calendar import CalendarInput
+    original={k:phase[k] for k in CalendarInput.model_fields}
+    target=root+"/calendar/"+phase["id"]
+    # Voting in the second cycle has no earlier sibling of its own.
+    # Moving it into the first cycle's battle day must still fail.
+    bad={**original,"starts_at":"2090-03-12","ends_at":"2090-03-14","revision":phase["revision"],"schedule_status":"scheduled"}
+    assert c.put(target,json=bad).status_code==409
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT starts_at,revision FROM calendar_occurrences WHERE id=?",(phase["id"],)).fetchone()[:]==(phase["starts_at"],phase["revision"])
+    # A shift within the gap remains legal.
+    good={**bad,"starts_at":"2090-03-19","ends_at":"2090-03-21"}
+    response=c.put(target,json=good)
+    assert response.status_code==200,response.text
+    assert response.json()["starts_at"]=="2090-03-19"

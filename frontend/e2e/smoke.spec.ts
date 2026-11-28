@@ -401,6 +401,12 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await cycleEditor.getByLabel("Schedule Legion 2").check();
   await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
   await expect(cycleEditor.getByRole("group",{name:"Legion 2",exact:true})).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  const votingGroup=cycleEditor.getByRole("group",{name:"Voting",exact:true});
+  const originalVoting=await votingGroup.getByLabel("Starts (UTC)",{exact:true}).inputValue();
+  const previousDate=new Date(Date.parse(originalVoting+"T00:00Z")-86400000).toISOString().slice(0,10);
+  await votingGroup.getByLabel("Starts (UTC)",{exact:true}).fill(previousDate);
+  await expect(votingGroup.getByLabel("Ends (optional, exclusive)")).toHaveValue(new Date(Date.parse(previousDate+"T00:00Z")+2*86400000).toISOString().slice(0,10));
   await expect(cycleEditor.getByText("Game repeat rule: every 14 days.",{exact:false})).toBeVisible();
   page.once("dialog", dialog=>dialog.accept());
   await cycleEditor.getByRole("button",{name:"Advanced: schedule battle only",exact:true}).click();
@@ -565,6 +571,34 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(review).toHaveCount(0);
   }
 
+
+  if(testInfo.project.name==="mobile-390"){
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+    await scheduleEditor.getByLabel("Event type").selectOption("cycle:canyon");
+    await cycleEditor.getByLabel("Event starts (Monday, 00:00 UTC)").fill("2091-07-02");
+    await cycleEditor.getByLabel("Schedule Legion 2").check();
+    await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
+    await cycleEditor.getByLabel("I reviewed all phases and their local dates").check();
+    const savedCycle=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/cycles"));
+    await cycleEditor.getByRole("button",{name:"Save cycle",exact:true}).click();
+    const result=await savedCycle;
+    expect(result.status()).toBe(201);
+    expect((await result.json()).items).toHaveLength(15);
+    await expect(cycleEditor).toHaveCount(0);
+    await calendar.getByRole("region",{name:"Jul 02, 2091",exact:true}).getByRole("button",{name:/Canyon Clash.*Voting.*Estimated/}).click();
+    const review=calendar.getByRole("region",{name:"Cycle reconciliation"});
+    await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
+    await review.getByLabel("This and following cycles").check();
+    await expect(review.getByText("3 movable cycles · 0 protected cycles.",{exact:true})).toBeVisible();
+    await review.getByLabel("Move by days (UTC)").fill("1");
+    await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath("calendar-cycle-review-mobile.png"),fullPage:true});
+    await review.getByLabel("I reviewed the dates and selected operation").check();
+    const moved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/reconcile"));
+    await review.getByRole("button",{name:"Move forecast cycles",exact:true}).click();
+    expect((await moved).status()).toBe(200);
+    await expect(review).toHaveCount(0);
+  }
 
   // Verify Overall default, low-score sorting, missing evidence and responsive table.
   await page.route("**/api/v1/groups/*/analytics?*",async route=>{

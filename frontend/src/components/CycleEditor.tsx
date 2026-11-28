@@ -1,7 +1,7 @@
 import { allowNavigation, useNavigationGuard } from "../lib/navigation-guard";
 import {useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
-import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,isBattlePhase,legionPhases,cycleReference,initialCycleCount,type CycleKind,type CycleSeries} from "../lib/calendar-cycles";
+import {cycleDraft,cycleIntervalDays,cycleOccurrences,moveCyclePhaseStart,legionPhases,cycleReference,initialCycleCount,type CycleKind,type CycleSeries} from "../lib/calendar-cycles";
 import {creationEventOptions,cycleTypes} from "../lib/calendar-event-options";
 import {weekStart,type CalendarOccurrence} from "../lib/calendar";
 import {serializeTime,utcInput,type ScheduleFields} from "../lib/schedule-editor";
@@ -66,12 +66,12 @@ export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,all
       <button type="button" className="button button--quiet" onClick={preview}>Preview cycle</button>
       {kind!=="svs"&&onAdvanced&&<button type="button" className="button button--quiet" onClick={()=>{if(allowNavigation())onAdvanced(kind);}}>Advanced: schedule battle only</button>}
     </fieldset>
-    {!!phases.length&&<div className="calendar-series-preview">
+    {!!phases.length&&<div className="calendar-series-preview calendar-cycle-preview">
       <p>All suggested dates are estimated. {kind==="svs"?"Review the extended preparation day.":"Set confirmed legion times when known."}</p>
       {cycleReference(kind)?.scheduleOverride&&<p><a href={cycleReference(kind)?.scheduleOverride?.source} target="_blank" rel="noreferrer">Official schedule supplement</a> · {cycleReference(kind)?.scheduleOverride?.note}</p>}
       {phases.map((p,i)=><fieldset key={p.phase} disabled={busy} className="calendar-editor-fields"><legend>{p.phase}</legend>
-        <label>Precision<select value={p.precision} onChange={e=>{const precision=e.target.value as ScheduleFields["precision"];patch(i,{precision,starts_at:precision==="date"?p.starts_at.slice(0,10):"",ends_at:null});}}><option value="date">Date only</option><option value="minute">UTC time</option></select></label>
-        <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";const next={...p,starts_at};patch(i,{starts_at,...(kind!=="svs"&&isBattlePhase(p.phase)?{ends_at:canyonBattleEnd(next)}:{})});}}/></label>
+        <label>Precision<select value={p.precision} onChange={e=>{const precision=e.target.value as ScheduleFields["precision"];patch(i,moveCyclePhaseStart({...p,precision,starts_at:"",ends_at:null},precision==="date"?p.starts_at.slice(0,10):""));}}><option value="date">Date only</option><option value="minute">UTC time</option></select></label>
+        <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";patch(i,moveCyclePhaseStart(p,starts_at));}}/></label>
         <label>Ends (optional, exclusive)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.ends_at??"",p.precision)} onChange={e=>patch(i,{ends_at:e.target.value?serializeTime(e.target.value,p.precision):null})}/></label>
         <label>Confidence<select value={p.confidence} onChange={e=>patch(i,{confidence:e.target.value as ScheduleFields["confidence"]})}><option value="estimated">Estimated</option><option value="confirmed">Confirmed</option></select></label>
       </fieldset>)}

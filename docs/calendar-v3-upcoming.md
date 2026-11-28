@@ -1,0 +1,3 @@
+# Calendar v3.5 — Upcoming events
+
+Overview reads the existing group calendar for today plus six UTC days. Default scope is selected active alliance and its state; optional all active group alliances and states. Cancelled and elapsed timed entries are omitted; continuing ranges remain visible; date-only entries never acquire midnight or a precise countdown. Display at most six, link to calendar day and occurrence, retain estimated/confirmed and linked publication status. Refresh manually, on mount and UTC day rollover; existing overview minute tick updates countdowns without polling. Read-only, no schema/API/analytics/CI changes. Unit tests cover boundaries and scope; existing browser smoke tests exercise the block at configured widths.

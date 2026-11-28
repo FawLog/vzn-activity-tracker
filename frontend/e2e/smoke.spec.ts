@@ -33,6 +33,23 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Operational overview" })).toBeVisible();
   }
+  // Upcoming events use the same group-scoped calendar endpoint as Calendar.
+  await page.route("**/api/v1/groups/*/calendar?*",async route=>{
+    const response=await route.fetch();
+    const groupId=new URL(route.request().url()).pathname.split("/")[4];
+    const day=new Date(Date.now()+86400000).toISOString().slice(0,10);
+    const base={id:"upcoming-review",group_id:groupId,series_id:null,sequence:0,event_type:"winter_siege",scope:"state",alliance_id:null,state_id:"1001",starts_at:day,ends_at:null,precision:"date",phase:"Upcoming verification",confidence:"estimated",schedule_status:"scheduled",source:"manual",revision:1};
+    await route.fulfill({response,json:{items:[base,{...base,id:"cancelled-review",phase:"Cancelled verification",schedule_status:"cancelled"}]}});
+  });
+  await page.reload();
+  const upcoming=page.getByRole("region",{name:"Upcoming events"});
+  await expect(upcoming.getByRole("heading",{name:"Upcoming events"})).toBeVisible();
+  await upcoming.getByLabel("Schedule scope").selectOption("group");
+  await expect(upcoming.getByRole("button",{name:/Upcoming verification/})).toBeVisible();
+  await expect(upcoming.getByText(/time not set/)).toBeVisible();
+  await expect(upcoming.getByRole("button",{name:/Cancelled verification/})).toHaveCount(0);
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.unroute("**/api/v1/groups/*/calendar?*");
   // Exercise the actual overview layout and both emblem states at every configured viewport.
   await page.route("**/api/v1/groups/*/overview*", async route=>{
     const response=await route.fetch();

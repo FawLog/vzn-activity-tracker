@@ -26,11 +26,21 @@ export function CalendarEventLink({groupId,row,writable,onRevision,onEditingChan
     try{const result=await api.setCalendarEventLink(groupId,row.id,id,data.revision,sessionId);setData(result);setChoice("");setSessionChoice("");onRevision(result.revision);}
     catch(e){setError(e instanceof Error?e.message:"Unable to update link");}finally{lock.current=false;setBusy(false);}
   }
+  async function start(){
+    if(!data||lock.current)return;
+    lock.current=true;setBusy(true);onEditingChange(true);setError("");
+    try{const result=await api.startCalendarEntry(groupId,row.id,data.revision);setData(result);onRevision(result.revision);}
+    catch(e){setError(e instanceof Error?e.message:"Unable to start data entry");}
+    finally{lock.current=false;setBusy(false);onEditingChange(false);}
+  }
+  const needsSession=["bear_trap","foundry","canyon"].includes(row.event_type);
+  const ready=!!data?.linked&&(!needsSession||!!data.linked.session_id);
   return <section className="calendar-stage-timeline" aria-label="Actual event record">
-    <h3>Actual event record</h3>
+    <h3>Event data</h3>
     <p>Planning and results remain independent. Linking does not create attendance or change statistics.</p>
     {error&&<p role="alert">{error}</p>}
     {!data&&!error&&<p>Loading matching records…</p>}
+    {writable&&data?.eligible&&!ready&&row.confidence==="confirmed"&&row.event_type!=="bear_trap"&&(!needsSession||row.precision==="minute")&&<div className="calendar-controls"><button className="button button--primary" disabled={busy||workspaceBlocked} onClick={()=>void start()}>Enter event data</button><small>Reuses a matching record or prepares a draft when the identity is clear.</small></div>}
     {data?.linked?<><p>Linked · {data.linked.status} · {formatDate(data.linked.occurred_on)}{data.linked.session_key?" · "+data.linked.session_key.replaceAll("_"," ")+" · "+data.linked.started_at:""}</p><div className="calendar-controls"><button className="button button--primary" disabled={workspaceBlocked} onClick={()=>navigate("/events/"+encodeURIComponent(data.linked!.id))}>Open event history</button>{writable&&<button className="button button--quiet" disabled={busy||workspaceBlocked} onClick={()=>void save(null)}>Unlink event</button>}</div></>:
       data?.eligible?<>{data.items.length?<><label>Matching actual event<select value={choice} disabled={busy||!writable} onChange={e=>setChoice(e.target.value)}><option value="">Choose explicitly</option>{data.items.map(item=><option key={item.id} value={item.id}>{formatDate(item.occurred_on)} · {item.status} · {item.id.slice(0,12)}</option>)}</select></label>{writable&&<button className="button button--quiet" disabled={!choice||busy} onClick={()=>void save(choice)}>Link selected event</button>}</>:<p>No matching event-level record. Check available sessions below. Missing records do not mean the event was missed.</p>}{data.truncated&&<p>Only the first 100 matches are shown.</p>}</>:data?<p>Linking is not supported for this schedule type or phase yet.</p>:null}
     {data?.eligible&&!data.linked?.session_id&&["bear_trap","foundry","canyon"].includes(row.event_type)&&<div className="calendar-editor-fields">

@@ -652,3 +652,89 @@ def review_status(db,group_id,occurrence_ids):
                 "final_attendance_review":bool(link["final_review"] and link["status"]=="published") if legion or kind=="bear_trap" else None,
             }
     return output
+
+class CalendarEntryStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    confirmed: Literal[True]
+
+
+def start_entry(path,group_id,occurrence_id,payload):
+    """Resolve unambiguous records only after an explicit data-entry action."""
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        row=link_occurrence(db,group_id,occurrence_id)
+        validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
+        if not link_eligible(row):
+            raise ValueError("This schedule does not support data entry")
+        kind=row["event_type"]
+        session_kind=kind in {"bear_trap","foundry","canyon"}
+        old=db.execute("SELECT event_id,session_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
+        if old and (not session_kind or old["session_id"]):
+            # A completed link is safe to reopen, including after a lost response.
+            pass
+        else:
+            if row["revision"]!=payload.revision:
+                raise ValueError("Calendar entry changed; reload before entering data")
+            if row["confidence"]!="confirmed":
+                raise ValueError("Confirm the schedule before entering data")
+            if kind=="bear_trap":
+                raise ValueError("Review the group Bear cycle and trap identity first")
+            if session_kind and row["precision"]!="minute":
+                raise ValueError("Set the actual session time before entering data")
+            if kind=="canyon" and row["phase"].strip().lower() not in {"battle","legion 1","legion 2","legion_1","legion_2"}:
+                raise ValueError("Select an explicit Canyon battle schedule")
+            day=row["starts_at"][:10]
+            owner=row["alliance_id"]
+            events=db.execute("SELECT id,status FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=? ORDER BY id",(owner,kind,day)).fetchall()
+            if old:
+                events=[e for e in events if e["id"]==old["event_id"]]
+                if not events:
+                    raise ValueError("Existing event link requires review")
+            if len(events)>1:
+                raise ValueError("Multiple matching events; choose the correct record explicitly")
+            eid=events[0]["id"] if events else None
+            sid=None
+            if session_kind:
+                # A legion is not inferred from arbitrary labels or its start time.
+                match=re.fullmatch(r"legion[ _]([12])",row["phase"].strip().lower())
+                key="legion_"+match[1] if match else None
+                if eid:
+                    sessions=db.execute("SELECT id,session_key,started_at,host_alliance_id FROM event_sessions WHERE event_id=?",(eid,)).fetchall()
+                    matches=[s for s in sessions if s["host_alliance_id"]==owner and s["started_at"][:16]==row["starts_at"][:16]]
+                    if len(matches)>1:
+                        raise ValueError("Multiple matching sessions; choose explicitly")
+                    if matches:
+                        if key and matches[0]["session_key"]!=key:
+                            raise ValueError("Schedule legion and existing session disagree")
+                        sid=matches[0]["id"]
+                        if db.execute("SELECT 1 FROM calendar_event_links WHERE session_id=? AND occurrence_id<>?",(sid,occurrence_id)).fetchone():
+                            raise ValueError("This session is already linked to another schedule")
+                    elif not key or any(s["session_key"]==key for s in sessions):
+                        raise ValueError("Review the legion identity and existing sessions first")
+                if not sid and not key:
+                    raise ValueError("Choose the legion explicitly before entering data")
+                if not sid and db.execute("""SELECT 1 FROM event_sessions s JOIN events e ON e.id=s.event_id
+                    WHERE e.event_type=? AND s.host_alliance_id=? AND substr(s.started_at,1,16)=?""",(kind,owner,row["starts_at"][:16])).fetchone():
+                    raise ValueError("A session already exists at this host and time; review it first")
+            if eid and not session_kind and db.execute("SELECT 1 FROM calendar_event_links WHERE event_id=? AND occurrence_id<>?",(eid,occurrence_id)).fetchone():
+                raise ValueError("Event already linked to another schedule; review existing links")
+            if eid and session_kind and not sid and events[0]["status"]!="draft":
+                raise ValueError("Reopen the existing published event before adding a session")
+            if not eid:
+                eid=uuid.uuid4().hex
+                db.execute("INSERT INTO events(id,alliance_id,event_type,occurred_on,status) VALUES (?,?,?,?,'draft')",(eid,owner,kind,day))
+                db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('created','event',?,'admin')",(eid,))
+                if not session_kind:
+                    db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
+                        (uuid.uuid4().hex,eid,"main",day+"T00:00:00+00:00",owner))
+            if session_kind and not sid:
+                sid=uuid.uuid4().hex
+                db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
+                    (sid,eid,key,parse(row["starts_at"]).isoformat(),owner))
+                db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('session_created','event',?,'admin')",(eid,))
+            db.execute("""INSERT INTO calendar_event_links(occurrence_id,event_id,session_id) VALUES (?,?,?)
+                ON CONFLICT(occurrence_id) DO UPDATE SET session_id=excluded.session_id""",(occurrence_id,eid,sid))
+            db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(occurrence_id,))
+            audit(db,"data_entry_started",occurrence_id)
+    return event_link(path,group_id,occurrence_id)

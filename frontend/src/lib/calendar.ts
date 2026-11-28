@@ -12,6 +12,8 @@ export interface CalendarReview {
 }
 export interface CalendarOccurrence {
   review?:CalendarReview;
+  entry_cycle_date?:string|null;
+  entry_session_key?:string|null;
   id: string;
   group_id: string;
   series_id: string | null;

@@ -9,6 +9,7 @@ import { EventStageTimeline } from "../components/EventStageTimeline";
 import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
+import { navigate } from "../lib/router";
 import { PageHeader } from "../components/Page";
 import { api } from "../lib/api";
 import { calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
@@ -62,9 +63,9 @@ export function CalendarPage(){
   const editing=editor?.groupId===groupId?editor:null;
   const reference=selected?gameEventForCalendar(selected.event_type):undefined;
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
-  const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRetry(n=>n+1);};
+  const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
   return <div className="page calendar-page">
-    <PageHeader title="Event Calendar" description={selectedGroup.name+" · Schedule and linked records · All times UTC"}/>
+    <PageHeader title="Event Calendar" description={selectedGroup.name+" · Plan events, enter data and review results · All times UTC"} action={<button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>navigate("/events")}>Event history</button>}/>
     <div className="toolbar calendar-toolbar">
       <button className="button button--quiet" aria-expanded={showCatalog} onClick={()=>setShowCatalog(v=>!v)}>Game event catalog</button>
       {writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{setCycleEditor(null);setDetail(null);setEditor({groupId,row:null,future:false});}}>Add scheduled event</button>}

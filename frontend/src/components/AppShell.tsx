@@ -1,7 +1,7 @@
 import {
   BarChart3,
   Activity,
-  CalendarDays,
+  History,
   CalendarRange,
   LogIn,
   LogOut,
@@ -22,11 +22,11 @@ import { ProductionVersion } from "./ProductionVersion";
 
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/players", label: "Players", icon: Users },
   { href: "/calendar", label: "Calendar", icon: CalendarRange },
-  { href: "/events", label: "Events", icon: CalendarDays },
+  { href: "/players", label: "Players", icon: Users },
   { href: "/activity", label: "Activity", icon: Activity },
   { href: "/rankings", label: "Rankings", icon: BarChart3 },
+  { href: "/events", label: "Event history", icon: History },
   { href: "/groups", label: "Groups", icon: Layers },
   { href: "/admin", label: "Admin", icon: Settings },
 ];

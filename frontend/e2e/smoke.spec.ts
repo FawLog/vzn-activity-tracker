@@ -348,12 +348,13 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("game:lucky-wheel");
     await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-03");
-    await scheduleEditor.getByLabel("Phase (optional)").fill("Verification");
+    const verificationPhase="Verification "+Date.now();
+    await scheduleEditor.getByLabel("Phase (optional)").fill(verificationPhase);
     const created=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
     await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
     expect((await created).status()).toBe(201);
     await expect(scheduleEditor).toHaveCount(0);
-    const entry=calendar.getByRole("button",{name:/Lucky Wheel.*Verification/});
+    const entry=calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Confirmed")});
     await expect(entry).toBeVisible();
     await entry.click();
     await calendar.getByRole("button",{name:"Edit schedule",exact:true}).click();
@@ -363,7 +364,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect((await updated).status()).toBe(200);
     await expect(scheduleEditor).toHaveCount(0);
     await calendar.getByLabel("Show cancelled").check();
-    await expect(calendar.getByRole("button",{name:/Lucky Wheel.*Verification.*Cancelled/})).toBeVisible();
+    await expect(calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Cancelled")})).toBeVisible();
   }
 
 
@@ -445,9 +446,24 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.goto("/admin?mode=events");
   await page.getByLabel(/^Event type/).selectOption("foundry");
   await page.getByLabel(/^Event date/).fill("2026-11-24");
-  await page.getByRole("button", { name: "Create event" }).click();
+  await page.getByRole("button", { name: "Import historical event",exact:true }).click();
   await expect(page.getByText("Event record created for the selected alliance.")).toBeVisible();
   await page.goto("/events");
+  await expect(page.getByRole("heading",{name:"Event history",exact:true})).toBeVisible();
+  await page.getByLabel("Record status").selectOption("draft");
+  await page.getByLabel("Event type",{exact:true}).selectOption("foundry");
+  await page.getByLabel("Find record").fill("2026-11-24");
+  await expect(page.getByRole("button",{name:"Foundry Battle",exact:true}).first()).toBeVisible();
+  await page.getByLabel("Find record").fill("nonexistent-history-record");
+  await expect(page.locator("main .empty-state").getByText("No matching records",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Foundry Battle",exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"Clear filters",exact:true}).click();
+  await expect(page.getByRole("button",{name:"Foundry Battle",exact:true}).first()).toBeVisible();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await page.getByRole("button",{name:"Open calendar",exact:true}).click();
+  await expect(page).toHaveURL(/\/calendar$/);
+  await page.locator("main").getByRole("button",{name:"Event history",exact:true}).click();
+  await expect(page).toHaveURL(/\/events$/);
   const foundryEvent = page.getByRole("button", {name:"Foundry Battle",exact:true}).first();
   await expect.poll(() => foundryEvent.locator(".event-icon img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
   await foundryEvent.click();

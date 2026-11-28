@@ -1,0 +1,3 @@
+# Calendar v3.2 — reviewed trap and legion session links
+
+A schedule may link to one existing session and event. Session links are unique; no duplicate attendance, no new event/session/roster rows. Bear requires a session and matches the actual session UTC day (not the group cycle day), host alliance and state in the same group. Foundry/Canyon support an explicit session link or existing event-level link, which can be upgraded. Timed schedules require matching UTC minute; date-only schedules are explicitly selected. No automatic mapping from phase names or trap numbers. Deleting a session removes its link, not the schedule. Existing event-only links remain valid. No changes to results, analytics or group Bear aggregation. State-level schedules are out of scope.

@@ -538,9 +538,10 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect(cycleResult.status()).toBe(201);
     expect((await cycleResult.json()).items).toHaveLength(20);
     await expect(cycleEditor).toHaveCount(0);
-    const voting=calendar.getByRole("button",{name:/Foundry Battle.*Voting.*Estimated/});
-    await expect(voting).toHaveCount(2);
-    await voting.first().click();
+    const firstVotingDay=calendar.getByRole("region",{name:"Jun 04, 2091",exact:true});
+    const voting=firstVotingDay.getByRole("button",{name:/Foundry Battle.*Voting.*Estimated/});
+    await expect(voting).toHaveCount(1);
+    await voting.click();
     const review=calendar.getByRole("region",{name:"Cycle reconciliation"});
     await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
     await expect(review.getByText("1 movable cycles · 0 protected cycles.",{exact:true})).toBeVisible();

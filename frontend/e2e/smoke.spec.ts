@@ -252,6 +252,54 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath("group-management.png"), fullPage: true });
 
+  // Calendar uses real API responses, not fixture data embedded in the page.
+  await page.goto("/calendar");
+  await expect(page.getByRole("heading",{name:"Event Calendar",exact:true})).toBeVisible();
+  const defaultCalendarView=testInfo.project.name==="mobile-390"?"Agenda":"Week";
+  await expect(page.getByRole("button",{name:defaultCalendarView,exact:true})).toHaveAttribute("aria-pressed","true");
+  await expect(page.getByRole("region",{name:defaultCalendarView+" schedule",exact:true})).toBeVisible();
+  const currentGroupId=await page.getByLabel("Current group").inputValue();
+  const currentAllianceId=await page.getByLabel("Current alliance").inputValue();
+  await page.route("**/api/v1/groups/*/calendar?*",async route=>{
+    const response=await route.fetch();
+    expect(response.ok()).toBe(true);
+    const start=new URL(route.request().url()).searchParams.get("start")!;
+    const common={group_id:currentGroupId,series_id:null,sequence:0,state_id:"1002",ends_at:null,source:"manual",revision:1};
+    await route.fulfill({response,json:{items:[
+      {...common,id:"calendar-bear",event_type:"bear_trap",scope:"alliance",alliance_id:currentAllianceId,starts_at:start+"T15:00Z",precision:"minute",phase:"Trap 1",confidence:"confirmed",schedule_status:"scheduled"},
+      {...common,id:"calendar-state",event_type:"svs_preparation",scope:"state",alliance_id:null,starts_at:start,precision:"date",phase:"Day 1",confidence:"estimated",schedule_status:"scheduled"},
+      {...common,id:"calendar-cancelled",event_type:"foundry",scope:"alliance",alliance_id:currentAllianceId,starts_at:start+"T20:00Z",precision:"minute",phase:"Legion 1",confidence:"confirmed",schedule_status:"cancelled"}
+    ]}});
+  });
+  await page.reload();
+  const calendar=page.locator(".calendar-page");
+  await expect(calendar.getByRole("button",{name:/Bear Trap.*15:00 UTC/})).toBeVisible();
+  await expect(calendar.getByRole("button",{name:/SvS Preparation.*Time not set/})).toBeVisible();
+  await expect(calendar.getByRole("button",{name:/Foundry Battle/})).toHaveCount(0);
+  await expect.poll(()=>calendar.getByRole("button",{name:/Bear Trap/}).locator("img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+  await calendar.getByLabel("Scope").selectOption("state");
+  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toHaveCount(0);
+  await expect(calendar.getByRole("button",{name:/SvS Preparation/})).toBeVisible();
+  await calendar.getByLabel("Scope").selectOption("all");
+  await calendar.getByLabel("Show cancelled").check();
+  await expect(calendar.getByRole("button",{name:/Foundry Battle.*Cancelled/})).toBeVisible();
+  await calendar.getByRole("button",{name:/Bear Trap/}).click();
+  await expect(calendar.getByRole("region",{name:"Schedule details"})).toContainText("Manual schedule");
+  await calendar.getByRole("button",{name:"Close details"}).click();
+  for(const mode of ["Agenda","Week","Month"]){
+    await calendar.getByRole("button",{name:mode,exact:true}).click();
+    await expect(calendar.getByRole("region",{name:mode+" schedule",exact:true})).toBeVisible();
+    await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+    await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath("calendar-"+mode.toLowerCase()+".png"),fullPage:true});
+  }
+  await calendar.getByRole("button",{name:"Next period"}).click();
+  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+  await calendar.getByRole("button",{name:"Today",exact:true}).click();
+  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+  await page.unroute("**/api/v1/groups/*/calendar?*");
+
+
   // Verify Overall default, low-score sorting, missing evidence and responsive table.
   await page.route("**/api/v1/groups/*/analytics?*",async route=>{
     const response=await route.fetch();

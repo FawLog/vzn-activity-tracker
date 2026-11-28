@@ -9,13 +9,24 @@ import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, stateA
 import { futureChange, precisionChange, scheduleFields, serializeTime, utcInput, templateFields, bearCycleDates, moveScheduleStart, futureEditDates, type FuturePreview, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
 
 import type { RotationForecast } from "../lib/state-rotation";
+import { BearScheduleEditor } from "./BearScheduleEditor";
 type Props={forecast?:RotationForecast;groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:"canyon"|"svs")=>void;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
-export function ScheduleEditor({forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved}:Props){
+export function ScheduleEditor(props:Props){
+  const [type,setType]=useState("bear:batch");
+  if(!props.row&&!props.forecast&&type==="bear:batch")return <BearScheduleEditor groupId={props.groupId} alliances={props.alliances} preferred={props.preferred} day={props.day} onClose={props.onClose} onSaved={props.onSaved} onEvent={value=>{
+    if(value==="cycle:canyon"||value==="cycle:svs"){props.onCycle?.(value==="cycle:canyon"?"canyon":"svs");return;}
+    if(allowNavigation())setType(value);
+  }}/>;
+  return <GeneralScheduleEditor {...props} initialType={type==="bear:batch"?"bear_trap":type} onBear={()=>{if(allowNavigation())setType("bear:batch");}}/>;
+}
+function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved,initialType,onBear}:Props&{initialType:string;onBear:()=>void}){
+  const initialInterval=fixedGameInterval(gameEventForCalendar(initialType));
+  const initialRepeat=initialInterval!==null&&initialInterval%1440===0&&initialType!=="alliance_mobilization"?initialInterval:null;
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
-  const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):forecast?{...forecast.fields}:{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
-  const [count,setCount]=useState(forecast?.count??1);
+  const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):forecast?{...forecast.fields}:{event_type:initialType,scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
+  const [count,setCount]=useState(forecast?.count??(!row&&initialRepeat?Math.min(4,1+Math.floor(366*1440/initialRepeat)):1));
   const [renew,setRenew]=useState(!forecast);
   const [groupBear,setGroupBear]=useState(false);
   const [bearAnchor,setBearAnchor]=useState("");
@@ -24,7 +35,7 @@ export function ScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
   const [months,setMonths]=useState(1);
   const [weekdays,setWeekdays]=useState<number[]>([1,3]);
-  const [days,setDays]=useState(forecast?forecast.interval/1440:2);
+  const [days,setDays]=useState(forecast?forecast.interval/1440:initialRepeat?initialRepeat/1440:2);
   const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
   const [profiles,setProfiles]=useState<StateCalendarProfile[]>([]);
   const [templates,setTemplates]=useState<ScheduleTemplate[]>([]);
@@ -97,6 +108,7 @@ export function ScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
     setRepeatMode("fixed");setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(4);setReviewed(null);
   }
   function changeEvent(type:string){
+    if(!row&&type==="bear:batch"){onBear();return;}
     if(!row&&(type==="cycle:canyon"||type==="cycle:svs")){onCycle?.(type==="cycle:canyon"?"canyon":"svs");return;}
     patch({event_type:type});setReviewed(null);setGroupBear(false);setBearAnchor("");setBearKey("");
     if(row)return;
@@ -187,7 +199,7 @@ export function ScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
     <p>Planning only. No attendance or result records are created.</p>{forecast&&<p>Reference forecast from confirmed state date {forecast.anchor}. Review local timing before saving. Automatic renewal is optional.</p>}
     <form onSubmit={save}>
       <fieldset disabled={busy||decision!==null} className="calendar-editor-fields">
-        <label>Event type<select disabled={!!row?.cycle_id} value={fields.event_type} onChange={e=>changeEvent(e.target.value)}>{!row&&onCycle&&<optgroup label="Full event cycles"><option value="cycle:canyon">Canyon Clash — all phases</option><option value="cycle:svs">SvS — all phases</option></optgroup>}{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>
+        <label>Event type<select disabled={!!row?.cycle_id} value={fields.event_type} onChange={e=>changeEvent(e.target.value)}>{!row&&onCycle&&<optgroup label="Full event cycles"><option value="cycle:canyon">Canyon Clash — all phases</option><option value="cycle:svs">SvS — all phases</option></optgroup>}{!row&&<option value="bear:batch">Bear Trap</option>}{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{!row&&v==="bear_trap"?"Bear Trap (advanced single trap)":label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>
         <label>Schedule owner<select disabled={!!row?.cycle_id} required value={fields.scope==="alliance"?fields.alliance_id??"":"state:"+fields.state_id} onChange={e=>changeOwner(e.target.value)}><option value="" disabled>Choose owner</option>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}{states.map(s=><option key={s} value={"state:"+s}>State #{s}</option>)}</select></label>
         {!row&&localTemplates.length>0&&<label>Saved alliance template<select value="" onChange={e=>applyTemplate(e.target.value)}><option value="">Choose a template</option>{localTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>

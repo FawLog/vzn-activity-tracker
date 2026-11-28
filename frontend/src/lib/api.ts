@@ -1,6 +1,7 @@
 import type { AnalyticsReport } from "./analytics";
 import type { CycleCreate } from "./calendar-cycles";
 import type { CalendarOccurrence, CalendarReview } from "./calendar";
+import type { BearSchedulePayload } from "./bear-schedule";
 import type { ScheduleCreate, ScheduleUpdate, FutureChange, FuturePreview, ScheduleTemplate, ScheduleTemplateInput } from "./schedule-editor";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
@@ -56,6 +57,7 @@ export const api = {
   scheduleTemplates: (groupId:string,signal?:AbortSignal) => request<{items:ScheduleTemplate[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates`,{signal}),
   saveScheduleTemplate: (groupId:string,name:string,schedule:ScheduleTemplateInput) => request<ScheduleTemplate>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates`,{method:"POST",body:JSON.stringify({name,schedule})}),
   deleteScheduleTemplate: (groupId:string,id:string) => request<{deleted:boolean}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates/${encodeURIComponent(id)}`,{method:"DELETE"}),
+  createBearSchedule: (groupId:string,payload:BearSchedulePayload) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/bear-schedule`,{method:"POST",body:JSON.stringify(payload)}),
   createSchedule: (groupId:string,payload:ScheduleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar`,{method:"POST",body:JSON.stringify(payload)}),
   updateSchedule: (groupId:string,id:string,payload:ScheduleUpdate) => request<CalendarOccurrence>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}`,{method:"PUT",body:JSON.stringify(payload)}),
   previewScheduleFuture: (groupId:string,id:string) => request<FuturePreview>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`),

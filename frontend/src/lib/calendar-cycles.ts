@@ -83,4 +83,6 @@ export function initialCycleCount(interval:number|null,rolling:boolean,count:num
 }
 
 export type CycleReconcilePlan={items:CalendarOccurrence[];protected_cycles:number;can_confirm:boolean;confirm_items:CalendarOccurrence[];series_revision:number|null;series_status:CycleSeries["status"]|null};
-export type CycleReconcilePayload={action:"confirm"|"shift"|"stop";following:boolean;shift_days:number;revisions:Record<string,number>;series_revision:number|null};
+export type CycleReconcilePayload={action:"confirm"|"shift"|"stop"|"cadence";following:boolean;shift_days:number;interval_days?:number;revisions:Record<string,number>;series_revision:number|null};
+
+export type CycleCadencePlan={items:CalendarOccurrence[];proposed:CalendarOccurrence[];anchor_items:CalendarOccurrence[];protected_cycles:number;interval_days:number;series_revision:number;next_start:string|null};

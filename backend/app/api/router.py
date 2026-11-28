@@ -467,10 +467,10 @@ def create_api_router(settings: Settings) -> APIRouter:
             raise _not_found(str(error)) from error
 
     @router.get("/groups/{group_id}/calendar/cycles/{cycle_id}/reconcile")
-    async def get_cycle_reconcile(request: Request,group_id: str,cycle_id: str,following: bool=False):
+    async def get_cycle_reconcile(request: Request,group_id: str,cycle_id: str,following: bool=False,interval_days: int|None=None):
         require_admin(request,settings)
         try:
-            return calendar.preview_cycle_reconcile(settings.database_path,group_id,cycle_id,following)
+            return calendar.preview_cycle_reconcile(settings.database_path,group_id,cycle_id,following,interval_days)
         except LookupError as error:
             raise _not_found(str(error)) from error
         except ValueError as error:

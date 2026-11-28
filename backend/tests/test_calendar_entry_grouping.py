@@ -135,3 +135,80 @@ def test_auto_bear_groups_cross_midnight_and_renews(authenticated_client,setting
     assert all(r["schedule_status"]=="cancelled" for r in response.json()["items"])
     with connection(settings.database_path) as db:
         assert db.execute("SELECT status FROM calendar_rolling_series WHERE series_id=?",(rows[0]["series_id"],)).fetchone()[0]=="stopped"
+
+
+def test_edit_grouped_bear_single_and_future_preserves_shared_cycles(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules
+    c=authenticated_client
+    root,aid=setup(c)
+    academy=c.post(root+"/alliances",json={"name":"Academy","tag":"ACA","state_id":"1001"}).json()["id"]
+    url=root+"/calendar"
+    fields={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-06-01T15:00Z","ends_at":"2090-06-01T15:30Z","precision":"minute","phase":"Trap 1"}
+    config={"interval_minutes":2880,"occurrence_count":3,"rolling":True,"reject_existing":True,"bear_cycle_anchor":"2090-06-01T15:00Z","bear_session_key":"trap_1"}
+    response=c.post(url,json={**fields,**config})
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    response=c.post(url,json={**fields,**config,"alliance_id":academy,"starts_at":"2090-06-01T17:00Z","ends_at":"2090-06-01T17:30Z","phase":"Trap 2","bear_session_key":"trap_2"})
+    assert response.status_code==201,response.text
+    other=response.json()["items"]
+    single=c.put(url+"/"+rows[0]["id"],json={**fields,"starts_at":"2090-06-01T14:00Z","ends_at":"2090-06-01T14:30Z","revision":1})
+    assert single.status_code==200,single.text
+    assert single.json()["entry_cycle_date"]=="2090-06-01"
+    assert single.json()["entry_session_key"]=="trap_1"
+    before=c.get(url+"?start=2090-06-01&end=2090-06-07").json()["items"]
+    assert next(r for r in before if r["id"]==rows[1]["id"])["starts_at"]=="2090-06-03T15:00Z"
+    target=url+"/"+rows[1]["id"]+"/future"
+    preview=c.get(target).json()
+    assert preview["interval_minutes"]==2880
+    revisions={r["id"]:r["revision"] for r in preview["items"]}
+    edit={**fields,"starts_at":"2090-06-03T13:00Z","ends_at":"2090-06-03T13:30Z","revision":1}
+    change={"action":"edit","schedule":edit,"interval_minutes":2880,"revisions":revisions}
+    incompatible=c.post(target,json={**change,"interval_minutes":2850})
+    assert incompatible.status_code==409,incompatible.text
+    assert c.get(target).json()==preview
+    saved=c.post(target,json=change)
+    assert saved.status_code==200,saved.text
+    assert [r["starts_at"] for r in saved.json()["items"]]==["2090-06-03T13:00Z","2090-06-05T13:00Z"]
+    assert [r["entry_cycle_date"] for r in saved.json()["items"]]==["2090-06-03","2090-06-05"]
+    assert c.post(target,json=change).status_code==409
+    after=c.get(url+"?start=2090-06-01&end=2090-06-07").json()["items"]
+    assert next(r for r in after if r["id"]==rows[0]["id"])["starts_at"]=="2090-06-01T14:00Z"
+    for peer in other:
+        assert next(r for r in after if r["id"]==peer["id"])["starts_at"]==peer["starts_at"]
+    assert renew_schedules(settings.database_path,datetime(2090,6,6,tzinfo=timezone.utc))>0
+    next_cycle=c.get(url+"?start=2090-06-07&end=2090-06-08").json()["items"]
+    assert [(r["starts_at"],r["entry_cycle_date"],r["entry_session_key"]) for r in next_cycle]==[
+        ("2090-06-07T13:00Z","2090-06-07","trap_1"),("2090-06-07T17:00Z","2090-06-07","trap_2")]
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+
+
+def test_lone_grouped_bear_cadence_edit_splits_series_and_renews(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules,missing_bear_forecasts
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    fields={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-06-01T15:00Z","precision":"minute","phase":"Trap 1"}
+    response=c.post(url,json={**fields,"interval_minutes":2880,"occurrence_count":4,"rolling":True,"reject_existing":True,"bear_cycle_anchor":"2090-06-01T15:00Z","bear_session_key":"trap_1"})
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    target=url+"/"+rows[1]["id"]+"/future"
+    preview=c.get(target).json()["items"]
+    edit={**fields,"starts_at":"2090-06-03T17:00Z","revision":1}
+    result=c.post(target,json={"action":"edit","schedule":edit,"interval_minutes":2850,"revisions":{r["id"]:r["revision"] for r in preview}})
+    assert result.status_code==200,result.text
+    new=result.json()["items"]
+    assert [r["id"] for r in new]==[r["id"] for r in rows[1:]]
+    assert [r["starts_at"] for r in new]==["2090-06-03T17:00Z","2090-06-05T16:30Z","2090-06-07T16:00Z"]
+    assert len({r["series_id"] for r in new})==1 and new[0]["series_id"]!=rows[0]["series_id"]
+    assert [r["sequence"] for r in new]==[0,1,2]
+    old=c.get(url+"?start=2090-06-01&end=2090-06-02").json()["items"][0]
+    assert {k:old[k] for k in rows[0]}==rows[0]
+    assert renew_schedules(settings.database_path,datetime(2090,6,8,tzinfo=timezone.utc))>0
+    upcoming=c.get(url+"?start=2090-06-09&end=2090-06-10").json()["items"]
+    assert len(upcoming)==1 and upcoming[0]["starts_at"]=="2090-06-09T15:30Z"
+    assert upcoming[0]["entry_cycle_date"]=="2090-06-09"
+    with connection(settings.database_path) as db:
+        assert missing_bear_forecasts(db,root.rsplit("/",1)[1],"2090-06-09")==[]

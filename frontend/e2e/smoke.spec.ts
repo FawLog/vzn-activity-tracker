@@ -433,6 +433,43 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await calendar.getByRole("button",{name:"Filters",exact:true}).click();
     await calendar.getByLabel("Show cancelled").check();
     await expect(calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Cancelled")})).toBeVisible();
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+    await scheduleEditor.getByLabel("Event type").selectOption("foundry");
+    await scheduleEditor.getByLabel("Precision").selectOption("minute");
+    await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-10T15:00");
+    await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
+    await scheduleEditor.getByLabel("Phase (optional)").fill(verificationPhase);
+    await scheduleEditor.getByLabel("Ends (UTC, optional, exclusive)").fill("2091-02-10T16:00");
+    await scheduleEditor.getByRole("checkbox",{name:"I reviewed these dates and confirmed the local repeat pattern"}).check();
+    const seriesCreated=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
+    await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
+    expect((await seriesCreated).status()).toBe(201);
+    await expect(scheduleEditor).toHaveCount(0);
+    const seriesEntry=calendar.getByRole("button",{name:new RegExp("Foundry Battle.*"+verificationPhase+".*Confirmed")});
+    await seriesEntry.click();
+    await expect(calendar.getByRole("button",{name:"Change future series",exact:true})).toHaveCount(0);
+    await calendar.getByRole("button",{name:"Edit schedule",exact:true}).click();
+    await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-10T16:00");
+    await scheduleEditor.getByRole("button",{name:"Save schedule",exact:true}).click();
+    await expect(scheduleEditor.getByRole("radio",{name:"This event only",exact:true})).toBeChecked();
+    const singleSaved=page.waitForResponse(r=>r.request().method()==="PUT"&&r.url().includes("/calendar/"));
+    await scheduleEditor.getByRole("button",{name:"Save changes",exact:true}).click();
+    expect((await singleSaved).status()).toBe(200);
+    await expect(scheduleEditor).toHaveCount(0);
+    await seriesEntry.click();
+    await calendar.getByRole("button",{name:"Edit schedule",exact:true}).click();
+    await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-10T17:00");
+    await scheduleEditor.getByRole("button",{name:"Save schedule",exact:true}).click();
+    await scheduleEditor.getByRole("radio",{name:"This and following events",exact:true}).check();
+    await expect(scheduleEditor.getByText(/2091-02-24T15:00Z → 2091-02-24T17:00Z/)).toBeVisible();
+    const seriesSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/future"));
+    await scheduleEditor.getByRole("button",{name:"Save changes",exact:true}).click();
+    const seriesResult=await seriesSaved;
+    expect(seriesResult.status()).toBe(200);
+    const seriesRows=(await seriesResult.json()).items;
+    expect(seriesRows[1].starts_at).toBe("2091-02-24T17:00Z");
+    expect(seriesRows[1].ends_at).toBe("2091-02-24T18:00Z");
+    await expect(scheduleEditor).toHaveCount(0);
   }
 
 

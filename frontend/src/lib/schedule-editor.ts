@@ -19,7 +19,36 @@ export function templateFields(template:ScheduleTemplateInput,day:string):Schedu
   return {event_type,scope,alliance_id,state_id,starts_at:start,ends_at:end,precision,phase,confidence:"estimated"};
 }
 export type ScheduleUpdate = ScheduleFields & Pick<CalendarOccurrence,"revision"|"schedule_status">;
-export type FutureChange = {action:"shift"|"cancel";shift_minutes:number;revisions:Record<string,number>};
+export type FutureChange = {action:"shift"|"cancel";shift_minutes:number;revisions:Record<string,number>} | {action:"edit";schedule:ScheduleUpdate;interval_minutes?:number;revisions:Record<string,number>};
+export type FuturePreview = {items:CalendarOccurrence[];interval_minutes:number|null};
+export function moveScheduleStart(fields:ScheduleFields,start:string):ScheduleFields{
+  if(!start||!fields.starts_at||!fields.ends_at)return {...fields,starts_at:start};
+  const old=Date.parse(fields.precision==="date"?fields.starts_at+"T00:00Z":fields.starts_at);
+  const next=Date.parse(fields.precision==="date"?start+"T00:00Z":start);
+  const end=Date.parse(fields.precision==="date"?fields.ends_at+"T00:00Z":fields.ends_at);
+  if(![old,next,end].every(Number.isFinite))return {...fields,starts_at:start};
+  const target=new Date(end+next-old);
+  return {...fields,starts_at:start,ends_at:target.toISOString().slice(0,fields.precision==="date"?10:16)+(fields.precision==="minute"?"Z":"")};
+}
+export function futureEditDates(preview:FuturePreview,fields:ScheduleFields,hours:number):{id:string;start:string;end:string|null}[]{
+  const first=preview.items[0];
+  if(!first||!fields.starts_at||fields.precision!==first.precision)throw Error("Choose a start with the original precision.");
+  const parse=(v:string)=>Date.parse(fields.precision==="date"?v+"T00:00Z":v);
+  const start=parse(fields.starts_at),offset=start-parse(first.starts_at);
+  const duration=fields.ends_at?parse(fields.ends_at)-start:null;
+  if(!Number.isFinite(start)||!Number.isFinite(offset)||(duration!==null&&(!Number.isFinite(duration)||duration<=0||duration>31*86400000)))throw Error("Choose valid start and end dates.");
+  const minutes=hours*60;
+  if(preview.interval_minutes!==null&&(!Number.isInteger(minutes)||minutes<60||minutes>525600||(fields.precision==="date"&&minutes%1440)))throw Error("Choose a valid fixed repeat interval.");
+  const format=(time:number)=>{
+    const date=new Date(time);
+    if(!Number.isFinite(date.getTime())||date.getUTCFullYear()<2000||date.getUTCFullYear()>2099)throw Error("Series edit exceeds supported dates.");
+    return date.toISOString().slice(0,fields.precision==="date"?10:16)+(fields.precision==="minute"?"Z":"");
+  };
+  return preview.items.map(r=>{
+    const time=preview.interval_minutes===null?parse(r.starts_at)+offset:start+(r.sequence-first.sequence)*minutes*60000;
+    return {id:r.id,start:format(time),end:duration===null?null:format(time+duration)};
+  });
+}
 export function utcInput(value:string,precision:ScheduleFields["precision"]):string {
   return precision==="date"?value.slice(0,10):value.slice(0,16);
 }
@@ -36,7 +65,7 @@ export function recurrence(count:number,days:number){
   if(!Number.isInteger(days)||days<1||(count-1)*days>366)throw new Error("Recurrence must fit within 366 days");
   return {occurrence_count:count,interval_minutes:days*1440};
 }
-export function futureChange(rows:CalendarOccurrence[],action:FutureChange["action"],minutes:number):FutureChange{
+export function futureChange(rows:CalendarOccurrence[],action:"shift"|"cancel",minutes:number):FutureChange{
   if(!rows.length)throw new Error("No eligible occurrences");
   if(action==="shift"&&(!Number.isInteger(minutes)||!minutes||Math.abs(minutes)>527040))throw new Error("Enter a nonzero shift within 366 days");
   if(action==="shift"&&rows.some(r=>r.precision==="date")&&minutes%1440!==0)throw new Error("Date-only events require whole-day shifts");

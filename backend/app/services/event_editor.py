@@ -222,6 +222,25 @@ class CompletionReview(BaseModel):
     expected_sessions: int = Field(ge=1, le=30)
 
 
+def require_planned_sessions(db, event, group_id):
+    """Only explicit grouping establishes expected sessions; forecasts alone do not."""
+    missing = db.execute("""
+        SELECT c.entry_session_key FROM calendar_occurrences c
+        LEFT JOIN calendar_event_links l ON l.occurrence_id=c.id AND l.event_id=?
+        LEFT JOIN event_sessions s ON s.id=l.session_id AND s.event_id=l.event_id
+        WHERE c.group_id=? AND c.event_type=? AND c.entry_cycle_date=?
+          AND c.schedule_status='scheduled' AND (?='bear_trap' OR c.alliance_id=?)
+          AND (s.id IS NULL OR s.session_key<>c.entry_session_key
+               OR s.host_alliance_id<>c.alliance_id OR c.precision<>'minute'
+               OR substr(s.started_at,1,16)<>substr(c.starts_at,1,16))
+        ORDER BY c.entry_session_key
+    """, (event["id"],group_id,event["event_type"],event["occurred_on"],
+          event["event_type"],event["alliance_id"])).fetchall()
+    if missing:
+        raise ValueError("Record and link all planned cycle sessions before finalizing: "
+                         + ", ".join(r["entry_session_key"] for r in missing))
+
+
 def finalize_attendance(db, event, group_id, review):
     kind = event["event_type"]
     if kind not in {"bear_trap", "foundry", "canyon"}:
@@ -317,6 +336,8 @@ def publish(path, group_id, event_id, bear_cycle_complete=False, completion=None
             evidence = db.execute("""SELECT 1 FROM event_sessions s WHERE s.event_id=? AND (s.attendance_complete=1 OR EXISTS (SELECT 1 FROM event_session_roster r WHERE r.session_id=s.id AND r.attendance=\'confirmed_present\') OR EXISTS (SELECT 1 FROM event_session_metrics m WHERE m.session_id=s.id AND m.metric_key=\'personal_points\' AND m.raw_value>0)) LIMIT 1""", (event_id,)).fetchone()
             if not evidence:
                 raise ValueError("Registration alone must remain a draft; review actual battle attendance before publishing")
+        if completion is not None or (bear_cycle_complete and event["event_type"] == "bear_trap"):
+            require_planned_sessions(db,event,group_id)
         if completion is not None:
             finalize_attendance(db,event,group_id,completion)
             bear_cycle_complete = True
@@ -343,6 +364,7 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
         if event["alliance_status"] != "active" or event["group_status"] != "active":
             raise ValueError("Only active groups and alliances can be edited")
         if action == "delete":
+            db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT occurrence_id FROM calendar_event_links WHERE event_id=?)", (event_id,))
             _audit(db,event_id,"event_deleted")
             db.execute("DELETE FROM events WHERE id=?", (event_id,))
             return
@@ -365,6 +387,7 @@ def manage_event(path, group_id, event_id, action, confirmed, occurred_on=None, 
                 raise ValueError("Reopen event before removing a session")
             if event["event_type"] in {"alliance_championship","alliance_mobilization"}:
                 raise ValueError("Delete the event instead of its only results section")
+            db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT occurrence_id FROM calendar_event_links WHERE session_id=? AND event_id=?)", (session_id,event_id))
             if not db.execute("DELETE FROM event_sessions WHERE id=? AND event_id=?", (session_id,event_id)).rowcount:
                 raise LookupError("Session not found")
         else:

@@ -492,6 +492,8 @@ def set_event_link(path,group_id,occurrence_id,payload):
             db.execute("INSERT INTO calendar_event_links(occurrence_id,event_id,session_id) VALUES (?,?,?) ON CONFLICT(occurrence_id) DO UPDATE SET session_id=excluded.session_id",
                        (occurrence_id,payload.event_id,payload.session_id))
         else:
+            if row["entry_cycle_date"]:
+                require_open_cycle_for_grouping(db,group_id,row["event_type"],row["entry_cycle_date"],row["alliance_id"])
             db.execute("DELETE FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,))
         db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(occurrence_id,))
         audit(db,"event_linked" if payload.event_id else "event_unlinked",occurrence_id)
@@ -774,6 +776,17 @@ class EntryGrouping(BaseModel):
         return self
 
 
+def require_open_cycle_for_grouping(db, group_id, kind, day, owner):
+    if day is None:
+        return
+    if db.execute("""SELECT 1 FROM events e JOIN alliances a ON a.id=e.alliance_id
+        WHERE a.group_id=? AND e.event_type=? AND e.occurred_on=? AND e.status='published'
+        AND (?='bear_trap' OR e.alliance_id=?) AND
+        (e.bear_cycle_complete=1 OR EXISTS(SELECT 1 FROM event_completion_reviews r WHERE r.event_id=e.id))""",
+        (group_id,kind,day,kind,owner)).fetchone():
+        raise ValueError("Reopen the finalized event before changing its planned cycle")
+
+
 def set_entry_grouping(path,group_id,occurrence_id,payload):
     with transaction(path) as db:
         require_group(db,group_id,True)
@@ -783,6 +796,7 @@ def set_entry_grouping(path,group_id,occurrence_id,payload):
         if db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone():
             raise ValueError("Unlink the actual record before changing session grouping")
         kind=row["event_type"]
+        require_open_cycle_for_grouping(db,group_id,kind,row["entry_cycle_date"],row["alliance_id"])
         if payload.cycle_date is not None:
             validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
             if not link_eligible(row) or kind not in {"bear_trap","foundry","canyon"}:
@@ -797,6 +811,7 @@ def set_entry_grouping(path,group_id,occurrence_id,payload):
             label=re.fullmatch(r"legion[ _]([12])",row["phase"].strip().lower())
             if kind!="bear_trap" and label and payload.session_key!="legion_"+label[1]:
                 raise ValueError("Session identity disagrees with the scheduled legion")
+            require_open_cycle_for_grouping(db,group_id,kind,payload.cycle_date.isoformat(),row["alliance_id"])
             duplicate=db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND event_type=?
                 AND entry_cycle_date=? AND entry_session_key=? AND id<>?
                 AND (?='bear_trap' OR alliance_id=?)""",(group_id,kind,payload.cycle_date.isoformat(),payload.session_key,occurrence_id,kind,row["alliance_id"])).fetchone()

@@ -11,6 +11,7 @@ export interface GameRun {
   startWeekday?:string;
   startTimeUtc?:string;
 }
+export interface GameStage {id:string;name?:string;note?:string}
 export interface GameEventSummary {
   id:string;
   name:string;
@@ -23,6 +24,7 @@ export interface GameEventSummary {
   requirements?:string[];
   phases?:{name:string;description:string}[];
   unlockDay?:number;
+  stages:GameStage[];
   dayCount:number;
   missionCount:number;
   hasVariants:boolean;

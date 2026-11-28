@@ -13,7 +13,7 @@ import {
   LayoutDashboard,
   Layers,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useAuth } from "../lib/auth";
 import { useGroupContext } from "../lib/group-context";
 import { navigate } from "../lib/router";
@@ -123,7 +123,7 @@ export function AppShell({ path, children }: { path: string; children: ReactNode
             )}
           </div>
         </header>
-        <main className="main-content" key={(selectedGroup?.id??"")+":"+(selectedAlliance?.id??"")}>{children}</main>
+        <main className="main-content">{path==="/calendar"||path.startsWith("/events/")?<Fragment key={(selectedGroup?.id??"")+":"+(selectedAlliance?.id??"")}>{children}</Fragment>:children}</main>
         <footer className="statusbar">
           <span><i />System operational</span>
           {authenticated && <ProductionVersion />}

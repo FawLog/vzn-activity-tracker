@@ -1,4 +1,5 @@
-import {useState} from "react";
+import { useNavigationGuard } from "../lib/navigation-guard";
+import {useRef,useState} from "react";
 import type {Alliance,ManualEvent,Player} from "../lib/types";
 import {foundryRegistrationPreview} from "../lib/foundryRegistration";
 type Completion={revisions:Record<string,number>;roster:string[];home_alliances?:Record<string,string>;excused:string[];no_duty:string[];expected_sessions:number};
@@ -22,6 +23,9 @@ export function AttendanceFinalReview({event,candidates,alliances,allianceId,occ
  const [expected,setExpected]=useState(bear?String(prior.length?event.sessions.length:3):"2");
  const [confirmed,setConfirmed]=useState(false);
 
+ const fingerprint=JSON.stringify({homes,roster,excused,noDuty,expected,confirmed});
+ const initial=useRef(fingerprint);
+ useNavigationGuard(initial.current!==fingerprint,false);
  const eligible=new Set(roster);
  const exceptions=excused.filter(f=>eligible.has(f)&&!present.has(f));
  const ineligible=noDuty.filter(f=>eligible.has(f)&&!present.has(f));

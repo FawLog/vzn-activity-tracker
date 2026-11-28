@@ -1,3 +1,4 @@
+import { useNavigationGuard } from "../lib/navigation-guard";
 import {useState,useRef} from "react";
 import {api,type CalendarEventLinkState} from "../lib/api";
 import type {CalendarOccurrence} from "../lib/calendar";
@@ -14,6 +15,7 @@ export function CalendarDraftEditor({groupId,row,data,onCreated}:{groupId:string
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const lock=useRef(false);
+  useNavigationGuard(!!cycle||!!key||review||eventId!==(data.linked?.id??""),busy);
   const choices=bear?(cycles?.date===cycle?cycles.items:[]):data.items;
   const existing=data.linked?[data.linked]:choices;
   const canCreate=(!bear||cycles?.date===cycle)&&(!existing.length||existing.some(e=>e.id===eventId&&e.status==="draft"))&&(!session||!!key)&&review;

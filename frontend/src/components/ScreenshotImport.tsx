@@ -1,3 +1,4 @@
+import { useNavigationGuard } from "../lib/navigation-guard";
 import { useEffect, useRef, useState } from "react";
 import { ImagePlus } from "lucide-react";
 import { api, type OcrPreview } from "../lib/api";
@@ -49,12 +50,7 @@ export function ScreenshotImport({groupId,eventId,sessionId,disabled,onBusy,even
     api.ocrStatus().then(v=>{if(active.current)setConfig(v)}).catch(e=>{if(active.current)setError(String(e.message))});
     return ()=>{active.current=false;stop.current=true};
   },[]);
-  useEffect(()=>{
-    if(!running&&!items.length)return;
-    const handler=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue=""};
-    window.addEventListener("beforeunload",handler);
-    return ()=>window.removeEventListener("beforeunload",handler);
-  },[running,items.length]);
+  useNavigationGuard(items.length>0,running);
   const patch=(id:number,value:Partial<Item>)=>{if(active.current)setItems(old=>old.map(item=>item.id===id?{...item,...value}:item))};
   const recognize=async()=>{
     if(!config?.configured||running||disabled)return;

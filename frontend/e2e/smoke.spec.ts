@@ -340,6 +340,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveAttribute("type","datetime-local");
   await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveValue("");
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  page.once("dialog", dialog=>dialog.dismiss());
+  await scheduleEditor.getByRole("button",{name:"Close editor"}).click();
+  await expect(scheduleEditor).toBeVisible();
+  await expect(scheduleEditor.getByLabel("Occurrences (including first)")).toHaveValue("3");
+  page.once("dialog", dialog=>dialog.accept());
   await scheduleEditor.getByRole("button",{name:"Close editor"}).click();
   await expect(scheduleEditor).toHaveCount(0);
 
@@ -491,6 +496,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await registrationImport.getByRole("button",{name:"Upload registration screenshots"}).click();
   const chooser=await chooserPromise;
   await chooser.setFiles([{name:"first.png",mimeType:"image/png",buffer:Buffer.from("image1")},{name:"second.png",mimeType:"image/png",buffer:Buffer.from("image2")}]);
+  await expect(registrationImport.getByText("2 screenshots selected",{exact:true})).toBeVisible();
+  const ocrUrl=page.url();
+  page.once("dialog", dialog=>dialog.dismiss());
+  await page.getByRole("button",{name:"Event history",exact:true}).last().click();
+  await expect(page).toHaveURL(ocrUrl);
   await expect(registrationImport.getByText("2 screenshots selected",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Battle results",exact:true}).click();
   const resultsImport=page.getByRole("region",{name:"Battle results import"});

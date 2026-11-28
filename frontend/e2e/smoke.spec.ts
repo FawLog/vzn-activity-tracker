@@ -444,8 +444,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect((await created).status()).toBe(201);
     await expect(scheduleEditor).toHaveCount(0);
     const entry=calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Confirmed")});
-    await expect(entry).toBeVisible();
-    await entry.click();
+    await expect(entry).toHaveCount(3);
+    for(const dayEntry of await entry.all())await expect(dayEntry).toBeVisible();
+    await entry.first().click();
     await calendar.getByRole("button",{name:"Edit schedule",exact:true}).click();
     await scheduleEditor.getByLabel("Schedule status").selectOption("cancelled");
     const updated=page.waitForResponse(r=>r.request().method()==="PUT"&&r.url().includes("/calendar/"));
@@ -454,7 +455,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(scheduleEditor).toHaveCount(0);
     await calendar.getByRole("button",{name:"Filters",exact:true}).click();
     await calendar.getByLabel("Show cancelled").check();
-    await expect(calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Cancelled")})).toBeVisible();
+    const cancelledEntries=calendar.getByRole("button",{name:new RegExp("Lucky Wheel.*"+verificationPhase+".*Cancelled")});
+    await expect(cancelledEntries).toHaveCount(3);
+    for(const dayEntry of await cancelledEntries.all())await expect(dayEntry).toBeVisible();
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("foundry");
     await scheduleEditor.getByLabel("Precision").selectOption("minute");

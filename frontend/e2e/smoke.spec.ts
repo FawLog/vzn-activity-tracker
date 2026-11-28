@@ -394,6 +394,10 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
   const cycleEditor=calendar.getByRole("region",{name:"Cycle editor"});
   await expect(cycleEditor.getByLabel("Event type")).toHaveValue("cycle:foundry");
+  await expect(cycleEditor.getByLabel("Automatically maintain full cycles")).toBeChecked();
+  await cycleEditor.getByLabel("Automatically maintain full cycles").uncheck();
+  await expect(cycleEditor.getByLabel("Cycles to schedule (including first)")).toHaveValue("3");
+  await cycleEditor.getByLabel("Automatically maintain full cycles").check();
   await cycleEditor.getByLabel("Schedule Legion 2").check();
   await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
   await expect(cycleEditor.getByRole("group",{name:"Legion 2",exact:true})).toBeVisible();
@@ -523,6 +527,29 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(scheduleEditor).toHaveCount(0);
     await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1.*15:00 UTC.*Confirmed/})).toBeVisible();
     await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 2.*20:00 UTC.*Confirmed/})).toBeVisible();
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+    await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
+    await cycleEditor.getByLabel("Event starts (Monday, 00:00 UTC)").fill("2091-06-04");
+    await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
+    await cycleEditor.getByLabel("I reviewed all phases and their local dates").check();
+    const cycleSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/cycles"));
+    await cycleEditor.getByRole("button",{name:"Save cycle",exact:true}).click();
+    const cycleResult=await cycleSaved;
+    expect(cycleResult.status()).toBe(201);
+    expect((await cycleResult.json()).items).toHaveLength(20);
+    await expect(cycleEditor).toHaveCount(0);
+    const voting=calendar.getByRole("button",{name:/Foundry Battle.*Voting.*Estimated/});
+    await expect(voting).toHaveCount(2);
+    await voting.first().click();
+    const review=calendar.getByRole("region",{name:"Cycle reconciliation"});
+    await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
+    await expect(review.getByText("1 movable cycles · 0 protected cycles.",{exact:true})).toBeVisible();
+    await review.getByLabel("Move by days (UTC)").fill("1");
+    await review.getByLabel("I reviewed the dates and selected operation").check();
+    const shifted=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/reconcile"));
+    await review.getByRole("button",{name:"Move forecast cycles",exact:true}).click();
+    expect((await shifted).status()).toBe(200);
+    await expect(review).toHaveCount(0);
   }
 
 

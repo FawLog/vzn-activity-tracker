@@ -6,6 +6,7 @@ import {creationEventOptions,cycleTypes} from "../lib/calendar-event-options";
 import {weekStart,type CalendarOccurrence} from "../lib/calendar";
 import {serializeTime,utcInput,type ScheduleFields} from "../lib/schedule-editor";
 import type {Alliance} from "../lib/types";
+import {CycleReconcileEditor} from "./CycleReconcileEditor";
 type Props={onAdvanced?:(type:string)=>void;onEvent?:(type:string)=>void;initialKind?:CycleKind;groupId:string;alliances:Alliance[];preferred?:string;day:string;onClose:()=>void;onSaved:(day:string)=>void};
 export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,alliances,preferred,day,onClose,onSaved}:Props){
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
@@ -81,7 +82,7 @@ export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,all
     <div className="calendar-controls"><button type="button" className="button button--primary" disabled={busy||!phases.length||review!==fingerprint||!!repeatError||effectiveCount>1&&interval===null||phases.some(p=>!p.starts_at)} onClick={()=>void save()}>Save cycle</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close cycle editor</button></div>
   </section>;
 }
-export function CycleDetails({groupId,cycleId,onSelect}:{groupId:string;cycleId:string;onSelect:(row:CalendarOccurrence)=>void}){
+export function CycleDetails({groupId,cycleId,onSelect,writable,onChanged}:{groupId:string;cycleId:string;onSelect:(row:CalendarOccurrence)=>void;writable:boolean;onChanged:(day?:string)=>void}){
   const [items,setItems]=useState<CalendarOccurrence[]|null>(null);
   const [series,setSeries]=useState<CycleSeries|null>(null);
   const [error,setError]=useState("");
@@ -90,5 +91,5 @@ export function CycleDetails({groupId,cycleId,onSelect}:{groupId:string;cycleId:
     api.calendarCycle(groupId,cycleId,controller.signal).then(r=>{if(!controller.signal.aborted){setItems(r.items);setSeries(r.series);}}).catch(()=>{if(!controller.signal.aborted)setError("Unable to load linked phases");});
     return ()=>controller.abort();
   },[groupId,cycleId]);
-  return <section className="calendar-stage-timeline" aria-label="Linked event cycle"><h3>Linked event cycle</h3>{error?<p role="alert">{error}</p>:!items?<p>Loading phases…</p>:<div className="calendar-stage-tabs">{items.map(p=><button type="button" key={p.id} className="button button--quiet" onClick={()=>onSelect(p)}>{p.phase} · {p.starts_at} · {p.schedule_status==="cancelled"?"Cancelled":p.confidence}</button>)}</div>}{series&&<p>Cycle schedule: {series.status} · Every {series.interval_days} days</p>}</section>;
+  return <section className="calendar-stage-timeline" aria-label="Linked event cycle"><h3>Linked event cycle</h3>{error?<p role="alert">{error}</p>:!items?<p>Loading phases…</p>:<div className="calendar-stage-tabs">{items.map(p=><button type="button" key={p.id} className="button button--quiet" onClick={()=>onSelect(p)}>{p.phase} · {p.starts_at} · {p.schedule_status==="cancelled"?"Cancelled":p.confidence}</button>)}</div>}{series&&<p>Cycle schedule: {series.status} · Every {series.interval_days} days</p>}{items&&writable&&<CycleReconcileEditor groupId={groupId} cycleId={cycleId} series={series} onChanged={onChanged}/>}</section>;
 }

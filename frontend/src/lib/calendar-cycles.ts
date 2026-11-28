@@ -1,4 +1,4 @@
-import {addDays} from "./calendar";
+import {addDays,type CalendarOccurrence} from "./calendar";
 import {gameEventForCalendar,type GameRun} from "./game-event-catalog";
 import {fixedGameInterval,runMinutes,referenceEnd} from "./game-forecast";
 import type {ScheduleFields} from "./schedule-editor";
@@ -81,3 +81,6 @@ export type CycleSeries={id:string;interval_days:number;status:"active"|"finite"
 export function initialCycleCount(interval:number|null,rolling:boolean,count:number){
   return rolling&&interval!==null&&interval>=7&&interval<=60?1+Math.floor(60/interval):count;
 }
+
+export type CycleReconcilePlan={items:CalendarOccurrence[];protected_cycles:number;can_confirm:boolean;confirm_items:CalendarOccurrence[];series_revision:number|null;series_status:CycleSeries["status"]|null};
+export type CycleReconcilePayload={action:"confirm"|"shift"|"stop";following:boolean;shift_days:number;revisions:Record<string,number>;series_revision:number|null};

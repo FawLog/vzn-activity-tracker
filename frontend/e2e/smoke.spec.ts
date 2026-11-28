@@ -354,6 +354,18 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});
   await expect(scheduleEditor).toBeVisible();
+  await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
+  await scheduleEditor.getByRole("checkbox",{name:"Group recurring Bear traps"}).check();
+  await scheduleEditor.getByLabel("Precision").selectOption("minute");
+  await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2090-06-02T00:30");
+  await scheduleEditor.getByLabel("Shared first Bear cycle (UTC)",{exact:true}).fill("2090-06-01T23:30");
+  await scheduleEditor.getByLabel("Trap identity",{exact:true}).selectOption("trap_2");
+  await expect(scheduleEditor.getByText(/Cycle 2090-06-01 · trap 2/)).toBeVisible();
+  await expect(scheduleEditor.getByRole("button",{name:"Save schedule"})).toBeDisabled();
+  await scheduleEditor.getByRole("checkbox",{name:"Group recurring Bear traps"}).uncheck();
+  await scheduleEditor.getByLabel("Precision").selectOption("date");
+  await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2090-06-02");
+  await scheduleEditor.getByRole("button",{name:"Hide advanced settings",exact:true}).click();
   await scheduleEditor.getByLabel("Event type").selectOption("foundry");
   await expect(scheduleEditor.getByText("4 occurrences · Every 14 days",{exact:true})).toBeVisible();
   await expect(scheduleEditor.getByRole("checkbox",{name:"Keep schedule up to date automatically"})).toBeChecked();

@@ -1,6 +1,6 @@
 import type { CalendarOccurrence } from "./calendar";
 export type ScheduleFields = Pick<CalendarOccurrence,"event_type"|"scope"|"alliance_id"|"state_id"|"starts_at"|"ends_at"|"precision"|"phase"|"confidence">;
-export type ScheduleCreate = ScheduleFields & {request_key:string;interval_minutes:number|null;occurrence_count:number;reject_existing?:boolean;rolling?:boolean;repeat_months?:number;repeat_weekdays?:number[]};
+export type ScheduleCreate = ScheduleFields & {request_key:string;interval_minutes:number|null;occurrence_count:number;reject_existing?:boolean;rolling?:boolean;bear_cycle_anchor?:string;bear_session_key?:string;repeat_months?:number;repeat_weekdays?:number[]};
 export type ScheduleTemplateInput = Omit<ScheduleCreate,"request_key"|"repeat_months"|"repeat_weekdays"> & {repeat_months?:number|null;repeat_weekdays?:number[]|null};
 export type ScheduleTemplate = {id:string;name:string;alliance_id:string;schedule:ScheduleTemplateInput};
 export function templateFields(template:ScheduleTemplateInput,day:string):ScheduleFields{
@@ -52,4 +52,12 @@ export function shiftedStart(row:CalendarOccurrence,minutes:number):string{
   const target=new Date(Date.parse(row.precision==="date"?row.starts_at+"T00:00Z":row.starts_at)+minutes*60000);
   if(!Number.isFinite(target.getTime())||target.getUTCFullYear()<2000||target.getUTCFullYear()>2099)throw Error("Shift outside supported dates");
   return target.toISOString().slice(0,row.precision==="date"?10:16)+(row.precision==="minute"?"Z":"");
+}
+
+export function bearCycleDates(fields:ScheduleFields,anchor:string,key:string,count:number,minutes:number,mode:string):string[]{
+  if(fields.event_type!=="bear_trap"||fields.scope!=="alliance"||fields.precision!=="minute"||mode!=="fixed"||!Number.isInteger(minutes)||minutes<1440||minutes>10080||count<2)throw Error("Bear grouping requires timed alliance traps and a fixed 1–7 day repeat interval.");
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/.test(anchor)||!/^trap_(?:[1-9]|[12][0-9]|30)$/.test(key))throw Error("Choose the shared UTC cycle anchor and unique trap identity.");
+  const first=Date.parse(anchor),start=Date.parse(fields.starts_at);
+  if(!Number.isFinite(first)||!Number.isFinite(start)||new Date(first).toISOString().slice(0,16)+"Z"!==anchor||Number(anchor.slice(0,4))<2000||Number(anchor.slice(0,4))>2099||start<first||start-first>=minutes*60000)throw Error("First trap must fall within the first shared Bear cycle.");
+  return Array.from({length:count},(_,i)=>new Date(first+i*minutes*60000).toISOString().slice(0,10));
 }

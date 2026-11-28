@@ -95,3 +95,43 @@ def test_grouped_bear_finalization_requires_all_planned_sessions(authenticated_c
     assert c.put(urls[2]+"/entry-group",json={"revision":1,"cycle_date":"2090-06-01","session_key":"trap_3"}).status_code==200
     assert c.post(event+"/manage",json={"action":"delete_session","confirmed":True,"session_id":second["session_id"]}).status_code==200
     assert c.get(urls[1]+"/event-link").json()["revision"]==4
+
+
+def test_auto_bear_groups_cross_midnight_and_renews(authenticated_client,settings):
+    from datetime import datetime,timezone
+    from app.services.calendar import renew_schedules,missing_bear_forecasts
+    c=authenticated_client
+    root,aid=setup(c)
+    academy=c.post(root+"/alliances",json={"name":"Academy","tag":"ACA","state_id":"1001"}).json()["id"]
+    url=root+"/calendar"
+    base={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-06-01T23:30Z","precision":"minute","phase":"Trap 1","interval_minutes":2850,"occurrence_count":2,"rolling":True,"reject_existing":True,"bear_cycle_anchor":"2090-06-01T23:30Z","bear_session_key":"trap_1"}
+    first=c.post(url,json=base)
+    assert first.status_code==201,first.text
+    rows=first.json()["items"]
+    second=c.post(url,json={**base,"alliance_id":academy,"starts_at":"2090-06-02T00:30Z","bear_session_key":"trap_2"})
+    assert second.status_code==201,second.text
+    assert [r["entry_cycle_date"] for r in rows]==["2090-06-01","2090-06-03"]
+    assert [r["entry_cycle_date"] for r in second.json()["items"]]==["2090-06-01","2090-06-03"]
+    assert c.post(url,json={**base,"alliance_id":academy,"starts_at":"2090-06-02T02:00Z"}).status_code==409
+    assert c.post(url,json={**base,"alliance_id":academy,"starts_at":"2090-06-02T02:00Z","bear_session_key":"trap_3","bear_cycle_anchor":"2090-06-01T23:00Z"}).status_code==409
+    assert c.post(url,json={**base,"bear_cycle_anchor":None}).status_code==422
+    with connection(settings.database_path) as db:
+        assert missing_bear_forecasts(db,root.rsplit("/",1)[1],"2090-06-05")==["trap_1","trap_2"]
+    now=datetime(2090,6,4,tzinfo=timezone.utc)
+    assert renew_schedules(settings.database_path,now)>0
+    assert renew_schedules(settings.database_path,now)==0
+    result=c.get(url+"?start=2090-06-05&end=2090-06-07").json()["items"]
+    assert len(result)==2 and {r["entry_cycle_date"] for r in result}=={"2090-06-05"}
+    assert {r["entry_session_key"] for r in result}=={"trap_1","trap_2"}
+    with connection(settings.database_path) as db:
+        assert missing_bear_forecasts(db,root.rsplit("/",1)[1],"2090-06-05")==[]
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+    target=url+"/"+rows[0]["id"]+"/future"
+    preview=c.get(target).json()["items"]
+    revisions={r["id"]:r["revision"] for r in preview}
+    assert c.post(target,json={"action":"shift","shift_minutes":60,"revisions":revisions}).status_code==409
+    response=c.post(target,json={"action":"cancel","revisions":revisions})
+    assert response.status_code==200,response.text
+    assert all(r["schedule_status"]=="cancelled" for r in response.json()["items"])
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT status FROM calendar_rolling_series WHERE series_id=?",(rows[0]["series_id"],)).fetchone()[0]=="stopped"

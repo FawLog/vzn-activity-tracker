@@ -6,7 +6,7 @@ import type { Alliance } from "../lib/types";
 import type { CalendarOccurrence } from "../lib/calendar";
 import { gameEventForCalendar, repeatLabel, extraCalendarEvents } from "../lib/game-event-catalog";
 import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, stateAge, type RepeatMode } from "../lib/game-forecast";
-import { futureChange, precisionChange, shiftedStart, scheduleFields, serializeTime, utcInput, templateFields, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
+import { futureChange, precisionChange, shiftedStart, scheduleFields, serializeTime, utcInput, templateFields, bearCycleDates, type ScheduleTemplate, type ScheduleFields } from "../lib/schedule-editor";
 
 type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:"canyon"|"svs")=>void;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
@@ -16,6 +16,9 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
   const [count,setCount]=useState(1);
   const [renew,setRenew]=useState(true);
+  const [groupBear,setGroupBear]=useState(false);
+  const [bearAnchor,setBearAnchor]=useState("");
+  const [bearKey,setBearKey]=useState("");
   const [advanced,setAdvanced]=useState(!!row);
   const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
   const [months,setMonths]=useState(1);
@@ -70,18 +73,20 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const rule=reference?.schedule?.repeat;
   const minutes=days*({days:1440,hours:60,minutes:1}[intervalUnit]);
   const rolling=!row&&renew&&count>1&&count<=60&&repeatMode==="fixed"&&minutes>=1440;
+  const grouping=!row&&groupBear&&fields.event_type==="bear_trap"&&fields.scope==="alliance";
   const warnings=sourceRunWarning(reference,fields.event_type,fields);
-  let preview:ReturnType<typeof forecastRows>=[],previewError="",age:number|null=null;
+  let preview:ReturnType<typeof forecastRows>=[],previewError="",age:number|null=null,cycleDates:string[]=[];
   if(!row){
     try{
       preview=advancedPlan(fields,count,minutes,repeatMode,months,weekdays).rows;
+      if(grouping)cycleDates=bearCycleDates(fields,bearAnchor,bearKey,count,minutes,repeatMode);
       if(stateStart)age=stateAge(stateStart,fields.starts_at);
       if(age!==null&&reference?.unlockDay!==undefined&&age<reference.unlockDay)warnings.push("Anchor is earlier than the reference unlock day "+reference.unlockDay+". Verify availability in game.");
     }catch(e){previewError=message(e);}
   }
-  const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays,renew});
-  const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew}));
-  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew})||manualDate!==null||!!templateName.trim(),busy);
+  const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays,renew,groupBear,bearAnchor,bearKey});
+  const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey}));
+  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew,groupBear,bearAnchor,bearKey})||manualDate!==null||!!templateName.trim(),busy);
   function useReference(){
     if(suggested===null)return;
     const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
@@ -89,7 +94,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   }
   function changeEvent(type:string){
     if(!row&&(type==="cycle:canyon"||type==="cycle:svs")){onCycle?.(type==="cycle:canyon"?"canyon":"svs");return;}
-    patch({event_type:type});setReviewed(null);
+    patch({event_type:type});setReviewed(null);setGroupBear(false);setBearAnchor("");setBearKey("");
     if(row)return;
     const event=gameEventForCalendar(type),interval=fixedGameInterval(event);
     // Reference cadence is not proof of an alliance's actual local schedule.
@@ -104,7 +109,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
     try{
       const data=template.schedule;
       const next=templateFields(data,fields.starts_at.slice(0,10)||day);
-      setFields(next);setCount(data.occurrence_count);setRenew(!!data.rolling);
+      setFields(next);setCount(data.occurrence_count);setRenew(!!data.rolling);setGroupBear(false);setBearAnchor("");setBearKey("");
       setRepeatMode(data.repeat_months?"months":data.repeat_weekdays?.length?"weekdays":"fixed");
       setMonths(data.repeat_months??1);setWeekdays(data.repeat_weekdays??[1,3]);
       const interval=data.interval_minutes??2880,unit=interval%1440===0?"days":interval%60===0?"hours":"minutes";
@@ -139,7 +144,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
       }else{
         if(previewError)throw Error(previewError);
         if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
-        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1?{reject_existing:true}:{}) ,...(rolling?{rolling:true}:{})};
+        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1?{reject_existing:true}:{}) ,...(rolling?{rolling:true}:{}) ,...(grouping?{bear_cycle_anchor:bearAnchor,bear_session_key:bearKey}:{})};
         const requestFingerprint=JSON.stringify(payload);
         if(request.current?.fingerprint!==requestFingerprint)request.current={fingerprint:requestFingerprint,key:crypto.randomUUID()};
         const result=await api.createSchedule(groupId,{...payload,request_key:request.current.key});
@@ -158,7 +163,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
         {!row&&localTemplates.length>0&&<label>Saved alliance template<select value="" onChange={e=>applyTemplate(e.target.value)}><option value="">Choose a template</option>{localTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>}
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>patch({starts_at:e.target.value?serializeTime(e.target.value,fields.precision):""})}/></label>
-        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
+        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);setGroupBear(false);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
         <button type="button" className="button button--quiet calendar-advanced-toggle" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide advanced settings":"Advanced settings"}</button>
         {advanced&&<><label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null})}/></label>
         <label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>
@@ -169,6 +174,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
         {count>1&&repeatMode==="months"&&<label>Repeat every (months)<input type="number" min={1} max={12} value={months} onChange={e=>setMonths(Number(e.target.value))}/></label>}
         {count>1&&repeatMode==="weekdays"&&<div><strong>UTC weekdays</strong>{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((name,i)=><label key={name}><input type="checkbox" checked={weekdays.includes(i)} onChange={e=>setWeekdays(old=>e.target.checked?[...old,i]:old.filter(d=>d!==i))}/>{name}</label>)}</div>}
         {count>1&&repeatMode==="fixed"&&<><label>Repeat every ({intervalUnit})<input type="number" min={1} step={intervalUnit==="hours"?"any":1} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label><label>Repeat unit<select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value as typeof intervalUnit)}><option value="days">Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label></>}
+        {fields.event_type==="bear_trap"&&fields.scope==="alliance"&&<div className="calendar-repeat-summary"><label className="calendar-checkbox"><input type="checkbox" checked={groupBear} onChange={e=>{setGroupBear(e.target.checked);if(e.target.checked&&count<2){setCount(4);setRepeatMode("fixed");setDays(2);setIntervalUnit("days");}}}/>Group recurring Bear traps</label>{groupBear&&<><p>Use the same first cycle start and repeat interval for related traps in all alliances. Assign a different trap identity to each series. Cycle start is not the time of every trap.</p><label>Shared first Bear cycle (UTC)<input type="datetime-local" value={bearAnchor.slice(0,16)} onChange={e=>setBearAnchor(e.target.value?e.target.value+"Z":"")}/></label><label>Trap identity<select aria-label="Trap identity" value={bearKey} onChange={e=>setBearKey(e.target.value)}><option value="">Choose explicitly</option>{Array.from({length:30},(_,i)=><option key={i} value={"trap_"+(i+1)}>Trap {i+1}</option>)}</select></label></>}</div>}
         <label>State start date (optional, reference only)<input type="date" value={stateStart} onChange={e=>setManualDate({stateId:fields.state_id,value:e.target.value})}/></label>
         </>}
         </>}
@@ -186,12 +192,12 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
           <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}</>}
         {!advanced&&warnings.map(w=><p key={w}>{w}</p>)}
         {count>1&&<div className="calendar-series-preview"><h3>Proposed schedule</h3><p>Future occurrences are estimated. Maximum horizon: 366 days.</p>
-          {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map(r=><li key={r.start}>{r.start}{r.end?" — "+r.end:""} · {r.confidence}</li>)}</ul>}
+          {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map((r,i)=><li key={r.start}>{r.start}{r.end?" — "+r.end:""} · {r.confidence}{cycleDates[i]?" · Cycle "+cycleDates[i]+" · "+bearKey.replaceAll("_"," "):""}</li>)}</ul>}
           <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!previewError} checked={reviewed===fingerprint} onChange={e=>setReviewed(e.target.checked?fingerprint:null)}/>I reviewed these dates and confirmed the local repeat pattern</label>
         </div>}
       </>}
       {error&&<p role="alert">{error}</p>}
-      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||(!row&&count>1&&(!!previewError||reviewed!==fingerprint))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
+      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||(!row&&(!!previewError||(count>1&&reviewed!==fingerprint)))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
     </form>
   </section>;
 }
@@ -212,7 +218,7 @@ export function FutureScheduleEditor({groupId,row,onClose,onSaved}:{groupId:stri
   }
   return <section className="data-panel calendar-editor" aria-label="Future series editor">
     <h2>Change this and future occurrences</h2>
-    <p>Past occurrences, cancelled entries and other manual overrides are preserved.</p>{row.rolling_status==="active"&&<p>Shifting also changes future renewal dates. Cancelling future occurrences stops automatic renewal.</p>}
+    <p>Past occurrences, cancelled entries and other manual overrides are preserved.</p>{row.event_type==="bear_trap"&&row.entry_cycle_date&&<p>Automatically grouped Bear series can be cancelled and replaced, but cannot be shifted independently of their shared cycle.</p>}{row.rolling_status==="active"&&<p>Shifting also changes future renewal dates. Cancelling future occurrences stops automatic renewal.</p>}
     <fieldset className="calendar-editor-fields" disabled={busy}>
       <label>Series action<select value={action} onChange={e=>{setAction(e.target.value as "shift"|"cancel");setPreview(null);}}><option value="shift">Shift schedule</option><option value="cancel">Cancel occurrences</option></select></label>
       {action==="shift"&&<label>Shift (signed minutes)<input type="number" min={-527040} max={527040} step={row.precision==="date"?1440:1} value={minutes} onChange={e=>{setMinutes(Number(e.target.value));setPreview(null);}}/></label>}

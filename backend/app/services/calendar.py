@@ -53,11 +53,23 @@ class CalendarCreate(CalendarInput):
     occurrence_count: int = Field(default=1, ge=1, le=180)
     reject_existing: bool = False
     rolling: bool = False
+    bear_cycle_anchor: str | None = None
+    bear_session_key: str | None = Field(default=None,max_length=32)
     repeat_months: int | None = Field(default=None, ge=1, le=12)
     repeat_weekdays: list[int] | None = Field(default=None, min_length=1, max_length=7)
 
     @model_validator(mode="after")
     def validate_series(self):
+        if (self.bear_cycle_anchor is None)!=(self.bear_session_key is None):
+            raise ValueError("Provide both shared Bear cycle anchor and trap identity")
+        if self.bear_cycle_anchor is not None:
+            if self.event_type!="bear_trap" or self.scope!="alliance" or self.precision!="minute" or not self.reject_existing or self.occurrence_count<2 or self.interval_minutes is None or not 1440<=self.interval_minutes<=10080:
+                raise ValueError("Bear grouping requires a timed alliance series with a fixed 1–7 day interval and duplicate protection")
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z",self.bear_cycle_anchor) or not re.fullmatch(r"trap_(?:[1-9]|[12][0-9]|30)",self.bear_session_key or ""):
+                raise ValueError("Choose a UTC cycle anchor and unique trap identity")
+            anchor=parse(self.bear_cycle_anchor)
+            if not 2000<=anchor.year<=2099 or not timedelta(0)<=parse(self.starts_at)-anchor<timedelta(minutes=self.interval_minutes):
+                raise ValueError("First trap must fall within the first shared Bear cycle")
         if self.rolling and (not self.reject_existing or self.interval_minutes is None or self.interval_minutes < 1440 or not 2 <= self.occurrence_count <= 60):
             raise ValueError("Automatic renewal requires a fixed interval of at least one day and 2–60 initial occurrences with duplicate protection")
         rules = sum(rule is not None for rule in (self.interval_minutes,self.repeat_months,self.repeat_weekdays))
@@ -175,6 +187,8 @@ def create(path, group_id, payload: CalendarCreate):
     excluded.update(k for k in ("repeat_months","repeat_weekdays") if getattr(payload,k) is None)
     if not payload.rolling:
         excluded.add("rolling")
+    if payload.bear_cycle_anchor is None:
+        excluded.update(("bear_cycle_anchor","bear_session_key"))
     offsets = series_offsets(payload)
     fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude=excluded), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     with transaction(path) as db:
@@ -206,6 +220,8 @@ def create(path, group_id, payload: CalendarCreate):
                        (series_id,group_id,payload.interval_minutes or offsets[1],payload.occurrence_count,payload.starts_at))
             if payload.repeat_months is not None or payload.repeat_weekdays is not None:
                 db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"repeat_months":payload.repeat_months,"repeat_weekdays":payload.repeat_weekdays})))
+            elif payload.bear_cycle_anchor is not None:
+                db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"bear_cycle_anchor":payload.bear_cycle_anchor,"bear_session_key":payload.bear_session_key})))
         if payload.rolling:
             template = CalendarInput(**{k:getattr(payload,k) for k in CalendarInput.model_fields})
             db.execute("INSERT INTO calendar_rolling_series(series_id,template_json,next_start,next_sequence) VALUES (?,?,?,?)",
@@ -216,6 +232,9 @@ def create(path, group_id, payload: CalendarCreate):
             db.execute("""INSERT INTO calendar_occurrences(id,group_id,series_id,sequence,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (occurrence_id,group_id,series_id,sequence,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,shift(payload.starts_at,offset),shift(payload.ends_at,offset),payload.precision,payload.phase,payload.confidence if sequence==0 else "estimated","manual" if sequence==0 else "recurrence"))
+            if payload.bear_cycle_anchor is not None:
+                cycle_day,key=bear_assignment(db,group_id,payload.alliance_id,shift(payload.starts_at,offset),payload.bear_cycle_anchor,payload.bear_session_key,payload.interval_minutes,sequence,occurrence_id)
+                db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(cycle_day,key,occurrence_id))
             audit(db,"created",occurrence_id)
             items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (occurrence_id,)).fetchone()))
         if payload.request_key:
@@ -300,8 +319,14 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
         now = datetime.now(timezone.utc)
         if any(db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(row["id"],)).fetchone() for row in rows):
             raise ValueError("Unlink actual events before changing this series")
+        auto_bear=bear_series_rule(db,rows[0]["series_id"])
+        if auto_bear and payload.action=="shift":
+            raise ValueError("Cancel and replace an automatically grouped Bear series to change its cycle anchor or cadence")
         if any(row["entry_cycle_date"] for row in rows):
-            raise ValueError("Clear session grouping before changing this series")
+            if not auto_bear or payload.action!="cancel":
+                raise ValueError("Clear session grouping before changing this series")
+            for row in rows:
+                require_open_cycle_for_grouping(db,group_id,row["event_type"],row["entry_cycle_date"],row["alliance_id"])
         moving_ids = {row["id"] for row in rows}
         proposed = []
         for row in rows:
@@ -855,6 +880,64 @@ def entry_group_members(db,row):
         (row["group_id"],row["event_type"],row["entry_cycle_date"],row["event_type"],row["alliance_id"]))]
 
 
+def bear_series_rule(db,series_id):
+    row=db.execute("SELECT rule_json FROM calendar_series_rules WHERE series_id=?",(series_id,)).fetchone()
+    rule=json.loads(row["rule_json"]) if row else {}
+    return rule if rule.get("bear_cycle_anchor") else None
+
+
+def bear_assignment(db,group_id,owner,start,anchor,key,interval,sequence,ignore_id=None):
+    canonical=parse(anchor)+timedelta(minutes=interval*sequence)
+    cycle_day=canonical.date().isoformat()
+    if not 2000<=canonical.year<=2099 or not timedelta(0)<=parse(start)-canonical<timedelta(minutes=interval):
+        raise ValueError("Bear trap no longer belongs to its configured cycle")
+    require_open_cycle_for_grouping(db,group_id,"bear_trap",cycle_day,owner)
+    others=db.execute("""SELECT c.*,s.interval_minutes,r.rule_json FROM calendar_occurrences c
+        LEFT JOIN calendar_series s ON s.id=c.series_id
+        LEFT JOIN calendar_series_rules r ON r.series_id=c.series_id
+        WHERE c.group_id=? AND c.event_type='bear_trap' AND c.id IS NOT ?
+        AND (c.entry_cycle_date=? OR (c.alliance_id=? AND substr(c.starts_at,1,10)=?))""",
+        (group_id,ignore_id,cycle_day,owner,start[:10])).fetchall()
+    for other in others:
+        if other["alliance_id"]==owner and (other["starts_at"]==start or (other["precision"]=="date" and other["starts_at"]==start[:10])):
+            raise ValueError("Matching Bear trap schedule already exists")
+        if other["entry_cycle_date"]!=cycle_day:
+            continue
+        if other["entry_session_key"]==key:
+            raise ValueError("Trap identity already assigned in this Bear cycle")
+        rule=json.loads(other["rule_json"]) if other["rule_json"] else {}
+        if rule.get("bear_cycle_anchor"):
+            other_cycle=parse(rule["bear_cycle_anchor"])+timedelta(minutes=other["interval_minutes"]*other["sequence"])
+            if other["interval_minutes"]!=interval or other_cycle!=canonical:
+                raise ValueError("Bear schedules disagree on the shared cycle anchor or cadence")
+    return cycle_day,key
+
+
+def missing_bear_forecasts(db,group_id,cycle_day):
+    """Do not finalize a configured cycle if an expected forecast never materialized."""
+    day=parse(cycle_day)
+    rows=db.execute("""SELECT s.*,r.rule_json,n.status AS rolling_status
+        FROM calendar_series s JOIN calendar_series_rules r ON r.series_id=s.id
+        LEFT JOIN calendar_rolling_series n ON n.series_id=s.id WHERE s.group_id=?""",(group_id,)).fetchall()
+    missing=[]
+    for row in rows:
+        rule=json.loads(row["rule_json"])
+        if not rule.get("bear_cycle_anchor") or row["rolling_status"]=="stopped":
+            continue
+        anchor=parse(rule["bear_cycle_anchor"])
+        step=timedelta(minutes=row["interval_minutes"])
+        sequence=max(0,(day-anchor)//step)
+        if anchor+sequence*step<day:
+            sequence+=1
+        if not day<=anchor+sequence*step<day+timedelta(days=1):
+            continue
+        if row["rolling_status"] is None and sequence>=row["occurrence_count"]:
+            continue
+        if not db.execute("SELECT 1 FROM calendar_occurrences WHERE series_id=? AND sequence=?",(row["id"],sequence)).fetchone():
+            missing.append(rule["bear_session_key"])
+    return sorted(set(missing))
+
+
 # Persist only future occurrences. The independent cursor is never inferred from
 # a manually edited or cancelled occurrence. The initial series count remains
 # immutable, because calendar_series has a legacy 180-occurrence bound.
@@ -889,6 +972,7 @@ def renew_series(path, series_id, now):
         fmt = "%Y-%m-%d" if template.precision=="date" else "%Y-%m-%dT%H:%MZ"
         count = 0
         status = "active"
+        grouping=bear_series_rule(db,series_id)
         while start <= horizon:
             if start.year > 2099 or (duration and (start+duration).year>2099):
                 status = "stopped"
@@ -904,12 +988,21 @@ def renew_series(path, series_id, now):
                    (r["precision"]=="date" or template.precision=="date")) for r in matches):
                 status = "conflict"
                 break
+            cycle_day=key=None
+            if grouping:
+                try:
+                    cycle_day,key=bear_assignment(db,series["group_id"],template.alliance_id,value,grouping["bear_cycle_anchor"],grouping["bear_session_key"],series["interval_minutes"],sequence)
+                except ValueError:
+                    status="conflict"
+                    break
             oid = uuid.uuid4().hex
             db.execute("""INSERT INTO calendar_occurrences(id,group_id,series_id,sequence,event_type,scope,alliance_id,state_id,
                        starts_at,ends_at,precision,phase,confidence,source)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'estimated','recurrence')""",
                        (oid,series["group_id"],series_id,sequence,template.event_type,template.scope,template.alliance_id,
                         template.state_id,value,end,template.precision,template.phase))
+            if grouping:
+                db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(cycle_day,key,oid))
             db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('created','calendar_occurrence',?,'system')",(oid,))
             count += 1
             sequence += 1

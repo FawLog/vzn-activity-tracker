@@ -48,3 +48,16 @@ describe("schedule editor payloads",()=>{
     expect(futureChange([dateRow],"shift",-1440).shift_minutes).toBe(-1440);
   });
 });
+
+import {precisionChange,shiftedStart} from "./schedule-editor";
+describe("calendar verification regressions",()=>{
+  it("requires explicit time rather than inserting midnight",()=>{
+    const fields=scheduleFields({...row,precision:"date",starts_at:"2028-02-29",ends_at:null});
+    expect(precisionChange(fields,"minute").starts_at).toBe("");
+  });
+  it("rejects unsafe shifts before rendering a preview",()=>{
+    expect(()=>shiftedStart(row,1e15)).toThrow();
+    expect(()=>shiftedStart(row,0)).toThrow();
+    expect(shiftedStart(row,60)).toBe("2028-03-01T00:30Z");
+  });
+});

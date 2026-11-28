@@ -25,3 +25,14 @@ export function futureChange(rows:CalendarOccurrence[],action:FutureChange["acti
   if(action==="shift"&&rows.some(r=>r.precision==="date")&&minutes%1440!==0)throw new Error("Date-only events require whole-day shifts");
   return {action,shift_minutes:action==="cancel"?0:minutes,revisions:Object.fromEntries(rows.map(r=>[r.id,r.revision]))};
 }
+
+export function precisionChange(fields:ScheduleFields,precision:ScheduleFields["precision"]):ScheduleFields{
+  if(fields.precision===precision)return fields;
+  return {...fields,precision,starts_at:precision==="date"?fields.starts_at.slice(0,10):"",ends_at:null};
+}
+export function shiftedStart(row:CalendarOccurrence,minutes:number):string{
+  futureChange([row],"shift",minutes);
+  const target=new Date(Date.parse(row.precision==="date"?row.starts_at+"T00:00Z":row.starts_at)+minutes*60000);
+  if(!Number.isFinite(target.getTime())||target.getUTCFullYear()<2000||target.getUTCFullYear()>2099)throw Error("Shift outside supported dates");
+  return target.toISOString().slice(0,row.precision==="date"?10:16)+(row.precision==="minute"?"Z":"");
+}

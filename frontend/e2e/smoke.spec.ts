@@ -321,9 +321,33 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(scheduleEditor.getByLabel("Repeat every (days)")).toBeVisible();
   await scheduleEditor.getByLabel("Precision").selectOption("minute");
   await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveAttribute("type","datetime-local");
+  await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveValue("");
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await scheduleEditor.getByRole("button",{name:"Close editor"}).click();
   await expect(scheduleEditor).toHaveCount(0);
+
+  // Real write/read/edit flow, isolated to one viewport and a distant date.
+  if(testInfo.project.name==="desktop-1440"){
+    await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+    await scheduleEditor.getByLabel("Event type").selectOption("game:lucky-wheel");
+    await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-03");
+    await scheduleEditor.getByLabel("Phase (optional)").fill("Verification");
+    const created=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
+    await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
+    expect((await created).status()).toBe(201);
+    await expect(scheduleEditor).toHaveCount(0);
+    const entry=calendar.getByRole("button",{name:/Lucky Wheel.*Verification/});
+    await expect(entry).toBeVisible();
+    await entry.click();
+    await calendar.getByRole("button",{name:"Edit schedule",exact:true}).click();
+    await scheduleEditor.getByLabel("Schedule status").selectOption("cancelled");
+    const updated=page.waitForResponse(r=>r.request().method()==="PUT"&&r.url().includes("/calendar/"));
+    await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
+    expect((await updated).status()).toBe(200);
+    await expect(scheduleEditor).toHaveCount(0);
+    await calendar.getByLabel("Show cancelled").check();
+    await expect(calendar.getByRole("button",{name:/Lucky Wheel.*Verification.*Cancelled/})).toBeVisible();
+  }
 
 
   // Verify Overall default, low-score sorting, missing evidence and responsive table.

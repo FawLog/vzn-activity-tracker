@@ -29,7 +29,7 @@ from ..security import verify_password
 from ..services import records, event_editor, vision_ocr, analytics, calendar
 from ..services.event_editor import SessionCreate, SessionSave
 from ..services import groups
-from ..services import whiteoutstats
+from ..services import whiteoutstats, state_calendar
 from ..services.sessions import (
     clear_login_failures,
     create_session,
@@ -365,6 +365,25 @@ def create_api_router(settings: Settings) -> APIRouter:
             whiteoutstats.sync_alliance, settings.database_path, settings, group_id, alliance_id, trigger_type="manual"
         )
         return result.payload()
+
+    @router.get("/groups/{group_id}/state-calendar-profiles")
+    async def get_state_calendar_profiles(request: Request, group_id: str):
+        require_admin(request, settings)
+        try:
+            return state_calendar.state_dates(settings.database_path, group_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
+    @router.put("/groups/{group_id}/state-calendar-profiles/{state_id}")
+    async def put_state_calendar_profile(request: Request, group_id: str, state_id: str, payload: state_calendar.StateDateUpdate):
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return state_calendar.update_date(settings.database_path, group_id, state_id, payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/groups/{group_id}/calendar")
     async def get_calendar(request: Request, group_id: str, start: date, end: date) -> dict[str, object]:

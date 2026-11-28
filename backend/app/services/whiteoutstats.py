@@ -1,6 +1,6 @@
 """Safe, SQLite-backed WhiteoutStats roster synchronisation.
 
-Only the free ``info,roster`` alliance endpoint is used here.  The service
+Only free alliance and state endpoints are used here.  The service
 stores small, typed observations instead of retaining provider JSON blobs.
 """
 
@@ -24,6 +24,7 @@ from urllib.request import Request, urlopen
 
 from ..config import Settings
 from ..database import connection, transaction
+from . import state_calendar
 
 
 WHITEOUTSTATS_USER_AGENT = "VZN-Activity-Tracker/1.0 (+https://vzn.fawlog.cc)"
@@ -122,9 +123,15 @@ class WhiteoutStatsClient:
         self._settings = settings
 
     def _request(self, state_id: str, tag: str, query: dict[str, str]) -> ProviderResponse:
+        return self._get(f"/alliances/{quote(state_id, safe='')}/{quote(tag, safe='')}?{urlencode(query)}")
+
+    def fetch_state(self, state_id: str) -> ProviderResponse:
+        return self._get(f"/states/{quote(state_id, safe='')}")
+
+    def _get(self, path: str) -> ProviderResponse:
         if not self._settings.whiteoutstats_api_key:
             raise RuntimeError("WhiteoutStats synchronization is not configured")
-        url = f"{self._settings.whiteoutstats_base_url}/alliances/{quote(state_id, safe='')}/{quote(tag, safe='')}?{urlencode(query)}"
+        url = self._settings.whiteoutstats_base_url + path
         request = Request(
             url,
             headers={
@@ -757,4 +764,6 @@ class WhiteoutStatsScheduler:
         while True:
             for group_id, alliance_id in due_alliances(self._database_path):
                 await asyncio.to_thread(sync_alliance, self._database_path, self._settings, group_id, alliance_id, trigger_type="scheduled")
+            for state_id in state_calendar.due_states(self._database_path):
+                await asyncio.to_thread(state_calendar.sync_state, self._database_path, WhiteoutStatsClient(self._settings), state_id)
             await asyncio.sleep(60)

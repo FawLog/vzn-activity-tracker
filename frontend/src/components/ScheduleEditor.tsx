@@ -1,5 +1,5 @@
-import { useRef, useState, type FormEvent } from "react";
-import { api } from "../lib/api";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { api, type StateCalendarProfile } from "../lib/api";
 import { eventTypeOptions, eventLabel } from "../lib/format";
 import type { Alliance } from "../lib/types";
 import type { CalendarOccurrence } from "../lib/calendar";
@@ -16,7 +16,25 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
   const [count,setCount]=useState(1);
   const [days,setDays]=useState(2);
   const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
-  const [stateStart,setStateStart]=useState("");
+  const [profiles,setProfiles]=useState<StateCalendarProfile[]>([]);
+  const [manualDate,setManualDate]=useState<{stateId:string;value:string}|null>(null);
+  const [profileError,setProfileError]=useState("");
+  useEffect(()=>{
+    const controller=new AbortController();
+    api.stateCalendarProfiles(groupId,controller.signal).then(r=>{if(!controller.signal.aborted)setProfiles(r.items);}).catch(()=>{if(!controller.signal.aborted)setProfileError("State reference unavailable; enter a date manually.");});
+    return ()=>controller.abort();
+  },[groupId]);
+  const profile=profiles.find(p=>p.state_id===fields.state_id);
+  const stateStart=manualDate?.stateId===fields.state_id?manualDate.value:profile?.opened_on??"";
+  async function saveStateDate(clear:boolean){
+    if(!profile||busy||lock.current)return;
+    lock.current=true;setBusy(true);setProfileError("");
+    try{
+      const updated=await api.updateStateCalendarProfile(groupId,fields.state_id,clear?null:stateStart,profile.revision);
+      setProfiles(old=>old.map(p=>p.state_id===updated.state_id?updated:p));
+      setManualDate(null);
+    }catch(e){setProfileError(message(e));}finally{lock.current=false;setBusy(false);}
+  }
   const [reviewed,setReviewed]=useState<string|null>(null);
   const [status,setStatus]=useState(row?.schedule_status??"scheduled");
   const [busy,setBusy]=useState(false);
@@ -85,10 +103,13 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
         <label>Occurrences (including first)<input type="number" min={1} max={180} required value={count} onChange={e=>setCount(Number(e.target.value))}/></label>
         {count>1&&<><label>Repeat every ({intervalUnit})<input type="number" min={1} step={intervalUnit==="hours"?"any":1} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label><label>Repeat unit<select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value as typeof intervalUnit)}><option value="days">Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label></>}
-        <label>State start date (optional, reference only)<input type="date" value={stateStart} onChange={e=>setStateStart(e.target.value)}/></label>
+        <label>State start date (optional, reference only)<input type="date" value={stateStart} onChange={e=>setManualDate({stateId:fields.state_id,value:e.target.value})}/></label>
         </>}
       </fieldset>
       {!row&&<>
+        <p>State #{fields.state_id} · {profile?.source==="whiteoutstats"?"WhiteoutStats":profile?.source==="manual"?"Saved manual date":"Opening date unavailable"}{profile?.age_days!=null?" · "+profile.age_days+" days old":""}{profile?.last_success_at?" · Last received "+profile.last_success_at:""}{profile?.last_status==="failed"?" · Provider refresh failed; cached date retained":""}</p>
+        {profile&&<div className="calendar-controls"><button type="button" className="button button--quiet" disabled={busy||!stateStart} onClick={()=>void saveStateDate(false)}>Save state date override</button>{profile.manual_opened_on&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>void saveStateDate(true)}>Use provider date</button>}</div>}
+        {profileError&&<p role="alert">{profileError}</p>}
         {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{repeatLabel(reference.schedule?.repeat)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
           {suggested!==null&&<button type="button" className="button button--quiet" disabled={busy} onClick={useReference}>Use game repeat rule</button>}
           {warnings.map(w=><p key={w}>{w}</p>)}

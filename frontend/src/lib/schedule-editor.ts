@@ -1,6 +1,6 @@
 import type { CalendarOccurrence } from "./calendar";
 export type ScheduleFields = Pick<CalendarOccurrence,"event_type"|"scope"|"alliance_id"|"state_id"|"starts_at"|"ends_at"|"precision"|"phase"|"confidence">;
-export type ScheduleCreate = ScheduleFields & {request_key:string;interval_minutes:number|null;occurrence_count:number;reject_existing?:boolean};
+export type ScheduleCreate = ScheduleFields & {request_key:string;interval_minutes:number|null;occurrence_count:number;reject_existing?:boolean;repeat_months?:number;repeat_weekdays?:number[]};
 export type ScheduleUpdate = ScheduleFields & Pick<CalendarOccurrence,"revision"|"schedule_status">;
 export type FutureChange = {action:"shift"|"cancel";shift_minutes:number;revisions:Record<string,number>};
 export function utcInput(value:string,precision:ScheduleFields["precision"]):string {

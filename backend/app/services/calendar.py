@@ -10,11 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..database import connection, transaction
 from ..schemas import EventType
+from .calendar_catalog_ids import CATALOG_IDS
+from calendar import monthrange
 
 
 class CalendarInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    event_type: EventType
+    event_type: str = Field(max_length=100)
     scope: Literal["alliance", "state"]
     alliance_id: str | None = Field(default=None, max_length=64)
     state_id: str = Field(min_length=1, max_length=32)
@@ -26,6 +28,8 @@ class CalendarInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self):
+        if self.event_type not in CATALOG_IDS and self.event_type not in {e.value for e in EventType}:
+            raise ValueError("Unknown calendar event type")
         pattern = r"\d{4}-\d{2}-\d{2}" if self.precision == "date" else r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z"
         for value in (self.starts_at, self.ends_at):
             if value is not None:
@@ -48,11 +52,25 @@ class CalendarCreate(CalendarInput):
     interval_minutes: int | None = Field(default=None, ge=60, le=525600)
     occurrence_count: int = Field(default=1, ge=1, le=180)
     reject_existing: bool = False
+    repeat_months: int | None = Field(default=None, ge=1, le=12)
+    repeat_weekdays: list[int] | None = Field(default=None, min_length=1, max_length=7)
 
     @model_validator(mode="after")
     def validate_series(self):
-        if (self.occurrence_count > 1) != (self.interval_minutes is not None):
-            raise ValueError("Specify interval and count together")
+        rules = sum(rule is not None for rule in (self.interval_minutes,self.repeat_months,self.repeat_weekdays))
+        if rules != int(self.occurrence_count > 1):
+            raise ValueError("Specify exactly one repeat rule for a series")
+        if self.repeat_weekdays is not None:
+            if len(set(self.repeat_weekdays)) != len(self.repeat_weekdays) or any(d not in range(7) for d in self.repeat_weekdays):
+                raise ValueError("Choose distinct weekdays 0–6 (Monday–Sunday)")
+            if parse(self.starts_at).weekday() not in self.repeat_weekdays:
+                raise ValueError("Anchor must match a selected weekday")
+        if self.repeat_months is not None or self.repeat_weekdays is not None:
+            offsets = series_offsets(self)
+            if offsets[-1] > 366*1440:
+                raise ValueError("Maximum recurrence horizon is 366 days")
+            if parse(self.ends_at or self.starts_at)+timedelta(minutes=offsets[-1]) >= datetime(2100,1,1,tzinfo=timezone.utc):
+                raise ValueError("Date outside supported range")
         if self.interval_minutes is not None:
             if self.precision == "date" and self.interval_minutes % 1440:
                 raise ValueError("Date-only recurrence requires whole days")
@@ -77,6 +95,30 @@ def shift(value: str | None, minutes: int) -> str | None:
         return None
     result = parse(value) + timedelta(minutes=minutes)
     return result.strftime("%Y-%m-%dT%H:%MZ" if "T" in value else "%Y-%m-%d")
+
+
+def series_offsets(payload):
+    anchor = parse(payload.starts_at)
+    if payload.repeat_months is not None:
+        offsets = []
+        for i in range(payload.occurrence_count):
+            month_index = anchor.year*12+anchor.month-1+i*payload.repeat_months
+            year, month = divmod(month_index,12)
+            target = anchor.replace(year=year,month=month+1,day=min(anchor.day,monthrange(year,month+1)[1]))
+            offset = int((target-anchor).total_seconds()//60)
+            if offset > 366*1440:
+                raise ValueError("Maximum recurrence horizon is 366 days")
+            offsets.append(offset)
+        return offsets
+    if payload.repeat_weekdays is not None:
+        offsets = [0]
+        for day in range(1,367):
+            if (anchor.weekday()+day)%7 in payload.repeat_weekdays:
+                offsets.append(day*1440)
+                if len(offsets)==payload.occurrence_count:
+                    return offsets
+        raise ValueError("Maximum recurrence horizon is 366 days")
+    return [i*(payload.interval_minutes or 0) for i in range(payload.occurrence_count)]
 
 
 def require_group(db, group_id, writing=False):
@@ -123,6 +165,8 @@ def list_occurrences(path, group_id, start: date, end: date):
 def create(path, group_id, payload: CalendarCreate):
     # Preserve the v1 request hash when the new opt-in field is false.
     excluded = {"request_key"} if payload.reject_existing else {"request_key", "reject_existing"}
+    excluded.update(k for k in ("repeat_months","repeat_weekdays") if getattr(payload,k) is None)
+    offsets = series_offsets(payload)
     fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude=excluded), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     with transaction(path) as db:
         require_group(db, group_id, True)
@@ -140,21 +184,22 @@ def create(path, group_id, payload: CalendarCreate):
                 WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=? AND phase=?
                 AND starts_at>=? AND starts_at<?""",
                 (group_id,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.phase,
-                 payload.starts_at[:10],(parse(shift(payload.starts_at,(payload.occurrence_count-1)*(payload.interval_minutes or 0))).date()+timedelta(days=1)).isoformat())).fetchall()
-            for sequence in range(payload.occurrence_count):
-                start = shift(payload.starts_at, sequence*(payload.interval_minutes or 0))
+                 payload.starts_at[:10],(parse(shift(payload.starts_at,offsets[-1])).date()+timedelta(days=1)).isoformat())).fetchall()
+            for offset in offsets:
+                start = shift(payload.starts_at, offset)
                 if any(row["starts_at"]==start or
                        (row["starts_at"][:10]==start[:10] and (row["precision"]=="date" or payload.precision=="date"))
                        for row in existing):
                     raise ValueError("A matching scheduled or cancelled occurrence already exists; review the calendar")
-        series_id = uuid.uuid4().hex if payload.interval_minutes is not None else None
+        series_id = uuid.uuid4().hex if payload.occurrence_count > 1 else None
         if series_id:
             db.execute("INSERT INTO calendar_series(id,group_id,interval_minutes,occurrence_count,anchor) VALUES (?,?,?,?,?)",
-                       (series_id,group_id,payload.interval_minutes,payload.occurrence_count,payload.starts_at))
+                       (series_id,group_id,payload.interval_minutes or offsets[1],payload.occurrence_count,payload.starts_at))
+            if payload.repeat_months is not None or payload.repeat_weekdays is not None:
+                db.execute("INSERT INTO calendar_series_rules(series_id,rule_json) VALUES (?,?)",(series_id,json.dumps({"repeat_months":payload.repeat_months,"repeat_weekdays":payload.repeat_weekdays})))
         items=[]
-        for sequence in range(payload.occurrence_count):
+        for sequence,offset in enumerate(offsets):
             occurrence_id=uuid.uuid4().hex
-            offset=sequence*(payload.interval_minutes or 0)
             db.execute("""INSERT INTO calendar_occurrences(id,group_id,series_id,sequence,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
               (occurrence_id,group_id,series_id,sequence,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,shift(payload.starts_at,offset),shift(payload.ends_at,offset),payload.precision,payload.phase,payload.confidence if sequence==0 else "estimated","manual" if sequence==0 else "recurrence"))

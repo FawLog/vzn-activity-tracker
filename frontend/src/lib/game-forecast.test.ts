@@ -1,6 +1,6 @@
 import {describe,it,expect} from "vitest";
 import {gameEventForCalendar} from "./game-event-catalog";
-import {fixedGameInterval,forecastRows,intervalPayload,sourceRunWarning,stateAge} from "./game-forecast";
+import {advancedPlan,fixedGameInterval,forecastRows,intervalPayload,sourceRunWarning,stateAge} from "./game-forecast";
 import type {ScheduleFields} from "./schedule-editor";
 const fields:ScheduleFields={event_type:"foundry",scope:"alliance",alliance_id:"a",state_id:"1001",starts_at:"2028-02-29",ends_at:null,precision:"date",phase:"",confidence:"confirmed"};
 describe("anchored calendar forecast",()=>{
@@ -25,5 +25,17 @@ describe("anchored calendar forecast",()=>{
     expect(stateAge("2028-01-01","2028-02-29")).toBe(59);
     expect(()=>stateAge("2028-03-01","2028-02-29")).toThrow();
     expect(gameEventForCalendar("svs_preparation")?.unlockDay).toBe(80);
+  });
+});
+
+describe("variable calendar repeats",()=>{
+  it("clamps each month from the original anchor and preserves duration",()=>{
+    const plan=advancedPlan({...fields,starts_at:"2028-01-31",ends_at:"2028-02-02"},4,1440,"months",1,[]);
+    expect(plan.rows.map(r=>r.start)).toEqual(["2028-01-31","2028-02-29","2028-03-31","2028-04-30"]);
+    expect(plan.rows[1].end).toBe("2028-03-02");
+  });
+  it("uses selected weekdays without assuming a fixed gap",()=>{
+    expect(advancedPlan({...fields,starts_at:"2028-02-29"},4,1440,"weekdays",1,[1,3]).rows.map(r=>r.start)).toEqual(["2028-02-29","2028-03-02","2028-03-07","2028-03-09"]);
+    expect(()=>advancedPlan(fields,4,1440,"weekdays",1,[0])).toThrow();
   });
 });

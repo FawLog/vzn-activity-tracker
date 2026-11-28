@@ -49,10 +49,17 @@ def test_scopes_from_linked_bear_preserve_results_and_other_traps(authenticated_
     link = linked.json()["linked"]
     sid, eid = link["session_id"], link["id"]
     with connection(settings.database_path) as db:
+        db.execute("INSERT INTO players(fid,nickname) VALUES ('123456789','Test Bear Player')")
+        db.execute("""INSERT INTO event_session_roster(session_id,player_fid,nickname,eligibility,registration,attendance)
+            VALUES (?, '123456789','Test Bear Player','confirmed','unknown','confirmed_present')""",(sid,))
+        db.execute("""INSERT INTO event_session_metrics(session_id,player_fid,metric_key,raw_value)
+            VALUES (?, '123456789','damage',123456789)""",(sid,))
         db.execute("UPDATE event_sessions SET results_complete=1 WHERE id=?", (sid,))
         db.execute("UPDATE events SET status='published',bear_cycle_complete=1 WHERE id=?", (eid,))
         db.commit()
         original_session = dict(db.execute("SELECT * FROM event_sessions WHERE id=?", (sid,)).fetchone())
+        original_roster = dict(db.execute("SELECT * FROM event_session_roster WHERE session_id=?", (sid,)).fetchone())
+        original_metric = dict(db.execute("SELECT * FROM event_session_metrics WHERE session_id=?", (sid,)).fetchone())
         original_rolling = dict(db.execute("SELECT * FROM calendar_rolling_series WHERE series_id=?", (rows[0]["series_id"],)).fetchone())
         original = dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (rows[0]["id"],)).fetchone())
         audit_count = db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
@@ -82,6 +89,8 @@ def test_scopes_from_linked_bear_preserve_results_and_other_traps(authenticated_
             assert current["entry_cycle_date"] == original["entry_cycle_date"]
             assert session == {**original_session, "started_at": day.isoformat() + "T00:30:00+00:00", "revision": original_session["revision"] + 1}
         assert db.execute("SELECT status,bear_cycle_complete FROM events WHERE id=?", (eid,)).fetchone()[:] == ("published", 1)
+        assert dict(db.execute("SELECT * FROM event_session_roster WHERE session_id=?", (sid,)).fetchone()) == original_roster
+        assert dict(db.execute("SELECT * FROM event_session_metrics WHERE session_id=?", (sid,)).fetchone()) == original_metric
         for other in others:
             assert dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (other["id"],)).fetchone()) == other
         rolling = dict(db.execute("SELECT * FROM calendar_rolling_series WHERE series_id=?", (rows[0]["series_id"],)).fetchone())
@@ -158,3 +167,46 @@ def test_scoped_preview_rejects_stale_following_occurrence_and_rolls_back_failed
     assert c.post(endpoint,json={**body,"token":preview.json()["token"]}).status_code==409
     with connection(settings.database_path) as db:
         assert dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(rows[0]["id"],)).fetchone())==rows[0]
+
+
+@pytest.mark.parametrize("kind", ["alliance_mobilization", "alliance_championship"])
+def test_linked_date_record_can_gain_clock_time_without_changing_event_date(authenticated_client,settings,kind):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    row=c.post(url,json={"event_type":kind,"scope":"alliance","alliance_id":aid,"state_id":"1001",
+        "precision":"date","starts_at":"2090-06-01","ends_at":"2090-06-06"}).json()["items"][0]
+    target=url+"/"+row["id"]
+    linked=c.post(target+"/start-entry",json={"revision":row["revision"],"confirmed":True})
+    assert linked.status_code==200,linked.text
+    event=linked.json()["linked"]
+    result=c.post(target+"/scoped-edit",json={"scope":"single","schedule":schedule(row,revision=linked.json()["revision"],
+        precision="minute",starts_at="2090-06-01T04:00Z",ends_at="2090-06-06T00:00Z")})
+    assert result.status_code==200,result.text
+    assert result.json()["items"][0]["precision"]=="minute"
+    assert c.get(target+"/event-link").json()["linked"]==event
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT occurred_on FROM events WHERE id=?",(event["id"],)).fetchone()[0]=="2090-06-01"
+
+
+def test_svs_preparation_following_scope_moves_only_dependent_future_dates(authenticated_client):
+    c=authenticated_client
+    root,_=setup(c)
+    url=root+"/calendar"
+    rule={"event_type":"game:flame-and-fang","state_id":"1001","starts_on":"2090-03-01"}
+    assert c.post(url+"/follow",json=rule).status_code==200
+    common={"scope":"state","state_id":"1001","alliance_id":None,"precision":"minute","confidence":"estimated"}
+    phases=[{**common,"event_type":kind,"phase":phase,"starts_at":start,"ends_at":end} for kind,phase,start,end in [
+        ("svs_matchmaking","Matchmaking","2090-03-04T00:00Z","2090-03-06T00:00Z"),
+        ("svs_preparation","Preparation","2090-03-06T00:00Z","2090-03-11T10:00Z"),
+        ("svs_battle","Battle","2090-03-11T10:00Z","2090-03-11T22:00Z"),
+        ("svs_triage","Field Triage","2090-03-11T22:00Z","2090-03-14T00:00Z")]]
+    result=c.post(url+"/cycles",json={"kind":"svs","request_key":"scoped-svs-cycle-01","phases":phases,"occurrence_count":3,"interval_days":28,"rolling":True})
+    assert result.status_code==201,result.text
+    rows=result.json()["items"]
+    selected=rows[1]
+    changed=apply(c,url+"/"+selected["id"]+"/scoped-edit",schedule(selected,starts_at="2090-03-07T00:00Z"),"following")
+    assert [r["starts_at"] for r in changed]==["2090-04-04T00:00Z","2090-05-02T00:00Z"]
+    all_rows=c.get(url,params={"start":"2090-03-01","end":"2090-05-30"}).json()["items"]
+    assert [r["starts_at"] for r in all_rows if r["event_type"]=="game:flame-and-fang"]==["2090-03-06","2090-04-04","2090-05-02"]
+    assert next(r for r in all_rows if r["id"]==selected["id"])["starts_at"]==selected["starts_at"]

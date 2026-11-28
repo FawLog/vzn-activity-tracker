@@ -607,8 +607,17 @@ def scoped_single(db,group_id,row,schedule):
         return update_locked(db,group_id,row["id"],schedule)
     if any(row[k]!=getattr(schedule,k) for k in EDIT_IDENTITY) or schedule.starts_at[:10]!=row["starts_at"][:10]:
         raise ValueError("Actual or historical event identity and UTC date must remain unchanged")
-    if row["precision"]!=schedule.precision or schedule.schedule_status!=row["schedule_status"]:
-        raise ValueError("Actual or historical event precision and status must remain unchanged")
+    if schedule.schedule_status!=row["schedule_status"]:
+        raise ValueError("Actual or historical event status must remain unchanged")
+    # Event-level records (Mobilization/Championship) have a date identity, not a
+    # timed session. Adding a clock time on the same UTC date is safe there.
+    if row["precision"]!=schedule.precision and (not link or link["session_id"]):
+        raise ValueError("Actual session precision must remain unchanged")
+    if link and not link["session_id"]:
+        event=db.execute("""SELECT e.event_type,e.occurred_on,e.alliance_id,a.group_id FROM events e
+            JOIN alliances a ON a.id=e.alliance_id WHERE e.id=?""",(link["event_id"],)).fetchone()
+        if not event or (event["group_id"],event["event_type"],event["occurred_on"],event["alliance_id"])!=(group_id,row["event_type"],row["starts_at"][:10],row["alliance_id"]):
+            raise ValueError("Existing event identity differs; review the linked record")
     if parse(row["starts_at"])<datetime.now(timezone.utc) and parse(schedule.starts_at)>datetime.now(timezone.utc):
         raise ValueError("A historical event cannot be moved into the future")
     if row["cycle_id"]:
@@ -651,8 +660,8 @@ def scoped_single(db,group_id,row,schedule):
                 (substr(s.started_at,1,16)=? OR (e.occurred_on=? AND s.session_key=?) OR substr(s.started_at,1,16)=?)""",
                 (row["alliance_id"],row["starts_at"][:16],row["entry_cycle_date"],row["entry_session_key"],schedule.starts_at[:16])).fetchone():
             raise ValueError("An unlinked actual session exists; review the existing record before correcting its time")
-    db.execute("""UPDATE calendar_occurrences SET starts_at=?,ends_at=?,confidence=?,source='manual',revision=revision+1,
-        updated_at=CURRENT_TIMESTAMP WHERE id=?""",(schedule.starts_at,schedule.ends_at,schedule.confidence,row["id"]))
+    db.execute("""UPDATE calendar_occurrences SET starts_at=?,ends_at=?,precision=?,confidence=?,source='manual',revision=revision+1,
+        updated_at=CURRENT_TIMESTAMP WHERE id=?""",(schedule.starts_at,schedule.ends_at,schedule.precision,schedule.confidence,row["id"]))
     audit(db,"time_corrected",row["id"])
     return dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(row["id"],)).fetchone())
 
@@ -660,7 +669,7 @@ def scoped_single(db,group_id,row,schedule):
 def scope_target(source,target,schedule,*,clock_aligned):
     fields={k:target[k] for k in CalendarInput.model_fields}
     changed=any(source[k]!=getattr(schedule,k) for k in ("starts_at","ends_at","precision"))
-    if changed:
+    if changed or clock_aligned and schedule.precision=="minute" and schedule.schedule_status=="scheduled":
         if clock_aligned:
             day_offset=(parse(schedule.starts_at).date()-parse(source["starts_at"]).date()).days
             day=parse(target["starts_at"]).date()+timedelta(days=day_offset)
@@ -751,7 +760,7 @@ def scoped_apply(db,group_id,row,following,series,rolling,cycle,payload):
                 target={**matching.model_dump(),"revision":1}
                 change=scope_target(row,target,schedule,clock_aligned=True)
                 template=[CalendarInput.model_validate({k:getattr(change,k) for k in CalendarInput.model_fields}) if p==matching else p for p in template]
-                if row["phase"] in {"Battle","Legion 1","Legion 2"} and any(row[k]!=getattr(schedule,k) for k in ("starts_at","ends_at","precision")):
+                if row["phase"] in {"Battle","Legion 1","Legion 2"} and (schedule.precision=="minute" or any(row[k]!=getattr(schedule,k) for k in ("starts_at","ends_at","precision"))):
                     if change.precision=="minute":timed.add(row["phase"])
                     else:timed.discard(row["phase"])
             CalendarCycleCreate(kind=cycle["kind"],request_key="scoped-template-check",phases=template)

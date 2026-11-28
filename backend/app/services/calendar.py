@@ -280,6 +280,8 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
         if not rows or {row["id"]: row["revision"] for row in rows} != payload.revisions:
             raise ValueError("Series changed; review affected occurrences again")
         now = datetime.now(timezone.utc)
+        moving_ids = {row["id"] for row in rows}
+        proposed = []
         for row in rows:
             if payload.action == "shift":
                 if row["precision"] == "date" and payload.shift_minutes % 1440:
@@ -289,6 +291,19 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
                 if parse(start) < future_threshold(row["precision"], now) or not 2000 <= parse(start).year <= 2099 or (end and not 2000 <= parse(end).year <= 2099):
                     raise ValueError("Shift would move an occurrence outside future supported dates")
                 validate_scope(db, group_id, CalendarInput(**{k: row[k] for k in CalendarInput.model_fields}))
+                matches = db.execute("""SELECT id,starts_at,precision FROM calendar_occurrences
+                    WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=? AND phase=?
+                    AND starts_at>=? AND starts_at<?""",
+                    (group_id,row["event_type"],row["scope"],row["alliance_id"],row["state_id"],row["phase"],
+                     start[:10],(parse(start).date()+timedelta(days=1)).isoformat())).fetchall()
+                def conflicts(other):
+                    return other["starts_at"]==start or (other["starts_at"][:10]==start[:10] and
+                        (other["precision"]=="date" or row["precision"]=="date"))
+                if any(m["id"] not in moving_ids and conflicts(m) for m in matches) or any(
+                    all(m[k]==row[k] for k in ("event_type","scope","alliance_id","state_id","phase")) and conflicts(m)
+                    for m in proposed):
+                    raise ValueError("Shift would duplicate an existing scheduled or cancelled occurrence")
+                proposed.append({**row,"starts_at":start})
                 db.execute("UPDATE calendar_occurrences SET starts_at=?,ends_at=?,confidence='estimated',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (start,end,row["id"]))
             else:
                 db.execute("UPDATE calendar_occurrences SET schedule_status='cancelled',source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))

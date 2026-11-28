@@ -163,3 +163,19 @@ def test_linked_cycle_atomic_idempotent_and_scoped(authenticated_client,settings
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
     c.headers.pop("X-CSRF-Token")
     assert c.post(url,json=payload).status_code==403
+
+def test_series_shift_collision_is_atomic(authenticated_client):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    base={"event_type":"foundry","scope":"alliance","alliance_id":aid,"state_id":"1001","precision":"date","starts_at":"2090-05-01"}
+    original=c.post(url,json={**base,"occurrence_count":3,"interval_minutes":1440}).json()["items"]
+    existing=c.post(url,json={**base,"starts_at":"2090-05-04"}).json()["items"][0]
+    assert c.put(url+"/"+existing["id"],json={**base,"starts_at":"2090-05-04","revision":1,"schedule_status":"cancelled"}).status_code==200
+    target=url+"/"+original[0]["id"]+"/future"
+    preview=c.get(target).json()["items"]
+    result=c.post(target,json={"action":"shift","shift_minutes":1440,"revisions":{r["id"]:r["revision"] for r in preview}})
+    assert result.status_code==409,result.text
+    assert c.get(target).json()["items"]==preview
+    result=c.post(target,json={"action":"shift","shift_minutes":14400,"revisions":{r["id"]:r["revision"] for r in preview}})
+    assert result.status_code==200,result.text

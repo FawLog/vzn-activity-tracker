@@ -75,7 +75,7 @@ def sync_state(path,provider,state_id):
     opened=None
     try:
         response=provider.fetch_state(state_id)
-        if response.status_code==200:
+        if response.status_code==200 and isinstance(response.body,dict):
             body=response.body.get("state",response.body)
             if isinstance(body,dict) and str(body.get("kid"))==state_id:
                 opened=valid_date(body.get("opened_on"),now.date())

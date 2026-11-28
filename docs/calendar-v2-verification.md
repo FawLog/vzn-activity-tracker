@@ -1,0 +1,3 @@
+# Calendar v2.5 — verification and regression fixes
+
+Targeted code review: removed implicit midnight in precision switching, validate shift previews before rendering, reject matching scheduled/cancelled destinations transactionally during future series shifts, lock linked-phase identity fields in the editor, handle malformed provider payloads while retaining cached dates. Added unit/API regression tests and an actual browser create/cancel path (desktop-1440), with existing three-viewport smoke checks retained. No CI changes or schema migrations. General interval overlap detection, automatic cross-event rotation, cycle-wide editing, and actual event linkage remain outside v2. Live production smoke and the new CI run are required before declaring v2 complete.

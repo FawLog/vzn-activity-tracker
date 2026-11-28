@@ -1,4 +1,4 @@
-"""Group-scoped planning only. Never writes actual event or attendance records."""
+"""Group-scoped planning and explicit draft links; never writes attendance records."""
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 import re
@@ -497,3 +497,101 @@ def event_schedules(path,group_id,event_id):
             raise LookupError("Event not found in selected group")
         return {"items":[dict(r) for r in db.execute("""SELECT c.*,l.session_id AS linked_session_id FROM calendar_occurrences c JOIN calendar_event_links l ON l.occurrence_id=c.id
             WHERE c.group_id=? AND l.event_id=? ORDER BY c.starts_at,c.id""",(group_id,event_id)).fetchall()]}
+
+class CalendarDraftCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    confirmed: Literal[True]
+    event_id: str | None = Field(default=None,max_length=64)
+    cycle_date: date | None = None
+    session_key: str | None = Field(default=None,max_length=32)
+
+
+def create_linked_draft(path,group_id,occurrence_id,payload):
+    """Create only explicitly reviewed draft records, atomically with their link."""
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        row=link_occurrence(db,group_id,occurrence_id)
+        if row["revision"]!=payload.revision:
+            raise ValueError("Calendar entry changed; reload before creating a draft")
+        validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
+        if not link_eligible(row) or row["confidence"]!="confirmed":
+            raise ValueError("Confirm a supported alliance schedule before creating a draft")
+        old=db.execute("SELECT event_id,session_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
+        if old and (old["session_id"] or old["event_id"]!=payload.event_id):
+            raise ValueError("Schedule already linked; open the existing record")
+        kind=row["event_type"]
+        day=row["starts_at"][:10]
+        is_session=kind in {"bear_trap","foundry","canyon"}
+        if is_session:
+            if row["precision"]!="minute":
+                raise ValueError("Set the actual session time explicitly before creating a draft session")
+            if not payload.session_key or not re.fullmatch(r"trap_(?:[1-9]|[12][0-9]|30)" if kind=="bear_trap" else r"legion_[12]",payload.session_key):
+                raise ValueError("Choose a valid trap or legion identifier")
+        elif payload.session_key is not None or payload.event_id is not None:
+            raise ValueError("Use the existing event link for this event type")
+        if kind=="bear_trap":
+            if payload.cycle_date is None or not 2000<=payload.cycle_date.year<=2099:
+                raise ValueError("Choose the group Bear cycle date explicitly")
+            cycle=payload.cycle_date.isoformat()
+            if abs((parse(day)-parse(cycle)).days)>7:
+                raise ValueError("Bear cycle date must be within seven days of the trap")
+            primary=db.execute("SELECT id FROM alliances WHERE group_id=? AND alliance_type='primary' AND status='active'",(group_id,)).fetchone()
+            if primary is None:
+                raise ValueError("An active primary alliance is required")
+            owner=primary["id"]
+            candidates=db.execute("""SELECT e.id,e.status FROM events e JOIN alliances a ON a.id=e.alliance_id
+                WHERE a.group_id=? AND e.event_type=? AND e.occurred_on=?""",(group_id,kind,cycle)).fetchall()
+        else:
+            if payload.cycle_date is not None:
+                raise ValueError("Cycle date applies only to Bear")
+            cycle=day
+            owner=row["alliance_id"]
+            candidates=db.execute("SELECT id,status FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=?",(owner,kind,cycle)).fetchall()
+        if payload.event_id:
+            chosen=next((x for x in candidates if x["id"]==payload.event_id),None)
+            if chosen is None or chosen["status"]!="draft":
+                raise ValueError("Select an existing compatible draft event")
+            eid=chosen["id"]
+        else:
+            if candidates:
+                raise ValueError("An event already exists on this date; select or link it instead")
+            eid=uuid.uuid4().hex
+            db.execute("INSERT INTO events(id,alliance_id,event_type,occurred_on,status) VALUES (?,?,?,?,'draft')",(eid,owner,kind,cycle))
+            db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('created','event',?,'admin')",(eid,))
+        sid=None
+        if is_session:
+            if db.execute("SELECT 1 FROM event_sessions WHERE event_id=? AND session_key=?",(eid,payload.session_key)).fetchone():
+                raise ValueError("Session identifier already exists; choose or link the existing session")
+            if db.execute("""SELECT 1 FROM event_sessions s JOIN events e ON e.id=s.event_id
+                WHERE e.event_type=? AND s.host_alliance_id=? AND substr(s.started_at,1,16)=?""",
+                (kind,row["alliance_id"],row["starts_at"][:16])).fetchone():
+                raise ValueError("A session already exists at this host and time; link it instead")
+            sid=uuid.uuid4().hex
+            db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
+                (sid,eid,payload.session_key,parse(row["starts_at"]).isoformat(),row["alliance_id"]))
+            if kind=="bear_trap":
+                db.execute("UPDATE events SET bear_cycle_complete=0 WHERE id=?",(eid,))
+            db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('session_created','event',?,'admin')",(eid,))
+        else:
+            # Existing event editor convention for non-battle main sections:
+            # the date anchor is not a claimed game start time.
+            db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
+                (uuid.uuid4().hex,eid,"main",cycle+"T00:00:00+00:00",owner))
+        db.execute("""INSERT INTO calendar_event_links(occurrence_id,event_id,session_id) VALUES (?,?,?)
+            ON CONFLICT(occurrence_id) DO UPDATE SET session_id=excluded.session_id""",(occurrence_id,eid,sid))
+        db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(occurrence_id,))
+        audit(db,"draft_created_and_linked",occurrence_id)
+    return event_link(path,group_id,occurrence_id)
+
+
+def draft_bear_cycles(path,group_id,occurrence_id,cycle_date):
+    with connection(path) as db:
+        row=link_occurrence(db,group_id,occurrence_id)
+        if not link_eligible(row) or row["event_type"]!="bear_trap":
+            raise ValueError("Choose a Bear schedule")
+        if abs((parse(row["starts_at"][:10])-parse(cycle_date.isoformat())).days)>7:
+            raise ValueError("Bear cycle date must be within seven days of the trap")
+        return {"items":[dict(r) for r in db.execute("""SELECT e.id,e.status,e.occurred_on FROM events e
+            JOIN alliances a ON a.id=e.alliance_id WHERE a.group_id=? AND e.event_type='bear_trap' AND e.occurred_on=?
+            ORDER BY e.id""",(group_id,cycle_date.isoformat())).fetchall()]}

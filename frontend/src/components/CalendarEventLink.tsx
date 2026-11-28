@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from "react";
 import {api,type CalendarEventLinkState} from "../lib/api";
 import {navigate} from "../lib/router";
 import type {CalendarOccurrence} from "../lib/calendar";
+import {CalendarDraftEditor} from "./CalendarDraftEditor";
 import {formatDate} from "../lib/format";
 
 export function CalendarEventLink({groupId,row,writable,onRevision}:{groupId:string;row:CalendarOccurrence;writable:boolean;onRevision:(revision:number)=>void}){
@@ -34,6 +35,7 @@ export function CalendarEventLink({groupId,row,writable,onRevision}:{groupId:str
       {data.sessions.length?<><label>Matching actual session<select disabled={busy||!writable} value={sessionChoice} onChange={e=>setSessionChoice(e.target.value)}><option value="">Choose explicitly</option>{data.sessions.map(s=><option key={s.id} value={s.id}>{s.session_key.replaceAll("_"," ")} · {s.started_at} · {s.status} · cycle {s.occurred_on}</option>)}</select></label>
       {writable&&<button className="button button--primary" disabled={busy||!sessionChoice} onClick={()=>{const s=data.sessions.find(x=>x.id===sessionChoice);if(s)void save(s.event_id,s.id);}}>Link selected session</button>}</>:<p>No matching unlinked session. Verify host and UTC date/time in Events.</p>}
     </div>}
+    {writable&&data?.eligible&&!data.linked?.session_id&&<CalendarDraftEditor key={row.id+":"+data.revision} groupId={groupId} row={row} data={data} onCreated={result=>{setData(result);onRevision(result.revision);}}/>}
   </section>;
 }
 export function EventCalendarLinks({groupId,eventId}:{groupId:string;eventId:string}){

@@ -454,6 +454,26 @@ def create_api_router(settings: Settings) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=409,detail=str(error)) from error
 
+    @router.post("/groups/{group_id}/calendar/{occurrence_id}/draft",status_code=201)
+    async def post_calendar_draft(request: Request,group_id: str,occurrence_id: str,payload: calendar.CalendarDraftCreate):
+        require_csrf(request,require_admin(request,settings))
+        try:
+            return calendar.create_linked_draft(settings.database_path,group_id,occurrence_id,payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
+    @router.get("/groups/{group_id}/calendar/{occurrence_id}/bear-cycles")
+    async def get_calendar_bear_cycles(request: Request,group_id: str,occurrence_id: str,cycle_date: date):
+        require_admin(request,settings)
+        try:
+            return calendar.draft_bear_cycles(settings.database_path,group_id,occurrence_id,cycle_date)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
     @router.get("/groups/{group_id}/events/{event_id}/calendar")
     async def get_event_calendar(request: Request,group_id: str,event_id: str):
         require_admin(request,settings)

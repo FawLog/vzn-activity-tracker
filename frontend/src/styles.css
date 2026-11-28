@@ -948,3 +948,15 @@ td strong { color: var(--text); font-weight: 650; }
 .calendar-editor [role=alert] {color:var(--red);}
 .calendar-series-preview {max-height:240px;overflow:auto;overflow-wrap:anywhere;}
 @media(max-width:620px){.calendar-editor-fields{grid-template-columns:minmax(0,1fr)}.calendar-editor-fields input,.calendar-editor-fields select,.calendar-editor .button{min-height:44px}.calendar-editor-fields input,.calendar-editor-fields select{font-size:16px}}
+
+.game-catalog-list{max-height:420px;overflow:auto;min-width:0}
+.game-catalog-item{border-top:1px solid var(--line)}
+.game-catalog-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:0;color:inherit;padding:10px;cursor:pointer;min-height:44px}
+.game-catalog-row:hover{background:var(--surface-raised)}
+.game-catalog-row img{object-fit:contain;flex:none}
+.game-catalog-row span{display:grid;gap:4px;min-width:0;overflow-wrap:anywhere}
+.game-catalog-row small,.game-catalog-summary small{color:var(--muted)}
+.game-catalog-summary{padding:10px;overflow-wrap:anywhere;font-size:12px}
+.game-catalog-summary ul{padding-left:20px}
+.game-catalog-summary li{margin:5px 0}
+.game-catalog-summary summary,.calendar-detail summary{cursor:pointer;color:var(--cyan);margin:8px 0}

@@ -8,6 +8,7 @@ import { AdminPage } from "./pages/AdminPage";
 import { CreateGroupPage } from "./pages/CreateGroupPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { EventsPage } from "./pages/EventsPage";
+import { CalendarPage } from "./pages/CalendarPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { OverviewPage } from "./pages/OverviewPage";
@@ -45,6 +46,7 @@ export default function App() {
   else if (path === "/groups") content = <Protected><GroupsPage /></Protected>;
   else if (path === "/players") content = <Protected><PlayersPage /></Protected>;
   else if (path.startsWith("/players/")) content = <Protected><PlayerProfilePage fid={decodeURIComponent(path.slice(9))} /></Protected>;
+  else if (path === "/calendar") content = <Protected><CalendarPage /></Protected>;
   else if (path === "/events") content = <Protected><EventsPage /></Protected>;
   else if (path.startsWith("/events/")) content = <Protected><EventDetailPage id={decodeURIComponent(path.slice(8))} /></Protected>;
   else if (path === "/activity") content = <Protected><ActivityPage /></Protected>;

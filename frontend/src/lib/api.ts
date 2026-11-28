@@ -1,4 +1,5 @@
 import type { AnalyticsReport } from "./analytics";
+import type { CalendarOccurrence } from "./calendar";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
@@ -38,6 +39,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
 
 export const api = {
+  calendar: (groupId:string,start:string,end:string,signal?:AbortSignal) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar?`+new URLSearchParams({start,end}),{signal}),
   analytics: (groupId:string,allianceId:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/analytics?`+new URLSearchParams({start,end,...(allianceId?{alliance_id:allianceId}:{})})),
   playerActivity: (groupId:string,fid:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}/activity?`+new URLSearchParams({start,end})),
   ocrStatus: () => request<{configured:boolean;provider:string;max_image_bytes:number}>("/api/v1/ocr/status"),

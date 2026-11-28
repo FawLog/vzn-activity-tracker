@@ -2,6 +2,7 @@ import {
   BarChart3,
   Activity,
   CalendarDays,
+  CalendarRange,
   LogIn,
   LogOut,
   Menu,
@@ -22,6 +23,7 @@ import { ProductionVersion } from "./ProductionVersion";
 const navItems = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/players", label: "Players", icon: Users },
+  { href: "/calendar", label: "Calendar", icon: CalendarRange },
   { href: "/events", label: "Events", icon: CalendarDays },
   { href: "/activity", label: "Activity", icon: Activity },
   { href: "/rankings", label: "Rankings", icon: BarChart3 },

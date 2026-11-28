@@ -533,6 +533,28 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(scheduleEditor).toHaveCount(0);
     await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1.*15:00 UTC.*Confirmed/})).toBeVisible();
     await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 2.*20:00 UTC.*Confirmed/})).toBeVisible();
+    await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
+    await calendar.getByRole("button",{name:/Bear Trap.*Trap 1.*15:00 UTC.*Confirmed/}).click();
+    const bearCard=calendar.getByRole("region",{name:"Alliance event",exact:true});
+    const bearData=bearCard.getByRole("region",{name:"Shared event data"});
+    await expect(bearData.getByRole("button",{name:"Open Trap 1",exact:true})).toBeVisible();
+    const trapOpened=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/workspace"));
+    await bearData.getByRole("button",{name:"Open Trap 1",exact:true}).click();
+    const trapResult=await trapOpened;
+    expect(trapResult.status()).toBe(200);
+    const bearEvent=(await trapResult.json()).event_id;
+    await expect(bearData.getByRole("button",{name:"Upload screenshots",exact:true})).toBeVisible();
+    const trapAdded=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/workspace"));
+    await bearData.getByRole("button",{name:"Add Trap 2",exact:true}).click();
+    const trapResult2=await trapAdded;
+    expect(trapResult2.status()).toBe(200);
+    expect((await trapResult2.json()).event_id).toBe(bearEvent);
+    await bearCard.getByRole("button",{name:"Back to calendar",exact:true}).click();
+    await calendar.getByRole("button",{name:/Bear Trap.*Trap 2.*20:00 UTC.*Confirmed/}).click();
+    await expect(bearData.getByRole("button",{name:/Trap 1 ·/})).toBeVisible();
+    await expect(bearData.getByRole("button",{name:/Trap 2 ·/})).toBeVisible();
+    await bearCard.getByRole("button",{name:"Back to calendar",exact:true}).click();
+    await page.unroute("**/api/v1/ocr/status");
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
     await cycleEditor.getByLabel("Event starts (Monday, 00:00 UTC)").fill("2091-06-04");
@@ -548,6 +570,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     const voting=firstVotingDay.getByRole("button",{name:/Foundry Battle.*Voting.*Estimated/});
     await expect(voting).toHaveCount(1);
     await voting.click();
+    await calendar.getByText("Schedule settings",{exact:true}).click();
     const review=calendar.getByRole("region",{name:"Cycle reconciliation"});
     await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
     await expect(review.getByText("1 movable cycles · 0 protected cycles.",{exact:true})).toBeVisible();
@@ -559,6 +582,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(review).toHaveCount(0);
     const shiftedVoting=calendar.getByRole("region",{name:"Jun 05, 2091",exact:true}).getByRole("button",{name:/Foundry Battle.*Voting.*Estimated/});
     await shiftedVoting.click();
+    await calendar.getByText("Schedule settings",{exact:true}).click();
     await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
     await review.getByLabel("Change repeat interval").check();
     await review.getByLabel("Repeat every (days)").fill("21");
@@ -586,6 +610,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect((await result.json()).items).toHaveLength(15);
     await expect(cycleEditor).toHaveCount(0);
     await calendar.getByRole("region",{name:"Jul 02, 2091",exact:true}).getByRole("button",{name:/Canyon Clash.*Voting.*Estimated/}).click();
+    await calendar.getByText("Schedule settings",{exact:true}).click();
     const review=calendar.getByRole("region",{name:"Cycle reconciliation"});
     await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
     await review.getByLabel("This and following cycles").check();
@@ -598,6 +623,34 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await review.getByRole("button",{name:"Move forecast cycles",exact:true}).click();
     expect((await moved).status()).toBe(200);
     await expect(review).toHaveCount(0);
+    // Any phase opens the same cycle-level editor; no separate registration or battle card hunt.
+    await page.route("**/api/v1/ocr/status", route=>route.fulfill({json:{configured:true,provider:"google_vision",max_image_bytes:921600}}));
+    await calendar.getByRole("region",{name:"Jul 03, 2091",exact:true}).getByRole("button",{name:/Canyon Clash.*Voting.*Estimated/}).click();
+    const card=calendar.getByRole("region",{name:"Battle event",exact:true});
+    const workspace=card.getByRole("region",{name:"Battle event data"});
+    await expect(workspace.getByLabel("Legion 1 start (UTC)")).toBeVisible();
+    await workspace.getByLabel("Legion 1 start (UTC)").fill("14:00");
+    const opened=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/workspace"));
+    await workspace.getByRole("button",{name:"Open Legion 1",exact:true}).click();
+    const openedResult=await opened;
+    expect(openedResult.status()).toBe(200);
+    const eventId=(await openedResult.json()).event_id;
+    await expect(workspace.getByRole("button",{name:"Upload registration screenshots",exact:true})).toBeVisible();
+    await workspace.getByLabel("Legion 2 start (UTC)").fill("19:00");
+    const added=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/workspace"));
+    await workspace.getByRole("button",{name:"Add Legion 2",exact:true}).click();
+    const addedResult=await added;
+    expect(addedResult.status()).toBe(200);
+    expect((await addedResult.json()).event_id).toBe(eventId);
+    await expect(workspace.getByRole("button",{name:/Legion 2 · Registration pending/})).toBeVisible();
+    await workspace.getByRole("button",{name:"Battle results",exact:true}).click();
+    await expect(workspace.getByText(/Automatic result OCR is not yet available/)).toBeVisible();
+    await card.getByRole("button",{name:"Back to calendar"}).click();
+    await calendar.getByRole("region",{name:"Jul 05, 2091",exact:true}).getByRole("button",{name:/Canyon Clash.*Registration.*Estimated/}).click();
+    await expect(workspace.getByRole("button",{name:/Legion 1 · Registration pending/})).toBeVisible();
+    await expect(workspace.getByRole("button",{name:/Legion 2 · Registration pending/})).toBeVisible();
+    await card.getByRole("button",{name:"Back to calendar"}).click();
+    await page.unroute("**/api/v1/ocr/status");
   }
 
   // Verify Overall default, low-score sorting, missing evidence and responsive table.

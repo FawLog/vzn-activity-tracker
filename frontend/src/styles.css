@@ -1033,3 +1033,12 @@ td strong { color: var(--text); font-weight: 650; }
 .calendar-cycle-reconcile {grid-template-columns:minmax(0,1fr);max-width:760px;}
 .calendar-cycle-reconcile ul {min-width:0;margin:0;padding-inline-start:1.3rem;overflow-wrap:anywhere;max-height:18rem;overflow:auto;}
 @media(max-width:620px){.calendar-cycle-reconcile .button{min-height:44px;white-space:normal;}}
+
+.calendar-battle-card{min-width:0;}
+.calendar-battle-workspace,.calendar-legion-setup,.calendar-legion-start{min-width:0;}
+.calendar-legion-setup{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0;}
+.calendar-legion-setup>p{flex-basis:100%;margin:0;}
+.calendar-legion-start{display:grid;gap:8px;flex:1 1 190px;padding:12px;border:1px solid var(--border);border-radius:8px;}
+.calendar-legion-start label{display:grid;gap:6px;min-width:0;}
+.calendar-legion-start input{box-sizing:border-box;width:100%;min-width:0;min-height:44px;font-size:16px;}
+.calendar-battle-settings{margin-top:16px;}

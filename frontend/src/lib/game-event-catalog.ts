@@ -23,6 +23,7 @@ export interface GameEventSummary {
   duration?:string;
   schedule?:{repeat?:RepeatRule;runs?:GameRun[]};
   scheduleOverride?:{source:string;checkedOn:string;note:string};
+  scheduleDependency?:{parent:string|null;label:string;follow:boolean};
   requirements?:string[];
   phases?:{name:string;description:string}[];
   unlockDay?:number;
@@ -58,3 +59,13 @@ export function repeatLabel(rule?:RepeatRule):string{
 }
 
 export const extraCalendarEvents=gameEvents.filter(e=>!Object.values(calendarIds).includes(e.id));
+
+export function eventRepeatLabel(event:GameEventSummary):string{
+  if(event.scheduleDependency)return "Follows "+event.scheduleDependency.label+(event.schedule?.repeat?" · "+repeatLabel(event.schedule.repeat):"");
+  if(event.schedule?.repeat)return repeatLabel(event.schedule.repeat);
+  if(event.frequency)return event.frequency;
+  return "Repeat rule unavailable — set manually";
+}
+export function followType(type:string):boolean{
+  return gameEventForCalendar(type)?.scheduleDependency?.follow===true;
+}

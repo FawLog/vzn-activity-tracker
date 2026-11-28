@@ -47,5 +47,70 @@
         "description": "60 minutes"
       }
     ]
+  },
+  "flame-and-fang": {
+    "source": "https://github.com/chiefpansancolt/whiteout-survival-data/blob/v0.11.0/data/events/flame-and-fang.json",
+    "checkedOn": "2026-11-28",
+    "note": "Upstream links this event to the SvS preparation week. Independent 4-week estimate inherits the parent cadence; following the actual state schedule is preferred.",
+    "dependency": {
+      "parent": "svs-state-of-power",
+      "label": "SvS preparation",
+      "follow": true
+    },
+    "repeat": {
+      "kind": "every",
+      "every": 4,
+      "unit": "weeks"
+    }
+  },
+  "crystal-reactivation-2": {
+    "source": "https://github.com/chiefpansancolt/whiteout-survival-data/blob/v0.11.0/data/events/crystal-reactivation-2.json",
+    "checkedOn": "2026-11-28",
+    "note": "Friday and Saturday of the Castle battle week. Requires the reviewed state-level Castle schedule.",
+    "dependency": {
+      "parent": "sunfire-castle",
+      "label": "Sunfire Castle battle week",
+      "follow": true
+    }
+  },
+  "crazy-joe": {
+    "source": "https://github.com/chiefpansancolt/whiteout-survival-data/blob/v0.11.0/data/events/crazy-joe.json",
+    "checkedOn": "2026-11-28",
+    "note": "Tuesday and Thursday in eligible event weeks; exact alliance start times and rotation are not specified. Do not invent a fixed recurrence.",
+    "dependency": {
+      "parent": null,
+      "label": "SvS, King of Icefield or Hall of Chief week",
+      "follow": false
+    }
+  },
+  "brothers-in-arms": {
+    "source": "https://github.com/chiefpansancolt/whiteout-survival-data/blob/v0.11.0/data/events/brothers-in-arms.json",
+    "checkedOn": "2026-11-28",
+    "note": "Monthly, Friday–Sunday of the normal Castle week. Normal/SvS rotation must be reviewed before using a monthly estimate.",
+    "dependency": {
+      "parent": "sunfire-castle",
+      "label": "Normal Sunfire Castle week",
+      "follow": false
+    }
+  },
+  "alliance-showdown": {
+    "source": "https://github.com/chiefpansancolt/whiteout-survival-data/blob/v0.11.0/data/events/alliance-showdown.json",
+    "checkedOn": "2026-11-28",
+    "note": "Every four weeks after SvS, replacing a Mobilization slot in eligible states. Review state eligibility and local rotation.",
+    "dependency": {
+      "parent": "svs-state-of-power",
+      "label": "Week after SvS",
+      "follow": false
+    }
+  },
+  "symphony-of-change": {
+    "source": "https://github.com/chiefpansancolt/whiteout-survival-data/blob/v0.11.0/data/events/symphony-of-change.json",
+    "checkedOn": "2026-11-28",
+    "note": "Approximately once per Fire Crystal generation; unlocks are not a fixed date interval.",
+    "dependency": {
+      "parent": null,
+      "label": "Fire Crystal generation",
+      "follow": false
+    }
   }
 }

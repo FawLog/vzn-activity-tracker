@@ -1,6 +1,6 @@
 import {describe,it,expect} from "vitest";
 import {gameEventForCalendar} from "./game-event-catalog";
-import {advancedPlan,fixedGameInterval,forecastRows,intervalPayload,sourceRunWarning,stateAge,referenceEnd} from "./game-forecast";
+import {advancedPlan,fixedGameInterval,forecastRows,intervalPayload,sourceRunWarning,stateAge,referenceEnd,referenceRepeat} from "./game-forecast";
 import type {ScheduleFields} from "./schedule-editor";
 const fields:ScheduleFields={event_type:"foundry",scope:"alliance",alliance_id:"a",state_id:"1001",starts_at:"2028-02-29",ends_at:null,precision:"date",phase:"",confidence:"confirmed"};
 describe("anchored calendar forecast",()=>{
@@ -47,4 +47,20 @@ describe("reference duration",()=>{
     expect(referenceEnd(gameEventForCalendar("foundry"),{...fields,precision:"minute",starts_at:"2026-11-28T23:30Z"})).toBe("2026-11-29T00:30Z");
     expect(referenceEnd(gameEventForCalendar("alliance_showdown"),{...fields,event_type:"alliance_showdown",precision:"minute",starts_at:"2026-11-23T00:00Z"})).toBe("2026-11-29T12:00Z");
   });
+});
+
+it("uses inherited Flame and Fang interval and explicit month/variant rules",()=>{
+ const flame=gameEventForCalendar("game:flame-and-fang");
+ expect(fixedGameInterval(flame)).toBe(40320);
+ expect(referenceEnd(flame,{...fields,event_type:"game:flame-and-fang",starts_at:"2026-12-07"})).toBe("2026-12-10");
+ expect(referenceRepeat(gameEventForCalendar("game:fishing-tournament"))).toMatchObject({mode:"months",months:1,count:4});
+ expect(referenceRepeat(gameEventForCalendar("game:romance-season"))).toMatchObject({mode:"months",months:12,count:2});
+ expect(referenceRepeat(gameEventForCalendar("alliance_mobilization")).count).toBe(1);
+ expect(referenceRepeat(gameEventForCalendar("game:king-of-icefield"),true)).toMatchObject({mode:"months",count:4});
+ expect(referenceRepeat(gameEventForCalendar("game:crazy-joe")).count).toBe(1);
+ const hall=gameEventForCalendar("game:hall-of-chief");
+ expect(referenceEnd(hall,{...fields,event_type:"game:hall-of-chief",phase:"Season 2",starts_at:"2026-12-07"})).toBe("2026-12-14");
+ expect(referenceEnd(hall,{...fields,event_type:"game:hall-of-chief",phase:"",starts_at:"2026-12-07"})).toBeNull();
+ expect(referenceEnd(gameEventForCalendar("game:frostfire-mine"),{...fields,event_type:"game:frostfire-mine",precision:"minute",starts_at:"2026-12-07T21:00Z"})).toBe("2026-12-07T21:30Z");
+ expect(referenceEnd(gameEventForCalendar("game:icefire-warhymn-league"),{...fields,event_type:"game:icefire-warhymn-league",starts_at:"2026-12-06"})).toBe("2026-12-13");
 });

@@ -107,11 +107,12 @@ export function eventCatalogPlugin(): Plugin {
         }
         const {id, name, category, description, frequency, duration, requirements} = event;
         const patch=overrides[id];
-        const supplement=patch&&!event.schedule?.runs?.some((run:{label?:string})=>run.label==="Voting")?patch:undefined;
-        const schedule=supplement?{...event.schedule,runs:supplement.runs}:event.schedule;
+        const supplement=patch?.runs&&!event.schedule?.runs?.some((run:{label?:string})=>run.label==="Voting")?patch:undefined;
+        const repeatSupplement=patch?.repeat&&!event.schedule?.repeat?patch.repeat:undefined;
+        const schedule=supplement||repeatSupplement?{...event.schedule,...(supplement?{runs:supplement.runs}:{}),...(repeatSupplement?{repeat:repeatSupplement}:{})}:event.schedule;
         const phases=event.phases??supplement?.phases;
-        const scheduleOverride=supplement?{source:supplement.source,checkedOn:supplement.checkedOn,note:supplement.note}:undefined;
-        const summary = {id, name, category, description, frequency, duration, schedule, requirements, phases, scheduleOverride,
+        const scheduleOverride=patch&&(supplement||repeatSupplement||patch.dependency)?{source:patch.source,checkedOn:patch.checkedOn,note:patch.note}:undefined;
+        const summary = {id, name, category, description, frequency, duration, schedule, requirements, phases, scheduleOverride,scheduleDependency:patch?.dependency,
           unlockDay: timeline.find(m=>m.eventIds?.includes(id))?.day,
           stages: Array.isArray(event.days) ? event.days.map((d: {day?:unknown;name?:unknown;note?:unknown})=>({
             id: String(d.day??""), name: typeof d.name==="string"?d.name:undefined, note: typeof d.note==="string"?d.note:undefined

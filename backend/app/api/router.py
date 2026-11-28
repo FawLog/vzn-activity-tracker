@@ -406,6 +406,25 @@ def create_api_router(settings: Settings) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.post("/groups/{group_id}/calendar/cycles", status_code=201)
+    async def post_calendar_cycle(request: Request, group_id: str, payload: calendar.CalendarCycleCreate):
+        session = require_admin(request, settings)
+        require_csrf(request, session)
+        try:
+            return calendar.create_cycle(settings.database_path,group_id,payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
+    @router.get("/groups/{group_id}/calendar/cycles/{cycle_id}")
+    async def get_calendar_cycle(request: Request, group_id: str, cycle_id: str):
+        require_admin(request, settings)
+        try:
+            return calendar.get_cycle(settings.database_path,group_id,cycle_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
     @router.put("/groups/{group_id}/calendar/{occurrence_id}")
     async def put_calendar(request: Request, group_id: str, occurrence_id: str, payload: calendar.CalendarUpdate) -> dict[str, object]:
         session = require_admin(request, settings)

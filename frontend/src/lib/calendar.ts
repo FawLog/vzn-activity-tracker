@@ -3,6 +3,7 @@ export interface CalendarOccurrence {
   id: string;
   group_id: string;
   series_id: string | null;
+  cycle_id?: string | null;
   sequence: number;
   event_type: string;
   scope: "alliance" | "state";

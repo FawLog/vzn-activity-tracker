@@ -219,6 +219,16 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
         if row["revision"]!=payload.revision:
             raise ValueError("Calendar entry changed; reload before saving")
         validate_scope(db,group_id,payload)
+        if row["cycle_id"]:
+            if any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase")):
+                raise ValueError("Cycle phase identity and owner cannot be changed")
+            siblings=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND cycle_id=? AND id!=? ORDER BY starts_at",(group_id,row["cycle_id"],occurrence_id)).fetchall()
+            for sibling in siblings:
+                if parse(sibling["starts_at"])<parse(row["starts_at"]):
+                    if parse(payload.starts_at)<=parse(sibling["starts_at"]) or (sibling["ends_at"] and parse(payload.starts_at)<parse(sibling["ends_at"])):
+                        raise ValueError("Phase would cross an earlier cycle phase")
+                elif parse(payload.starts_at)>=parse(sibling["starts_at"]) or (payload.ends_at and parse(payload.ends_at)>parse(sibling["starts_at"])):
+                    raise ValueError("Phase would cross a later cycle phase")
         db.execute("""UPDATE calendar_occurrences SET event_type=?,scope=?,alliance_id=?,state_id=?,starts_at=?,ends_at=?,precision=?,phase=?,confidence=?,schedule_status=?,source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=? AND group_id=?""",
           (payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.starts_at,payload.ends_at,payload.precision,payload.phase,payload.confidence,payload.schedule_status,occurrence_id,group_id))
         audit(db,"cancelled" if payload.schedule_status=="cancelled" else "updated",occurrence_id)
@@ -284,3 +294,74 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
                 db.execute("UPDATE calendar_occurrences SET schedule_status='cancelled',source='manual',revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
             audit(db, "cancelled" if payload.action == "cancel" else "rescheduled", row["id"])
         return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?", (row["id"],)).fetchone()) for row in rows]}
+
+class CalendarCycleCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["canyon", "svs"]
+    request_key: str = Field(min_length=16,max_length=128,pattern=r"^[A-Za-z0-9_-]+$")
+    phases: list[CalendarInput] = Field(min_length=2,max_length=4)
+
+    @model_validator(mode="after")
+    def validate_phases(self):
+        expected = {"canyon":[("canyon","Voting"),("canyon","Registration"),("canyon","Matchmaking"),("canyon","Battle")],
+                    "svs":[("svs_preparation","Preparation"),("svs_battle","Battle")]}[self.kind]
+        if [(p.event_type,p.phase) for p in self.phases] != expected:
+            raise ValueError("Invalid cycle phases or order")
+        first = self.phases[0]
+        if self.kind=="svs" and first.scope!="state":
+            raise ValueError("SvS cycle requires state scope")
+        if self.kind=="canyon" and first.scope!="alliance":
+            raise ValueError("Canyon cycle requires alliance scope")
+        for i,p in enumerate(self.phases):
+            if (p.scope,p.alliance_id,p.state_id)!=(first.scope,first.alliance_id,first.state_id):
+                raise ValueError("All phases must have the same owner")
+            if i and parse(p.starts_at)<=parse(self.phases[i-1].starts_at):
+                raise ValueError("Phases must be chronological")
+            if i and self.phases[i-1].ends_at and parse(p.starts_at)<parse(self.phases[i-1].ends_at):
+                raise ValueError("Cycle phases must not overlap")
+            if parse(p.ends_at or p.starts_at)-parse(first.starts_at)>timedelta(days=31):
+                raise ValueError("Maximum cycle duration is 31 days")
+        return self
+
+
+def create_cycle(path,group_id,payload:CalendarCycleCreate):
+    fingerprint=hashlib.sha256(json.dumps({"cycle":payload.model_dump(mode="json",exclude={"request_key"})},sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        previous=db.execute("SELECT payload_hash,occurrence_ids FROM calendar_create_requests WHERE group_id=? AND request_key=?",(group_id,payload.request_key)).fetchone()
+        if previous:
+            if previous["payload_hash"]!=fingerprint:
+                raise ValueError("Request key already used for a different schedule")
+            return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
+        for p in payload.phases:
+            validate_scope(db,group_id,p)
+            # Blank legacy phase may represent the same event. Never silently duplicate it.
+            existing=db.execute("""SELECT starts_at,precision FROM calendar_occurrences
+                WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=?
+                AND (phase=? OR phase='') AND starts_at>=? AND starts_at<?""",
+                (group_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.phase,p.starts_at[:10],
+                 (parse(p.starts_at).date()+timedelta(days=1)).isoformat())).fetchall()
+            if any(r["starts_at"]==p.starts_at or r["precision"]=="date" or p.precision=="date" for r in existing):
+                raise ValueError("A matching scheduled or cancelled phase already exists; review the calendar")
+        cycle_id=uuid.uuid4().hex
+        db.execute("INSERT INTO calendar_cycles(id,group_id,kind) VALUES (?,?,?)",(cycle_id,group_id,payload.kind))
+        items=[]
+        for p in payload.phases:
+            oid=uuid.uuid4().hex
+            db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'manual')""",
+                (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence))
+            audit(db,"created",oid)
+            items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(oid,)).fetchone()))
+        db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)",(group_id,payload.request_key,fingerprint,json.dumps([r["id"] for r in items])))
+        return {"items":items}
+
+
+def get_cycle(path,group_id,cycle_id):
+    with connection(path) as db:
+        require_group(db,group_id)
+        cycle=db.execute("SELECT * FROM calendar_cycles WHERE id=? AND group_id=?",(cycle_id,group_id)).fetchone()
+        if cycle is None:
+            raise LookupError("Calendar cycle not found")
+        rows=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND cycle_id=? ORDER BY starts_at,id",(group_id,cycle_id)).fetchall()
+        return {"kind":cycle["kind"],"items":[dict(r) for r in rows]}

@@ -1,4 +1,5 @@
 import type { AnalyticsReport } from "./analytics";
+import type { CycleCreate } from "./calendar-cycles";
 import type { CalendarOccurrence } from "./calendar";
 import type { ScheduleCreate, ScheduleUpdate, FutureChange } from "./schedule-editor";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
@@ -40,6 +41,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
 
 export const api = {
+  createCycle: (groupId:string,payload:CycleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles`,{method:"POST",body:JSON.stringify(payload)}),
+  calendarCycle: (groupId:string,cycleId:string,signal?:AbortSignal) => request<{kind:string;items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}`,{signal}),
   createSchedule: (groupId:string,payload:ScheduleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar`,{method:"POST",body:JSON.stringify(payload)}),
   updateSchedule: (groupId:string,id:string,payload:ScheduleUpdate) => request<CalendarOccurrence>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}`,{method:"PUT",body:JSON.stringify(payload)}),
   previewScheduleFuture: (groupId:string,id:string) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`),

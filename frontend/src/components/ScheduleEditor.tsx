@@ -109,7 +109,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
       {!row&&<>
         <p>State #{fields.state_id} · {profile?.source==="whiteoutstats"?"WhiteoutStats":profile?.source==="manual"?"Saved manual date":"Opening date unavailable"}{profile?.age_days!=null?" · "+profile.age_days+" days old":""}{profile?.last_success_at?" · Last received "+profile.last_success_at:""}{profile?.last_status==="failed"?" · Provider refresh failed; cached date retained":""}</p>
         {profile&&<div className="calendar-controls"><button type="button" className="button button--quiet" disabled={busy||!stateStart} onClick={()=>void saveStateDate(false)}>Save state date override</button>{profile.manual_opened_on&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>void saveStateDate(true)}>Use provider date</button>}</div>}
-        {profileError&&<p role="alert">{profileError}</p>
+        {profileError&&<p role="alert">{profileError}</p>}
         {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{repeatLabel(reference.schedule?.repeat)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
           {suggested!==null&&<button type="button" className="button button--quiet" disabled={busy} onClick={useReference}>Use game repeat rule</button>}
           {warnings.map(w=><p key={w}>{w}</p>)}

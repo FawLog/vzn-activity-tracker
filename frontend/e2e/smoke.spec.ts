@@ -323,6 +323,26 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+  // A calendar workspace is exclusive, and cancelling a transition preserves its fields.
+  await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+  const transitionEditor=calendar.getByRole("region",{name:"Schedule editor"});
+  await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved transition check");
+  page.once("dialog", dialog=>dialog.dismiss());
+  await calendar.getByRole("button",{name:/Bear Trap/}).click();
+  await expect(transitionEditor.getByLabel("Phase (optional)")).toHaveValue("Unsaved transition check");
+  await expect(calendar.getByRole("region",{name:"Schedule details"})).toHaveCount(0);
+  page.once("dialog", dialog=>dialog.accept());
+  await calendar.getByRole("button",{name:/Bear Trap/}).click();
+  await expect(transitionEditor).toHaveCount(0);
+  await expect(calendar.getByRole("region",{name:"Schedule details"})).toBeVisible();
+  await calendar.getByRole("button",{name:"Close details"}).click();
+  await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+  await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved period check");
+  page.once("dialog", dialog=>dialog.accept());
+  await calendar.getByRole("button",{name:"Next period"}).click();
+  await expect(transitionEditor).toHaveCount(0);
+  await calendar.getByRole("button",{name:"Today",exact:true}).click();
+  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
   await page.unroute("**/api/v1/groups/*/calendar?*");
   await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});

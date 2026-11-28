@@ -1,6 +1,23 @@
 import type { CalendarOccurrence } from "./calendar";
 export type ScheduleFields = Pick<CalendarOccurrence,"event_type"|"scope"|"alliance_id"|"state_id"|"starts_at"|"ends_at"|"precision"|"phase"|"confidence">;
 export type ScheduleCreate = ScheduleFields & {request_key:string;interval_minutes:number|null;occurrence_count:number;reject_existing?:boolean;rolling?:boolean;repeat_months?:number;repeat_weekdays?:number[]};
+export type ScheduleTemplateInput = Omit<ScheduleCreate,"request_key"|"repeat_months"|"repeat_weekdays"> & {repeat_months?:number|null;repeat_weekdays?:number[]|null};
+export type ScheduleTemplate = {id:string;name:string;alliance_id:string;schedule:ScheduleTemplateInput};
+export function templateFields(template:ScheduleTemplateInput,day:string):ScheduleFields{
+  const {event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase}=template;
+  const start=day+starts_at.slice(10);
+  const old=Date.parse(precision==="date"?starts_at+"T00:00Z":starts_at);
+  const next=Date.parse(precision==="date"?start+"T00:00Z":start);
+  if(!Number.isFinite(old)||!Number.isFinite(next))throw Error("Choose a valid anchor date");
+  let end:string|null=null;
+  if(ends_at){
+    const duration=Date.parse(precision==="date"?ends_at+"T00:00Z":ends_at)-old;
+    const target=new Date(next+duration);
+    if(!Number.isFinite(target.getTime())||target.getUTCFullYear()>2099)throw Error("Template duration exceeds supported dates");
+    end=target.toISOString().slice(0,precision==="date"?10:16)+(precision==="minute"?"Z":"");
+  }
+  return {event_type,scope,alliance_id,state_id,starts_at:start,ends_at:end,precision,phase,confidence:"estimated"};
+}
 export type ScheduleUpdate = ScheduleFields & Pick<CalendarOccurrence,"revision"|"schedule_status">;
 export type FutureChange = {action:"shift"|"cancel";shift_minutes:number;revisions:Record<string,number>};
 export function utcInput(value:string,precision:ScheduleFields["precision"]):string {

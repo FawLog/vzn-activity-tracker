@@ -386,6 +386,23 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await scheduleEditor.getByRole("button",{name:"One-time event",exact:true}).click();
     await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
     const verificationPhase="Verification "+Date.now();
+    // Saving a template is independent of writing the actual schedule.
+    await scheduleEditor.getByLabel("Template name",{exact:true}).fill(verificationPhase);
+    const templateSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/templates"));
+    await scheduleEditor.getByRole("button",{name:"Save as template",exact:true}).click();
+    expect((await templateSaved).status()).toBe(201);
+    await expect(scheduleEditor.getByRole("status")).toContainText("Template saved.");
+    const templateSelect=scheduleEditor.getByLabel("Saved alliance template");
+    await expect(templateSelect.locator("option").filter({hasText:verificationPhase})).toHaveCount(1);
+    page.once("dialog", dialog=>dialog.accept());
+    await templateSelect.selectOption({label:verificationPhase});
+    await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveValue("2091-02-03");
+    await expect(scheduleEditor.getByLabel("Confidence",{exact:true})).toHaveValue("estimated");
+    await scheduleEditor.getByLabel("Confidence",{exact:true}).selectOption("confirmed");
+    page.once("dialog", dialog=>dialog.accept());
+    const templateDeleted=page.waitForResponse(r=>r.request().method()==="DELETE"&&r.url().includes("/calendar/templates/"));
+    await scheduleEditor.getByRole("button",{name:"Delete template "+verificationPhase,exact:true}).click();
+    expect((await templateDeleted).status()).toBe(200);
     await scheduleEditor.getByLabel("Phase (optional)").fill(verificationPhase);
     const created=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
     await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();

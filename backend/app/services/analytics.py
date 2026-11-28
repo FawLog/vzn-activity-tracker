@@ -154,7 +154,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                     "registration_outcome":registration(row,s),"attendance_outcome":attendance(row,s),"metrics":row["metrics"]})
             entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"home_alliance_id":home,"sessions":evidence}
             final=final_row["outcome"] if final_row else None
-            if kind == "foundry" or kind == "canyon" and (not finalized or all(s["results_complete"] for s in ss)):
+            if kind == "foundry" or kind == "canyon" and (all(s["results_complete"] for s in ss) or not finalized and any(s["results_complete"] or any("personal_points" in r["metrics"] for r in s["rows"].values()) for s in ss)):
                 # Missing scores are negative only in a verified complete ranking; no fabricated zero metric.
                 for item in evidence:
                     score = item["metrics"].get("personal_points")

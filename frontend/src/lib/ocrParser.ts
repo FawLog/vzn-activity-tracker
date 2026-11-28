@@ -199,10 +199,14 @@ function canyonScreenshot(lines:Line[],sessionKey:string,source:string):ParsedSc
   const mailText=lines.map(lineText).join(" ");
   const empty=(warning:string):ParsedScreenshot=>({rows:[],warnings:[warning]});
   if(/\bFoundry\s+Battle\b|Personal\s+Arsenal\s+Points|Legion\s+Tally/iu.test(mailText))return empty("Mail belongs to a different event.");
-  const heading=mailText.match(/\[?Legion\s*([12])\]?\s+of\s+your\s+alliance\s+ranked\s+No\.?\s*([123])\b/iu);
+  const heading=mailText.match(/\[?\s*Legion\s*([12])\s*\]?\s+of\s+your\s+alliance\s+ranked\s+No\s*\.?\s*([123])\b/iu);
   if(!heading){
     if(/ranked\s+No|Total Fuel Used|Enemy Squads Defeated|Occupied Buildings/iu.test(mailText))return empty("Incomplete Canyon summary header; use the complete report.");
-    return foundryScreenshot(lines,"canyon_results",sessionKey,source);
+    const parsed=foundryScreenshot(lines,"canyon_results",sessionKey,source);
+    // Medals may be graphic-only. Infer podium ranks only when three complete
+    // rows precede a recognized fourth-place anchor in the titled ranking.
+    if(/Personal\s+Point\s+Ranking/iu.test(mailText)&&parsed.rows[3]?.rank===4&&parsed.rows.slice(0,3).every((r,i)=>r.rank===undefined||r.rank===i+1))parsed.rows.slice(0,3).forEach((r,i)=>{r.rank=i+1});
+    return parsed;
   }
   if(sessionKey!=="legion_"+heading[1])return empty("Canyon report belongs to a different legion.");
   if(!/Canyon\s+Clash/iu.test(mailText))return empty("Cannot verify Canyon report title.");

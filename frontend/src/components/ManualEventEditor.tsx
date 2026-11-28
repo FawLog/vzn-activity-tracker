@@ -210,6 +210,7 @@ export function ManualEventEditor({groupId,record,onPublished,initialSessionId,o
     if(!seen.size&&!(canyon&&stage==="results"&&info?.canyon_summary))throw new Error("No reviewed players to import.");
     if(legionBattle&&info&&Object.entries(info).some(([k,v])=>v!==undefined&&draft.foundry_details?.[k as keyof FoundryImportInfo]!=null&&JSON.stringify(draft.foundry_details?.[k as keyof FoundryImportInfo])!==JSON.stringify(v)))overwrites++;
     if(overwrites&&!window.confirm("Replace existing results or registration for "+overwrites+" players?"))throw new Error("Import cancelled; existing results unchanged.");
+    const summaryOnly=canyon&&stage==="results"&&!seen.size&&!!info?.canyon_summary;
     const nextRows=[...rows.values()].map(r=>added||championship?{...r,eligibility:r.eligibility==="no_duty"?"no_duty" as const:"unknown" as const,registration:r.registration==="not_registered"?"unknown" as const:r.registration,attendance:r.attendance==="confirmed_absent"?"unknown" as const:r.attendance}:r);
     const registrationImport=legionBattle&&stage==="registration";
     const mergedDetails={...draft.foundry_details,...Object.fromEntries(Object.entries(info??{}).filter(([,v])=>v!==undefined))};
@@ -219,8 +220,8 @@ export function ManualEventEditor({groupId,record,onPublished,initialSessionId,o
     const savedRows=registrationImport&&!verified?nextRows.map(r=>r.registration==="not_registered"?{...r,registration:"unknown" as const}:r):nextRows;
     setBusy(true);setError("");setMessage("");
     try{
-      const result=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:added||championship?false:draft.roster_complete,registration_complete:registrationImport?verified:championship?false:draft.registration_complete,attendance_complete:legionBattle?false:draft.attendance_complete,results_complete:legionBattle?false:draft.results_complete,rows:savedRows,...(legionBattle?{foundry_details:mergedDetails}:{})});
-      apply(result,draft.id);onSaved?.();setConfirmPublish(false);if(championship)setReview(true);setMessage("Imported "+seen.size+" players and saved draft. "+(registrationImport?(verified?"Registration complete for this legion.":"Registration partial: check both game counts and confirm the full list."):"Review before publishing."));
+      const result=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:added||championship?false:draft.roster_complete,registration_complete:registrationImport?verified:championship?false:draft.registration_complete,attendance_complete:legionBattle&&!summaryOnly?false:draft.attendance_complete,results_complete:legionBattle&&!summaryOnly?false:draft.results_complete,rows:summaryOnly?draft.rows:savedRows,...(legionBattle?{foundry_details:mergedDetails}:{})});
+      apply(result,draft.id);onSaved?.();setConfirmPublish(false);if(championship)setReview(true);setMessage((summaryOnly?"Imported Canyon battle summary and saved draft. ":"Imported "+seen.size+" players and saved draft. ")+(registrationImport?(verified?"Registration complete for this legion.":"Registration partial: check both game counts and confirm the full list."):"Review before publishing."));
     }finally{setBusy(false)}
   };
   const available=(record.event_type==="bear_trap"?Array.from({length:30},(_,i)=>"trap_"+(i+1)):definition.keys).filter(k=>!editor?.sessions.some(s=>s.session_key===k));

@@ -320,3 +320,31 @@ def test_complete_ranking_missing_and_zero_are_no_show(authenticated_client,sett
     assert data["events"][0]["metrics"]["no_shows"]==4
     for s in result.json()["sessions"]:
         assert next(r for r in s["rows"] if r["fid"]=="missing")["metrics"]=={}
+
+
+def test_canyon_three_team_report_roundtrip_and_scope(authenticated_client,settings):
+    c=authenticated_client
+    gid=create_onboarded_group(c)["id"]
+    owner=c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]
+    aid=owner["id"]
+    eid=c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events",json={"event_type":"canyon","occurred_on":"2026-11-28"}).json()["id"]
+    root=f"/api/v1/groups/{gid}/events/{eid}"
+    result=c.post(root+"/sessions",json={"session_key":"legion_2","started_at":"2026-11-28T17:00:00Z"})
+    sid=next(s["id"] for s in result.json()["sessions"] if s["session_key"]=="legion_2")
+    summary={"rank":2,"legion":2,"reported_at":"2026-11-28T17:59:59Z","teams":[
+        {"rank":1,"state":"4276","legion":1,"tag":"MAD","name":"ManifestDestiny","score":686310},
+        {"rank":2,"state":owner["state_id"],"legion":2,"tag":owner["tag"],"name":owner["name"],"score":503020},
+        {"rank":3,"state":"4190","legion":1,"tag":"SMT","name":"술맛탱","score":319403}],
+        "stats":[{"label":"Total Fuel Used","value":"33.8M","mvp":"CHAPO INFINITY乂","mvp_value":"3.9M"}]}
+    url=root+"/sessions/"+sid
+    body={"revision":0,"rows":[],"foundry_details":{"canyon_summary":summary}}
+    assert c.put(url,json={**body,"foundry_details":{"canyon_summary":{**summary,"legion":1}}}).status_code==409
+    wrong=[dict(t) for t in summary["teams"]]
+    wrong[1]["tag"]="WRONG"
+    assert c.put(url,json={**body,"foundry_details":{"canyon_summary":{**summary,"teams":wrong}}}).status_code==409
+    result=c.put(url,json=body)
+    assert result.status_code==200,result.text
+    saved=next(s for s in c.get(root+"/editor").json()["sessions"] if s["id"]==sid)
+    assert saved["foundry_details"]["canyon_summary"]==summary
+    assert not saved["results_complete"]
+    assert c.get(root+"/editor").json()["status"]=="draft"

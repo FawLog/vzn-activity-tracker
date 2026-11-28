@@ -28,7 +28,7 @@ class CalendarInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self):
-        if self.event_type not in CATALOG_IDS and self.event_type not in {e.value for e in EventType}:
+        if self.event_type not in CATALOG_IDS and self.event_type not in {"svs_matchmaking","svs_triage"} and self.event_type not in {e.value for e in EventType}:
             raise ValueError("Unknown calendar event type")
         pattern = r"\d{4}-\d{2}-\d{2}" if self.precision == "date" else r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z"
         for value in (self.starts_at, self.ends_at):
@@ -42,6 +42,8 @@ class CalendarInput(BaseModel):
             raise ValueError("End must follow start")
         if self.ends_at and parse(self.ends_at) - parse(self.starts_at) > timedelta(days=31):
             raise ValueError("Maximum event duration is 31 days")
+        if self.event_type in {"svs_matchmaking","svs_triage"} and self.scope!="state":
+            raise ValueError("SvS phases require state scope")
         if (self.scope == "alliance") != bool(self.alliance_id):
             raise ValueError("Alliance scope requires an alliance; state scope does not")
         return self
@@ -160,6 +162,124 @@ def audit(db, action, occurrence_id):
     db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES (?,?,?,'admin')", (action,"calendar_occurrence",occurrence_id))
 
 
+# These two source relationships have an unambiguous date offset and duration.
+# Other conditional rotations require locally reviewed dates and are not fabricated.
+FOLLOW_RULES={
+    "game:flame-and-fang":("svs_preparation",None,3,"SvS preparation"),
+    "game:crystal-reactivation-2":("castle_battle",4,2,"Sunfire Castle battle week"),
+}
+
+
+class FollowSchedule(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    event_type: Literal["game:flame-and-fang","game:crystal-reactivation-2"]
+    state_id: str=Field(min_length=1,max_length=32)
+    starts_on: date
+
+
+def validate_follow(db,group_id,payload,writing=False):
+    require_group(db,group_id,writing)
+    if not 2000<=payload.starts_on.year<=2099:
+        raise ValueError("Date outside supported range")
+    if not db.execute("SELECT 1 FROM alliances WHERE group_id=? AND state_id=? AND status='active'",(group_id,payload.state_id)).fetchone():
+        raise ValueError("State must belong to an active alliance in this group")
+
+
+def project_follow(db,rule,start,end):
+    parent_type,weekday,length,label=FOLLOW_RULES[rule["event_type"]]
+    parents=db.execute("""SELECT * FROM calendar_occurrences
+        WHERE group_id=? AND state_id=? AND scope='state' AND event_type=? AND starts_at>=? AND starts_at<?
+        ORDER BY starts_at,id""",(rule["group_id"],rule["state_id"],parent_type,
+        (start-timedelta(days=7)).isoformat(),(end+timedelta(days=7)).isoformat())).fetchall()
+    # Existing manual entries, including cancellations, take precedence over a projection.
+    manual=db.execute("""SELECT starts_at,ends_at,precision FROM calendar_occurrences
+        WHERE group_id=? AND state_id=? AND event_type=? AND starts_at<? AND
+        (starts_at>=? OR ends_at>?)""",(rule["group_id"],rule["state_id"],rule["event_type"],end.isoformat(),
+        (start-timedelta(days=7)).isoformat(),(start-timedelta(days=7)).isoformat())).fetchall()
+    by_day={}
+    for parent in parents:
+        day=parse(parent["starts_at"]).date()
+        if weekday is not None:
+            day+=timedelta(days=weekday-day.weekday())
+        finish=day+timedelta(days=length)
+        if day.year<2000 or finish.year>2099 or day.isoformat()<rule["starts_on"] or rule["stopped_on"] and day.isoformat()>=rule["stopped_on"]:
+            continue
+        if not (day<end and finish>start):
+            continue
+        lo=datetime.combine(day,datetime.min.time(),timezone.utc)
+        hi=datetime.combine(finish,datetime.min.time(),timezone.utc)
+        if any(cycle_span([r])[0]<hi and cycle_span([r])[1]>lo for r in manual):
+            continue
+        existing=by_day.get(day)
+        if existing and (existing["schedule_status"]=="scheduled" or parent["schedule_status"]!="scheduled"):
+            continue
+        by_day[day]={"id":"follow:"+rule["id"]+":"+parent["id"],"group_id":rule["group_id"],
+            "series_id":None,"cycle_id":None,"sequence":0,"event_type":rule["event_type"],"scope":"state",
+            "alliance_id":None,"state_id":rule["state_id"],"starts_at":day.isoformat(),"ends_at":finish.isoformat(),
+            "precision":"date","phase":"","confidence":"estimated","schedule_status":parent["schedule_status"],
+            "source":"recurrence","revision":parent["revision"],"follow_rule_id":rule["id"],
+            "follow_parent_id":parent["id"],"follow_parent_label":label,"follow_active":rule["stopped_on"] is None}
+    return sorted(by_day.values(),key=lambda r:(r["starts_at"],r["id"]))
+
+
+def follow_plan(db,group_id,payload):
+    rule=db.execute("""SELECT * FROM calendar_follow_rules WHERE group_id=? AND state_id=? AND event_type=? AND stopped_on IS NULL""",
+        (group_id,payload.state_id,payload.event_type)).fetchone()
+    proposed=rule or {"id":"preview","group_id":group_id,"state_id":payload.state_id,"event_type":payload.event_type,
+        "starts_on":payload.starts_on.isoformat(),"stopped_on":None}
+    end=min(payload.starts_on+timedelta(days=61),date(2100,1,1))
+    return {"active_rule_id":rule["id"] if rule else None,"active_from":rule["starts_on"] if rule else None,
+        "items":project_follow(db,proposed,payload.starts_on,end)}
+
+
+def preview_follow(path,group_id,payload):
+    with connection(path) as db:
+        validate_follow(db,group_id,payload)
+        return follow_plan(db,group_id,payload)
+
+
+def enable_follow(path,group_id,payload):
+    with transaction(path) as db:
+        validate_follow(db,group_id,payload,True)
+        plan=follow_plan(db,group_id,payload)
+        if plan["active_rule_id"]:
+            if plan["active_from"]!=payload.starts_on.isoformat():
+                raise ValueError("A follow rule is already active. Stop it before changing the start date.")
+            return plan
+        last=db.execute("""SELECT MAX(stopped_on) FROM calendar_follow_rules WHERE group_id=? AND state_id=? AND event_type=?""",
+            (group_id,payload.state_id,payload.event_type)).fetchone()[0]
+        if last and payload.starts_on.isoformat()<last:
+            raise ValueError("Start after the previous follow period to preserve its history")
+        if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND state_id=? AND event_type=? AND
+            schedule_status='scheduled' AND (starts_at>=? OR ends_at>?)""",
+            (group_id,payload.state_id,payload.event_type,payload.starts_on.isoformat(),payload.starts_on.isoformat())).fetchone():
+            raise ValueError("Independent schedules already exist. Review or cancel them before following the parent event.")
+        for series in db.execute("""SELECT r.template_json FROM calendar_rolling_series r JOIN calendar_series s ON s.id=r.series_id
+            WHERE s.group_id=? AND r.status IN ('active','conflict')""",(group_id,)):
+            template=json.loads(series["template_json"])
+            if template.get("state_id")==payload.state_id and template.get("event_type")==payload.event_type:
+                raise ValueError("Stop the independent rolling schedule before following the parent event.")
+        oid=uuid.uuid4().hex
+        db.execute("""INSERT INTO calendar_follow_rules(id,group_id,state_id,event_type,starts_on) VALUES (?,?,?,?,?)""",
+            (oid,group_id,payload.state_id,payload.event_type,payload.starts_on.isoformat()))
+        audit(db,"follow_enabled",oid)
+        return follow_plan(db,group_id,payload)
+
+
+def stop_follow(path,group_id,rule_id):
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        row=db.execute("SELECT * FROM calendar_follow_rules WHERE group_id=? AND id=?",(group_id,rule_id)).fetchone()
+        if not row:
+            raise LookupError("Follow rule not found")
+        if not row["stopped_on"]:
+            # Retain today's already-started event and earlier projections.
+            stop=max(row["starts_on"],(datetime.now(timezone.utc).date()+timedelta(days=1)).isoformat())
+            db.execute("UPDATE calendar_follow_rules SET stopped_on=? WHERE id=?",(stop,rule_id))
+            audit(db,"follow_stopped",rule_id)
+        return {"stopped":True}
+
+
 def list_occurrences(path, group_id, start: date, end: date):
     if not 2000 <= start.year <= 2099 or not 2000 <= end.year <= 2100 or not 1 <= (end-start).days <= 93:
         raise ValueError("Calendar range must be 1–93 days")
@@ -177,8 +297,14 @@ def list_occurrences(path, group_id, start: date, end: date):
         progress=review_status(db,group_id,[row["id"] for row in rows])
         rolling = {r["series_id"]:r["status"] for r in db.execute(
             "SELECT r.series_id,r.status FROM calendar_rolling_series r JOIN calendar_series s ON s.id=r.series_id WHERE s.group_id=?",(group_id,))}
-        return {"items":[{**dict(row),**({"review":progress[row["id"]]} if row["id"] in progress else {}),
-                         **({"rolling_status":rolling[row["series_id"]]} if row["series_id"] in rolling else {})} for row in rows]}
+        items=[{**dict(row),**({"review":progress[row["id"]]} if row["id"] in progress else {}),
+                         **({"rolling_status":rolling[row["series_id"]]} if row["series_id"] in rolling else {})} for row in rows]
+        for rule in db.execute("""SELECT * FROM calendar_follow_rules WHERE group_id=? AND starts_on<?
+            AND (stopped_on IS NULL OR stopped_on>?)""",(group_id,end.isoformat(),(start-timedelta(days=3)).isoformat())):
+            items.extend(project_follow(db,rule,start,end))
+        if len(items)>2000:
+            raise ValueError("Too many calendar entries; select a shorter range")
+        return {"items":sorted(items,key=lambda r:(r["starts_at"],r["id"]))}
 
 
 def create(path, group_id, payload: CalendarCreate):
@@ -204,6 +330,10 @@ def create_in_transaction(db, group_id, payload: CalendarCreate):
                 raise ValueError("Request key already used for a different schedule")
             return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?", (group_id, oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
     validate_scope(db, group_id, payload)
+    if payload.event_type in FOLLOW_RULES and db.execute("""SELECT 1 FROM calendar_follow_rules
+        WHERE group_id=? AND state_id=? AND event_type=? AND stopped_on IS NULL""",
+        (group_id,payload.state_id,payload.event_type)).fetchone():
+        raise ValueError("This event follows its parent schedule. Stop the follow rule before creating independent dates.")
     if payload.reject_existing:
         # Date-only entries are ambiguous with any timed entry on the same UTC day.
         # Include cancelled entries so a new forecast cannot silently resurrect them.
@@ -609,7 +739,9 @@ class CalendarCycleCreate(BaseModel):
     def validate_phases(self):
         actual=[(p.event_type,p.phase) for p in self.phases]
         if self.kind=="svs":
-            valid=[[("svs_preparation","Preparation"),("svs_battle","Battle")]]
+            # Preserve the shape of already persisted two-phase renewal templates.
+            valid=[[("svs_matchmaking","Matchmaking"),("svs_preparation","Preparation"),("svs_battle","Battle"),("svs_triage","Field Triage")],
+                   [("svs_preparation","Preparation"),("svs_battle","Battle")]]
         else:
             prep=[(self.kind,p) for p in ("Voting","Registration","Matchmaking")]
             valid=[prep+[(self.kind,"Battle")],prep+[(self.kind,"Legion 1")],prep+[(self.kind,"Legion 1"),(self.kind,"Legion 2")]]

@@ -33,14 +33,20 @@ export function cycleDraft(kind:CycleKind,monday:string,state:string,alliance:st
     const row:ScheduleFields={...common,event_type:kind,phase,precision:"minute",starts_at:start+"T"+(run.startTimeUtc??"00:00")+"Z",ends_at:null};
     return {...row,ends_at:new Date(Date.parse(row.starts_at)+n*60000).toISOString().slice(0,16)+"Z"};
   });
-  const prep=find("Preparation"),battle=find("Battle");
+  const matchmaking=find("Matchmaking"),prep=find("Preparation"),battle=find("Battle"),triage=find("Field Triage");
   if(!battle.startTimeUtc)throw Error("Game reference is missing SvS battle start time.");
   const start=addDays(monday,offset(prep))+"T"+(prep.startTimeUtc??"00:00")+"Z";
   const battleStart=addDays(monday,offset(battle))+"T"+battle.startTimeUtc+"Z";
-  const battleRow:ScheduleFields={...common,event_type:"svs_battle",phase:"Battle",precision:"minute",starts_at:battleStart,ends_at:null};
-  // Keep the reviewed policy: preparation continues until the known battle start.
-  return [{...common,event_type:"svs_preparation",phase:"Preparation",precision:"minute",starts_at:start,ends_at:battleStart},
-    {...battleRow,ends_at:referenceEnd(reference,battleRow)}];
+  const time=(ms:number)=>new Date(ms).toISOString().slice(0,16)+"Z";
+  const battleEnd=time(Date.parse(battleStart)+runMinutes(battle)!*60000);
+  const matchStart=time(Date.parse(start)-runMinutes(matchmaking)!*60000);
+  const triageEnd=time(Date.parse(battleEnd)+runMinutes(triage)!*60000);
+  return [
+    {...common,event_type:"svs_matchmaking",phase:"Matchmaking",precision:"minute",starts_at:matchStart,ends_at:start},
+    {...common,event_type:"svs_preparation",phase:"Preparation",precision:"minute",starts_at:start,ends_at:battleStart},
+    {...common,event_type:"svs_battle",phase:"Battle",precision:"minute",starts_at:battleStart,ends_at:battleEnd},
+    {...common,event_type:"svs_triage",phase:"Field Triage",precision:"minute",starts_at:battleEnd,ends_at:triageEnd}
+  ];
 }
 export const isLegion=(phase:string)=>/^Legion [12]$/.test(phase);
 export const isBattlePhase=(phase:string)=>phase==="Battle"||isLegion(phase);
@@ -55,7 +61,7 @@ export function moveCyclePhaseStart(fields:ScheduleFields,start:string):Schedule
   if(fields.starts_at&&fields.ends_at)return moved;
   if(fields.starts_at&&!isBattlePhase(fields.phase))return moved;
   const event=gameEventForCalendar(fields.event_type);
-  const minutes=fields.event_type.startsWith("svs_")?referenceDuration(event,fields.event_type):
+  const minutes=fields.event_type.startsWith("svs_")?referenceDuration(event,fields.event_type,fields.phase):
     runMinutes(event?.schedule?.runs?.find(r=>r.label===(isBattlePhase(fields.phase)?"Battle":fields.phase)));
   if(minutes===null||fields.precision==="date"&&minutes<1440)return {...moved,ends_at:null};
   const first=Date.parse(fields.precision==="date"?start+"T00:00Z":start);

@@ -19,10 +19,11 @@ export function CalendarEventLink({groupId,row,writable,onRevision,onEditingChan
   const [refresh,setRefresh]=useState(0);
   useNavigationGuard(false,busy);
   useEffect(()=>{
+    if(row.follow_rule_id)return;
     const controller=new AbortController();
     api.calendarEventLink(groupId,row.id,controller.signal).then(result=>{if(!controller.signal.aborted)setData(result);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});
     return ()=>controller.abort();
-  },[groupId,row.id,refresh]);
+  },[groupId,row.id,row.follow_rule_id,refresh]);
   async function save(id:string|null,sessionId?:string){
     if(!data||lock.current||!allowNavigation())return;
     lock.current=true;setBusy(true);setError("");
@@ -36,6 +37,7 @@ export function CalendarEventLink({groupId,row,writable,onRevision,onEditingChan
     catch(e){setError(e instanceof Error?e.message:"Unable to start data entry");}
     finally{lock.current=false;setBusy(false);onEditingChange(false);}
   }
+  if(row.follow_rule_id)return null;
   const needsSession=["bear_trap","foundry","canyon"].includes(row.event_type);
   const ready=!!data?.linked&&(!needsSession||!!data.linked.session_id);
   return <section className="calendar-stage-timeline" aria-label="Actual event record">

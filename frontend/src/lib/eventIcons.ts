@@ -20,6 +20,8 @@ const icons = new Map<string, string>([
   ["castle_battle", castle],
   ["svs_preparation", svs],
   ["svs_battle", svs],
+  ["svs_matchmaking", svs],
+  ["svs_triage", svs],
 ]);
 
 export function eventIconUrl(eventType: string): string | undefined {

@@ -7,11 +7,16 @@ describe("reviewed event cycle draft",()=>{
     expect(rows[3].ends_at).toBeNull();
     expect(rows.every(p=>p.precision==="date"&&p.confidence==="estimated")).toBe(true);
   });
-  it("uses extended SvS preparation and separate battle",()=>{
+  it("builds all four SvS phases around the preparation Monday, including year rollover",()=>{
     const rows=cycleDraft("svs","2028-01-03","4284","a");
-    expect(rows[0].ends_at).toBe("2028-01-08T10:00Z");
-    expect(rows[1].starts_at).toBe(rows[0].ends_at);
-    expect(rows[1].alliance_id).toBeNull();
+    expect(rows.map(p=>p.phase)).toEqual(["Matchmaking","Preparation","Battle","Field Triage"]);
+    expect(rows.map(p=>p.starts_at)).toEqual(["2028-01-01T00:00Z","2028-01-03T00:00Z","2028-01-08T10:00Z","2028-01-08T22:00Z"]);
+    expect(rows.map(p=>p.ends_at)).toEqual(["2028-01-03T00:00Z","2028-01-08T10:00Z","2028-01-08T22:00Z","2028-01-11T00:00Z"]);
+    expect(rows.every(p=>p.alliance_id===null&&p.scope==="state"&&p.confidence==="estimated")).toBe(true);
+    const repeated=cycleOccurrences("svs",rows,3,28);
+    expect(repeated[1].map(p=>p.starts_at)).toEqual(["2028-01-29T00:00Z","2028-01-31T00:00Z","2028-02-05T10:00Z","2028-02-05T22:00Z"]);
+    expect(repeated[2][3].ends_at).toBe("2028-03-07T00:00Z");
+    expect(()=>cycleOccurrences("svs",rows,2,7)).toThrow(/interval/);
   });
   it("rejects a non-Monday anchor",()=>expect(()=>cycleDraft("svs","2028-01-04","4284",null)).toThrow());
 });

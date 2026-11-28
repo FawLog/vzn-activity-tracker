@@ -12,6 +12,7 @@ import { CycleEditor, CycleDetails } from "../components/CycleEditor";
 import { CalendarEventLink } from "../components/CalendarEventLink";
 import {CycleBattleWorkspace} from "../components/CycleBattleWorkspace";
 import {OccurrenceEventWorkspace} from "../components/OccurrenceEventWorkspace";
+import {FollowScheduleDetails} from "../components/FollowScheduleDetails";
 import { EventStageTimeline } from "../components/EventStageTimeline";
 import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
@@ -19,7 +20,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { navigate } from "../lib/router";
 
 import { api } from "../lib/api";
-import { calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
+import { calendarEndLabel, calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
 import { eventLabel, formatDate } from "../lib/format";
 import { useGroupContext } from "../lib/group-context";
 
@@ -76,7 +77,7 @@ export function CalendarPage(){
   const battleCycle=selected?.cycle_id&&["foundry","canyon"].includes(selected.event_type)?selected.cycle_id:null;
   const sharedOccurrence=!!selected&&selected.scope==="alliance"&&(selected.event_type==="bear_trap"&&!!selected.entry_cycle_date||["alliance_mobilization","alliance_championship"].includes(selected.event_type));
   const sharedCard=!!battleCycle||sharedOccurrence;
-  const svsCycle=!!selected?.cycle_id&&["svs_preparation","svs_battle"].includes(selected.event_type);
+  const svsCycle=!!selected?.cycle_id&&selected.event_type.startsWith("svs_");
   const writable=selectedGroup.status==="active"&&alliances.some(a=>a.group_id===groupId&&a.status==="active");
   const filterCount=Number(scope!=="all")+Number(recordFilter!=="all")+Number(showCancelled);
   const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next)setDay(next);setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
@@ -117,7 +118,7 @@ export function CalendarPage(){
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>
           <h3>{view==="Month"?Number(date.slice(8)):weekday(date)+" "+formatDate(date)}</h3>
           {events.map(row=><button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} disabled={workspaceBlocked} onClick={()=>{if(selected?.id===row.id)return;if(allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}>
-            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}{row.cycle_id?" · Linked":""}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small>{row.entry_cycle_date&&<small>Cycle {row.entry_cycle_date} · {row.entry_session_key?.replaceAll("_"," ")}</small>}{row.review&&<small>Record: {row.review.publication} · {row.review.scope}</small>}</span>
+            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}{row.cycle_id?" · Linked":""}</span>}{row.follow_rule_id&&<small>Follows {row.follow_parent_label}</small>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small>{row.entry_cycle_date&&<small>Cycle {row.entry_cycle_date} · {row.entry_session_key?.replaceAll("_"," ")}</small>}{row.review&&<small>Record: {row.review.publication} · {row.review.scope}</small>}</span>
           </button>)}
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
         </section>;
@@ -126,8 +127,8 @@ export function CalendarPage(){
     {selected&&!sharedCard&&<section className="data-panel calendar-detail" aria-label="Schedule details">
       <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{svsCycle?"State of Power (SvS)":(selected.event_type.startsWith("game:")?reference?.name??eventLabel(selected.event_type):eventLabel(selected.event_type))}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Close details</button></div>
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
-      <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
-      {writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected});setDetail(null);}}>Edit schedule</button></div>}
+      <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+calendarEndLabel(selected.ends_at,selected.precision):""}</p>
+      {selected.follow_rule_id?<FollowScheduleDetails key={selected.id} groupId={groupId} row={selected} writable={writable&&!workspaceBlocked} onStopped={()=>saved()}/>:writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected});setDetail(null);}}>Edit schedule</button></div>}
       {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} writable={writable&&!workspaceBlocked} onChanged={saved} onSelect={row=>{if(row.id!==selected.id&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}/>}
       {selected.scope==="alliance"&&["bear_trap","foundry","canyon"].includes(selected.event_type)&&<details><summary>Advanced event data</summary><CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} workspaceBlocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRevision={revision=>{setDetail(current=>current?.groupId===groupId&&current.row.id===selected.id?{groupId,row:{...current.row,revision}}:current);setRetry(n=>n+1);}}/></details>}
       <EventStageTimeline key={selected.id} row={selected}/>

@@ -39,10 +39,15 @@ export function forecastRows(fields:ScheduleFields,count:number,minutes:number){
     return {start:format(start+offset,fields.precision),end:end===null?null:format(end+offset,fields.precision),confidence:i===0?fields.confidence:"estimated"};
   });
 }
-export function runForType(event:GameEventSummary|undefined,type:string):GameRun|undefined{
+export function runForType(event:GameEventSummary|undefined,type:string,phase=""):GameRun|undefined{
   const runs=event?.schedule?.runs??[];
+  if(type==="svs_matchmaking")return runs.find(r=>r.label==="Matchmaking");
+  if(type==="svs_triage")return runs.find(r=>r.label==="Field Triage");
   if(type==="svs_preparation")return runs.find(r=>r.label==="Preparation");
   if(type==="svs_battle"||type==="canyon"||type==="foundry")return runs.find(r=>r.label==="Battle");
+  if(event?.id==="hall-of-chief")return runs.find(r=>r.label?.toLowerCase()===phase.trim().toLowerCase());
+  if(event?.id==="icefire-warhymn-league"&&runs.length===2&&runs[0].label==="Preview"&&runs[1].label==="Competition"&&runs[0].length===24&&runs[0].unit==="hours"&&runs[1].length===6&&runs[1].unit==="days")return {length:7,unit:"days",startWeekday:"sunday"};
+  if(runs.length>1&&["frostfire-mine","crazy-joe"].includes(event?.id??"")&&runs.every(r=>r.length===runs[0].length&&r.unit===runs[0].unit))return {length:runs[0].length,unit:runs[0].unit};
   return runs.length===1?runs[0]:undefined;
 }
 // Only a structured run (not descriptive prose or a repeat cooldown) can supply a duration.
@@ -51,8 +56,8 @@ export function runMinutes(run:GameRun|undefined):number|null{
   const n=run.length*units[run.unit];
   return Number.isInteger(n)&&n>0&&n<=31*DAY?n:null;
 }
-export function referenceDuration(event:GameEventSummary|undefined,type:string):number|null{
-  const n=runMinutes(runForType(event,type));
+export function referenceDuration(event:GameEventSummary|undefined,type:string,phase=""):number|null{
+  const n=runMinutes(runForType(event,type,phase));
   if(n===null)return null;
   // Source daily-stage metadata explicitly extends these reset-based final days.
   if(type==="svs_preparation"&&n===5*DAY)return n+600;
@@ -60,7 +65,7 @@ export function referenceDuration(event:GameEventSummary|undefined,type:string):
   return n;
 }
 export function referenceEnd(event:GameEventSummary|undefined,fields:ScheduleFields):string|null{
-  const n=referenceDuration(event,fields.event_type);
+  const n=referenceDuration(event,fields.event_type,fields.phase);
   if(n===null||!fields.starts_at)return null;
   // A date-only short battle has no known start time. Do not invent one.
   if(fields.precision==="date"&&n<DAY)return null;
@@ -73,18 +78,22 @@ export function referenceEnd(event:GameEventSummary|undefined,fields:ScheduleFie
 export function sourceRunWarning(event:GameEventSummary|undefined,type:string,fields:ScheduleFields):string[]{
   const result:string[]=[];
   if(!event)return result;
-  const run=runForType(event,type);
+  const run=runForType(event,type,fields.phase);
   const date=new Date(fields.starts_at.slice(0,10)+"T00:00Z");
   if(run?.startWeekday&&!Number.isNaN(date.getTime())){
     const weekday=["sunday","monday","tuesday","wednesday","thursday","friday","saturday"][date.getUTCDay()];
     if(weekday!==run.startWeekday.toLowerCase())result.push("Anchor weekday differs from the game reference ("+run.startWeekday+").");
   }
   if(run?.startTimeUtc&&fields.precision==="minute"&&fields.starts_at.slice(11,16)!==run.startTimeUtc)result.push("Anchor time differs from the game reference ("+run.startTimeUtc+" UTC).");
-  if(type==="svs_preparation")result.push("SvS source duration is inconsistent; confirm the end manually, including the extended fifth stage.");
+  if(type==="svs_preparation")result.push("Preparation includes the extended fifth stage; verify the in-game end.");
+  if(type==="svs_triage")result.push("Field Triage end is a community estimate; verify the in-game timer.");
   if(type==="alliance_showdown")result.push("The last stage can extend into Sunday. Confirm the end manually.");
   if(type==="castle_battle")result.push("Castle weeks can overlap SvS; verify the local rotation.");
   if(type==="canyon"||type==="foundry")result.push("This schedules a battle only; use the full event editor for a complete cycle.");
   if(event.id==="bear-hunt")result.push("47.5 hours is a cooldown, not the alliance's chosen schedule.");
+  if(event.scheduleDependency)result.push(event.scheduleOverride?.note??"Verify the parent event and local timing.");
+  if(event.id==="frostfire-mine")result.push("Choose a local time slot: "+(event.schedule?.runs??[]).map(r=>r.startTimeUtc).filter(Boolean).join(", ")+" UTC. The schedule represents one selected slot.");
+  if(event.id==="hall-of-chief"&&!run)result.push("Choose Season 1 or Season 2 to determine duration.");
   if(event.id==="alliance-mobilization")result.push("The monthly/early-state rotation needs a locally verified pattern; use manual scheduling.");
   return result;
 }
@@ -118,4 +127,22 @@ export function advancedPlan(fields:ScheduleFields,count:number,minutes:number,m
   if(offsets.length!==count||offsets[offsets.length-1]>366*dayMs)throw Error("Maximum recurrence horizon is 366 days");
   const payload={occurrence_count:count,interval_minutes:null,...(mode==="months"?{repeat_months:months}:{repeat_weekdays:[...weekdays].sort((a,b)=>a-b)})};
   return {payload,rows:offsets.map((offset,i)=>({start:format(anchor+offset,fields.precision),end:end===null?null:format(end+offset,fields.precision),confidence:i===0?fields.confidence:"estimated"}))};
+}
+
+// Calendar-month rules are anchored estimates, not fixed 30-day intervals.
+// State-dependent rotations require explicit selection of the reference rule.
+export function referenceRepeat(event:GameEventSummary|undefined,explicit=false):{mode:RepeatMode;count:number;days:number;months:number;weekdays:number[]}{
+  const fallback={mode:"fixed" as const,count:1,days:2,months:1,weekdays:[]};
+  const fixed=fixedGameInterval(event);
+  if(fixed!==null&&fixed%1440===0)return {...fallback,count:Math.min(4,1+Math.floor(366*1440/fixed)),days:fixed/1440};
+  const rule=event?.schedule?.repeat;
+  if(rule?.kind==="every"&&rule.unit==="months"&&(explicit||!["alliance-mobilization","king-of-icefield","brothers-in-arms"].includes(event?.id??""))){
+    if(!Number.isInteger(rule.every)||rule.every<1||rule.every>12)return fallback;
+    return {...fallback,mode:"months",count:Math.min(4,1+Math.floor(12/rule.every)),months:rule.every};
+  }
+  if(rule?.kind==="weekly"){
+    const weekdays=rule.weekdays.map(d=>["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].indexOf(d.toLowerCase()));
+    if(weekdays.length&&weekdays.every(d=>d>=0))return {...fallback,mode:"weekdays",count:4,weekdays};
+  }
+  return fallback;
 }

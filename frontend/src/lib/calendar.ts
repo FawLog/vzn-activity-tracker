@@ -11,6 +11,10 @@ export interface CalendarReview {
   final_attendance_review:boolean|null;
 }
 export interface CalendarOccurrence {
+  follow_rule_id?:string;
+  follow_parent_id?:string;
+  follow_parent_label?:string;
+  follow_active?:boolean;
   review?:CalendarReview;
   rolling_status?:"active"|"stopped"|"conflict";
   entry_cycle_date?:string|null;
@@ -67,4 +71,38 @@ export function calendarTime(row:CalendarOccurrence,day:string):string {
   if(row.precision==="date")return "Time not set";
   if(row.starts_at.slice(0,10)<day)return "Continues";
   return row.starts_at.slice(11,16)+" UTC";
+}
+
+
+// End timestamps are exclusive internally. Only the end presentation uses the
+// game's 24:00 convention; starts, comparisons, recurrence and API payloads do not.
+function canonicalEnd(value:string,precision:CalendarOccurrence["precision"]):boolean{
+  const pattern=precision==="date"?/^\d{4}-\d{2}-\d{2}$/:/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z$/;
+  if(!pattern.test(value))return false;
+  const d=new Date(precision==="date"?value+"T00:00Z":value);
+  return Number.isFinite(d.getTime())&&(precision==="date"?d.toISOString().slice(0,10):d.toISOString().slice(0,16)+"Z")===value;
+}
+export function validCalendarEnd(value:string|null,precision:CalendarOccurrence["precision"]):boolean{
+  return value===null||canonicalEnd(value,precision)&&Number(value.slice(0,4))>=2000&&Number(value.slice(0,4))<=2099;
+}
+export function calendarEndInput(value:string|null,precision:CalendarOccurrence["precision"]):string{
+  if(!value)return "";
+  if(!canonicalEnd(value,precision))return value;
+  if(precision==="date")return addDays(value,-1);
+  if(value.endsWith("T00:00Z"))return addDays(value.slice(0,10),-1)+" 24:00";
+  return value.slice(0,10)+" "+value.slice(11,16);
+}
+export function calendarEndValue(input:string,precision:CalendarOccurrence["precision"]):string|null{
+  if(!input)return null;
+  if(precision==="date")return canonicalEnd(input,"date")?addDays(input,1):input;
+  const match=/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})$/.exec(input);
+  if(!match||!canonicalEnd(match[1],"date"))return input;
+  const value=match[2]==="24:00"?addDays(match[1],1)+"T00:00Z":match[1]+"T"+match[2]+"Z";
+  return canonicalEnd(value,"minute")?value:input;
+}
+export function calendarEndLabel(value:string|null,precision:CalendarOccurrence["precision"]):string{
+  if(!value)return "End time not set";
+  if(!canonicalEnd(value,precision))return value;
+  const display=calendarEndInput(value,precision);
+  return display+(precision==="date"?" 24:00 UTC":" UTC");
 }

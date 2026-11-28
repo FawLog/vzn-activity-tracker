@@ -116,14 +116,12 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
         if kind!="bear_trap" and index==0:
             rows.append({"fid":"absent","nickname":"absent","registration":"registered","role":"main"})
         payload = {"revision":0,"rows":rows}
-        if kind == "foundry":
+        if kind in ("foundry","canyon"):
             for row in rows:
                 row["registration"] = "registered"
                 row["role"] = "substitute" if row["fid"] == "absent" else "main"
                 row["metrics"] = {"personal_points": 0 if row["fid"] == "absent" else 100}
             payload.update(registration_complete=True,results_complete=True,foundry_details={"main_count":sum(r["role"]=="main" for r in rows),"substitute_count":sum(r["role"]=="substitute" for r in rows)})
-        if kind == "canyon":
-            payload.update(registration_complete=True, attendance_complete=True, foundry_details={"main_count":sum(r.get("role")=="main" for r in rows),"substitute_count":0})
         result = c.put(root+"/sessions/"+s["id"],json=payload)
         assert result.status_code==200,result.text
         revisions[s["id"]]=1
@@ -153,7 +151,7 @@ def test_finalize_complete_attendance(authenticated_client, settings, kind):
     assert {r["fid"]:r["outcome"] for r in response.json()["completion"]}==expected
     data=report(settings.database_path,gid,aid,date(2026,11,25),date(2026,11,25))
     cells=data["events"][0]["activity_cells"]
-    assert cells["present"]=="positive" and cells["absent"]==("no_show" if kind=="foundry" else "negative")
+    assert cells["present"]=="positive" and cells["absent"]==("no_show" if kind in ("foundry","canyon") else "negative")
     assert cells["excused"]=="excused" and cells["no-duty"]=="excused"
     if kind!="bear_trap":
         assert data["events"][0]["metrics"]["no_shows"]==1
@@ -201,7 +199,7 @@ def test_foundry_cycle_registration_and_zero_vs_missing(authenticated_client, se
     invalid={"revision":0,"rows":l1,"registration_complete":True,"foundry_details":{"main_count":2,"substitute_count":0}}
     assert c.put(root+"/sessions/"+ids[0],json=invalid).status_code==409
     assert save(ids[0],0,l1,False).status_code==200
-    assert save(ids[1],0,[row("attended",None),row("both",200)]).status_code==200
+    assert save(ids[1],0,[row("attended",None),row("both",200)],False).status_code==200
     listing = f"/api/v1/groups/{gid}/alliances/{aid}/events"
     draft = next(r for r in c.get(listing).json()["items"] if r["id"] == eid)
     assert (draft["participant_count"], draft["participant_label"], draft["participant_complete"]) == (3, "Registered", True)
@@ -277,3 +275,76 @@ def test_canyon_registration_counts_and_draft_gate(authenticated_client, setting
     with pytest.raises(ValueError, match="Registration alone must remain a draft"):
         event_editor.publish(path,gid,eid)
     assert event_editor.read(path,gid,eid)["status"] == "draft"
+
+
+@pytest.mark.parametrize("kind", ["foundry","canyon"])
+def test_complete_ranking_missing_and_zero_are_no_show(authenticated_client,settings,kind):
+    from app.services.analytics import report
+    from datetime import date
+    c=authenticated_client
+    gid=create_onboarded_group(c)["id"]
+    aid=c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]["id"]
+    roster=["present","zero","missing","not-registered"]
+    for fid in roster:
+        assert c.post(f"/api/v1/groups/{gid}/players",json={"fid":fid,"nickname":fid}).status_code==201
+    eid=c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events",json={"event_type":kind,"occurred_on":"2026-11-28"}).json()["id"]
+    root=f"/api/v1/groups/{gid}/events/{eid}"
+    revisions={}
+    ids=[]
+    for key in ("legion_1","legion_2"):
+        result=c.post(root+"/sessions",json={"session_key":key,"started_at":"2026-11-28T17:00:00Z"})
+        sid=next(s["id"] for s in result.json()["sessions"] if s["session_key"]==key)
+        ids.append(sid)
+        rows=[{"fid":fid,"nickname":fid,"registration":"registered","role":"main","metrics":metrics} for fid,metrics in (
+            ("present",{"personal_points":100}),("zero",{"personal_points":0}),("missing",{}))]
+        payload={"revision":0,"rows":rows,"registration_complete":True,"results_complete":key=="legion_2","foundry_details":{"main_count":3,"substitute_count":0}}
+        assert c.put(root+"/sessions/"+sid,json=payload).status_code==200
+        revisions[sid]=1
+    review={"roster":roster,"expected_sessions":2,"revisions":revisions}
+    assert c.post(root+"/publish",json=review).status_code==409
+    assert c.post(root+"/publish").status_code==200
+    partial=report(settings.database_path,gid,aid,date(2026,11,28),date(2026,11,28))
+    missing=next(p for p in partial["players"] if p["fid"]=="missing")
+    assert missing["metrics"][kind]["reliability"]["unknown"]==1
+    assert c.post(root+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
+    state=c.get(root+"/editor").json()
+    first=next(s for s in state["sessions"] if s["id"]==ids[0])
+    payload={k:first[k] for k in ("revision","rows","registration_complete","foundry_details")}
+    payload["results_complete"]=True
+    assert c.put(root+"/sessions/"+ids[0],json=payload).status_code==200
+    review["revisions"]={s["id"]:s["revision"] for s in c.get(root+"/editor").json()["sessions"]}
+    result=c.post(root+"/publish",json=review)
+    assert result.status_code==200,result.text
+    data=report(settings.database_path,gid,aid,date(2026,11,28),date(2026,11,28))
+    assert data["events"][0]["activity_cells"]=={"present":"positive","zero":"no_show","missing":"no_show","not-registered":"not_registered"}
+    assert data["events"][0]["metrics"]["no_shows"]==4
+    for s in result.json()["sessions"]:
+        assert next(r for r in s["rows"] if r["fid"]=="missing")["metrics"]=={}
+
+
+def test_canyon_three_team_report_roundtrip_and_scope(authenticated_client,settings):
+    c=authenticated_client
+    gid=create_onboarded_group(c)["id"]
+    owner=c.get(f"/api/v1/groups/{gid}/alliances").json()["items"][0]
+    aid=owner["id"]
+    eid=c.post(f"/api/v1/groups/{gid}/alliances/{aid}/events",json={"event_type":"canyon","occurred_on":"2026-11-28"}).json()["id"]
+    root=f"/api/v1/groups/{gid}/events/{eid}"
+    result=c.post(root+"/sessions",json={"session_key":"legion_2","started_at":"2026-11-28T17:00:00Z"})
+    sid=next(s["id"] for s in result.json()["sessions"] if s["session_key"]=="legion_2")
+    summary={"rank":2,"legion":2,"reported_at":"2026-11-28T17:59:59Z","teams":[
+        {"rank":1,"state":"4276","legion":1,"tag":"MAD","name":"ManifestDestiny","score":686310},
+        {"rank":2,"state":owner["state_id"],"legion":2,"tag":owner["tag"],"name":owner["name"],"score":503020},
+        {"rank":3,"state":"4190","legion":1,"tag":"SMT","name":"술맛탱","score":319403}],
+        "stats":[{"label":"Total Fuel Used","value":"33.8M","mvp":"CHAPO INFINITY乂","mvp_value":"3.9M"}]}
+    url=root+"/sessions/"+sid
+    body={"revision":0,"rows":[],"foundry_details":{"canyon_summary":summary}}
+    assert c.put(url,json={**body,"foundry_details":{"canyon_summary":{**summary,"legion":1}}}).status_code==409
+    wrong=[dict(t) for t in summary["teams"]]
+    wrong[1]["tag"]="WRONG"
+    assert c.put(url,json={**body,"foundry_details":{"canyon_summary":{**summary,"teams":wrong}}}).status_code==409
+    result=c.put(url,json=body)
+    assert result.status_code==200,result.text
+    saved=next(s for s in c.get(root+"/editor").json()["sessions"] if s["id"]==sid)
+    assert saved["foundry_details"]["canyon_summary"]==summary
+    assert not saved["results_complete"]
+    assert c.get(root+"/editor").json()["status"]=="draft"

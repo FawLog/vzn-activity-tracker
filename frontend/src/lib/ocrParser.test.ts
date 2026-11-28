@@ -153,3 +153,25 @@ it("reads compact power in Canyon mail and rejects a different event",()=>{
  expect(parseScreenshot(fixture(words),"canyon_registration","legion_1","mail").rows).toEqual([{nickname:"DrunnaNyx",role:"main",source:"mail"}]);
  expect(parseScreenshot(fixture(words),"foundry_registration","legion_1","wrong").rows).toEqual([]);
 });
+
+it("reads Canyon personal ranking from header and scroll overlap, not the team report",()=>{
+ const top=fixture([["Personal Point Ranking",240,240,350],["VisibleFox_205",304,335,220],["711,167",304,380,100],["CHAPO INFINITY乂",304,470,220],["528,168",304,515,100],["Melon doggo",304,605,190],["374,070",304,650,100],["4",90,770,20],["watermelon",304,745,160],["372,626",304,790,100],["8",90,1300,20],["BobMarley",304,1275,150],["223,633",304,1320,100]]);
+ const bottom=fixture([["238,281",304,230,100],["8",90,345,20],["BobMarley",304,320,150],["223,633",304,365,100],["9",90,480,20],["CatMight兰",304,455,150],["218,320",304,500,100],["16",90,1440,20],["相忘於江湖",304,1415,150],["21,212",304,1460,100],["Expires at 2027-01-27 17:59:59",220,1580,400]]);
+ expect(parseScreenshot(top,"canyon_results","legion_2","top").rows.map(r=>[r.nickname,r.points])).toEqual([["VisibleFox_205",711167],["CHAPO INFINITY乂",528168],["Melon doggo",374070],["watermelon",372626],["BobMarley",223633]]);
+ expect(parseScreenshot(bottom,"canyon_results","legion_2","bottom").rows.map(r=>[r.nickname,r.points,r.rank])).toEqual([["BobMarley",223633,8],["CatMight兰",218320,9],["相忘於江湖",21212,16]]);
+});
+it("reads three Canyon teams from report header, not opponent legion identity",()=>{
+ const words:[string,number,number,number][]=[["2026-11-28 17:59:59",522,250,275],["Congratulations, [Legion 2] of your alliance ranked No. 2",58,460,700],["in [Canyon Clash]!",58,500,300],
+ ["#4276",115,760,85],["#4284",374,760,85],["#4190",633,760,85],
+ ["Legion 1",112,800,90],["Legion 2",370,800,90],["Legion 1",630,800,90],
+ ["[MAD]ManifestDestiny",46,843,224],["[VZN]ValiantZenith",305,843,220],["[SMT]술맛탱",566,843,210],
+ ["686,310",115,895,112],["503,020",374,895,112],["319,403",633,895,112],
+ ["Stats",240,980,60],["MVP",630,980,50],["Total Fuel Used: 33.8M",44,1040,280],["CHAPO INFINITY乂:",555,1035,206],["3.9M",630,1070,65],
+ ["Enemy Squads Defeated: 426",44,1120,350],["watermelon: 64",575,1120,170],["Total Retreats: 30",44,1450,220],["Ventura: 6",620,1450,120]];
+ const parsed=parseScreenshot(fixture(words),"canyon_results","legion_2","summary");
+ expect(parsed.rows).toEqual([]);
+ expect(parsed.foundry?.canyon_summary?.teams.map(t=>[t.tag,t.score,t.rank])).toEqual([["MAD",686310,1],["VZN",503020,2],["SMT",319403,3]]);
+ expect(parsed.foundry?.canyon_summary?.rank).toBe(2);
+ expect(parsed.foundry?.canyon_summary?.stats).toContainEqual({label:"Enemy Squads Defeated",value:"426",mvp:"watermelon",mvp_value:"64"});
+ expect(parseScreenshot(fixture(words),"canyon_results","legion_1","wrong").foundry).toBeUndefined();
+});

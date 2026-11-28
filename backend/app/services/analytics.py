@@ -154,14 +154,16 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
                     "registration_outcome":registration(row,s),"attendance_outcome":attendance(row,s),"metrics":row["metrics"]})
             entry={"fid":f,"event_id":event["id"],"event_type":kind,"occurred_on":event["occurred_on"],"alliance_id":event["alliance_id"],"alliance_name":event["alliance_name"],"home_alliance_id":home,"sessions":evidence}
             final=final_row["outcome"] if final_row else None
-            if kind == "foundry":
-                # Explicit scores are the evidence; missing scores never become zero.
+            if kind == "foundry" or kind == "canyon" and (all(s["results_complete"] for s in ss) or not finalized and any(s["results_complete"] or any("personal_points" in r["metrics"] for r in s["rows"].values()) for s in ss)):
+                # Missing scores are negative only in a verified complete ranking; no fabricated zero metric.
                 for item in evidence:
                     score = item["metrics"].get("personal_points")
                     if final in ("excused", "no_duty") or item["eligibility"] == "no_duty" or item["attendance"] in ("excused", "no_duty"):
                         item["attendance_outcome"] = "excused"
                     elif score is not None:
                         item["attendance_outcome"] = "positive" if score > 0 else "negative" if item["registration_outcome"] == "positive" else "unknown"
+                    elif item["registration_outcome"] == "positive" and session_by_id[item["session_id"]]["registration_complete"] and session_by_id[item["session_id"]]["results_complete"]:
+                        item["attendance_outcome"] = "negative"
                     elif item["attendance_outcome"] != "negative":
                         item["attendance_outcome"] = "unknown"
                 registered = any(s["registration_outcome"] == "positive" for s in evidence)
@@ -223,7 +225,7 @@ def report(path, group_id, alliance_id, start: date, end: date, fid=None):
 
 def activity_cell(entry, kind=None):
     kind = entry["event_type"] if kind is None else kind
-    if kind == "foundry":
+    if kind == "foundry" or kind == "canyon" and "cycle_registration" in entry:
         outcome = entry.get("cycle_attendance", "unknown")
         if outcome == "positive" and any(s["registration_outcome"] == "positive" and s["attendance_outcome"] == "negative" for s in entry["sessions"]):
             return "present_no_show"
@@ -253,7 +255,7 @@ def activity_cell(entry, kind=None):
 def aggregate(entries, kind):
     evidence=[s for e in entries for s in e["sessions"]]
     out={"observed_events":len(entries),"observed_sessions":len(evidence)}
-    if kind == "foundry":
+    if kind == "foundry" or kind == "canyon" and all("cycle_registration" in e for e in entries):
         out["registration"]=counts(e.get("cycle_registration", "positive" if any(s["registration_outcome"] == "positive" for s in e["sessions"]) else "unknown") for e in entries)
         out["missed_unregistered"]=sum(activity_cell(e, kind) == "not_registered" for e in entries)
         out["missed_registered"]=sum(activity_cell(e, kind) == "no_show" for e in entries)

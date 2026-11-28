@@ -72,6 +72,21 @@ Keep API routes versioned under `/api/v1`. Every mutation must enforce server-si
 
 Follow `DESIGN_SYSTEM.md` and the accepted references in `docs/concepts/`. The interface is a restrained Arctic Intelligence operations workspace: open tables/rails, precise dividers, compact typography, meaningful state colors, and minimal motion. Avoid generic SaaS card grids, fake charts/data, neon sci-fi framing, decorative pills, marketing heroes, or random icons. All true app controls and text remain code-native.
 
+## Mandatory database migration checklist
+
+Whenever a migration is added, complete this checklist in the same commit/PR, before pushing:
+
+1. Add the next contiguous numbered SQL file under `backend/migrations/`. Never edit or remove previously applied migrations.
+2. Search the entire repository for the previous schema version, including `migration_version`, migration return-value assertions, explicit migration filenames, migration fixture lists, and expected missing-file/gap messages. Do not rely on updating only the migration tests.
+3. Explicitly inspect and update all affected assertions in:
+   - `backend/tests/test_api.py` — health endpoint expected migration version;
+   - `backend/tests/test_backup.py` — backup/restore expected migration version;
+   - `backend/tests/test_migrations.py` — latest-version assertions, historical migration subsets, missing-file checks, gap fixture, and upgrade/idempotency tests.
+4. Check any other version-dependent fixtures or documentation discovered by the repository-wide search. Preserve intentionally historical version expectations and do not change CI/deployment/security controls without owner approval.
+5. Run the full backend suite (`PYTHONPATH=backend python -m pytest backend/tests -q`) on a non-production runner and confirm migration, health, backup/restore, and upgrade tests pass. Do not weaken assertions or skip tests to obtain a green build. Verify all six CI jobs on the exact final PR head before merging.
+
+This checklist is mandatory for every future migration, even an additive one-column migration. The recurring failure to update health and backup assertions was observed again when adding migration 0024 (PR #85).
+
 ## Verification
 
 For backend changes, run unit tests in a safe development environment. For frontend changes, run TypeScript/build/Vitest and browser QA on the external runner, never on the production VPS. Compare browser screenshots with the accepted concepts using the same target dimensions and inspect layout, copy, typography, palette, controls/icons, empty states, and responsive behavior.

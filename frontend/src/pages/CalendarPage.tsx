@@ -112,7 +112,7 @@ export function CalendarPage(){
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
       {writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected});setDetail(null);}}>Edit schedule</button></div>}
-      {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} onSelect={row=>{if(row.id!==selected.id&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}/>}
+      {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} writable={writable&&!workspaceBlocked} onChanged={saved} onSelect={row=>{if(row.id!==selected.id&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}/>}
       <CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} workspaceBlocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRevision={revision=>{setDetail(current=>current?.groupId===groupId&&current.row.id===selected.id?{groupId,row:{...current.row,revision}}:current);setRetry(n=>n+1);}}/>
       <EventStageTimeline key={selected.id} row={selected}/>
       {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}

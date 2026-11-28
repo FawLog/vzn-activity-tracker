@@ -1,5 +1,5 @@
 import type { AnalyticsReport } from "./analytics";
-import type { CycleCreate } from "./calendar-cycles";
+import type { CycleCreate, CycleSeries, CycleReconcilePlan, CycleReconcilePayload } from "./calendar-cycles";
 import type { CalendarOccurrence, CalendarReview } from "./calendar";
 import type { BearSchedulePayload } from "./bear-schedule";
 import type { ScheduleCreate, ScheduleUpdate, FutureChange, FuturePreview, ScheduleTemplate, ScheduleTemplateInput } from "./schedule-editor";
@@ -53,7 +53,9 @@ export const api = {
   setCalendarEventLink:(groupId:string,id:string,event_id:string|null,revision:number,session_id?:string|null)=>request<CalendarEventLinkState>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/event-link`,{method:"PUT",body:JSON.stringify({event_id,revision,session_id})}),
   eventSchedules:(groupId:string,id:string,signal?:AbortSignal)=>request<{items:(CalendarOccurrence&{linked_session_id?:string|null})[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/calendar`,{signal}),
   createCycle: (groupId:string,payload:CycleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles`,{method:"POST",body:JSON.stringify(payload)}),
-  calendarCycle: (groupId:string,cycleId:string,signal?:AbortSignal) => request<{kind:string;items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}`,{signal}),
+  cycleReconcilePreview:(groupId:string,cycleId:string,following:boolean,signal?:AbortSignal)=>request<CycleReconcilePlan>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}/reconcile?following=${following}`,{signal}),
+  reconcileCycle:(groupId:string,cycleId:string,payload:CycleReconcilePayload)=>request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}/reconcile`,{method:"POST",body:JSON.stringify(payload)}),
+  calendarCycle: (groupId:string,cycleId:string,signal?:AbortSignal) => request<{kind:string;items:CalendarOccurrence[];series:CycleSeries|null}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}`,{signal}),
   scheduleTemplates: (groupId:string,signal?:AbortSignal) => request<{items:ScheduleTemplate[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates`,{signal}),
   saveScheduleTemplate: (groupId:string,name:string,schedule:ScheduleTemplateInput) => request<ScheduleTemplate>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates`,{method:"POST",body:JSON.stringify({name,schedule})}),
   deleteScheduleTemplate: (groupId:string,id:string) => request<{deleted:boolean}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates/${encodeURIComponent(id)}`,{method:"DELETE"}),

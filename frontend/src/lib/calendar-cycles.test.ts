@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,legionPhases} from "./calendar-cycles";
+import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,legionPhases,initialCycleCount} from "./calendar-cycles";
 describe("reviewed event cycle draft",()=>{
   it("keeps Canyon battle time unknown and all dates estimated",()=>{
     const rows=cycleDraft("canyon","2028-01-03","4284","a");
@@ -37,4 +37,11 @@ it("builds Foundry from the supplement and keeps future legion times unknown",()
  const split=legionPhases(rows,true);
  expect(split.slice(-2).map(p=>p.phase)).toEqual(["Legion 1","Legion 2"]);
  expect(cycleOccurrences("foundry",split,2,14)[1].slice(-2).map(p=>p.starts_at)).toEqual(["2026-12-20","2026-12-20"]);
+});
+
+it("initializes the whole-cycle renewal window for each reference cadence",()=>{
+ expect(initialCycleCount(14,true,3)).toBe(5);
+ expect(initialCycleCount(28,true,1)).toBe(3);
+ expect(initialCycleCount(14,false,3)).toBe(3);
+ expect(initialCycleCount(null,true,1)).toBe(1);
 });

@@ -47,3 +47,14 @@ it("preserves dependent and irregular source rules instead of guessing fixed int
  expect(eventRepeatLabel(gameEventForCalendar("game:tundra-games")!)).toBe("Irregular");
  expect(gameEvents.filter(e=>e.schedule?.repeat)).toHaveLength(29);
 });
+
+// Reviewed classification of every upstream v0.11.0 event. If the registry changes,
+// this must be reviewed rather than filling missing recurrence with arbitrary dates.
+it("classifies every source event and only supplements the reviewed Flame cadence",()=>{
+ const groups={"fixed":["alliance-championship","alliance-showdown","armament-competition","bear-hunt","canyon-clash","defeat-nearby-beasts","foundry-battle","frostfire-mine","hall-of-chief","hall-of-heroes","heros-mission","icefire-warhymn-league","lucky-wheel","mercenary-prestige","officer-project","sunfire-castle","svs-state-of-power","tundra-trade-route","wild-brawl"],"months":["alliance-mobilization","brothers-in-arms","fishing-tournament","king-of-icefield","mia-fortune","romance-season","snowbusters","tundra-trading-station-guide"],"once":["beast-whisperer"],"linked":["crazy-joe","crystal-reactivation-2","flame-and-fang"],"irregular":["dreamscape-memory","frosty-fortune-skin-event","journey-of-light","shining-city-pack","silver-shell-events","state-merger","state-transfer-event","tundra-adventure","tundra-games"],"conditions":["ginas-revenge","symphony-of-change"],"persistent":["deadshot","the-labyrinth","tundra-album-2"],"unknown":["city-development","develop-new-tech-2","develop-new-tech","frostdragon-tyrant","grow-your-heroes","hero-rally","home-beyond","plan-your-city","power-up","return-to-tundra","stand-of-arms","treasure-hunter","trial-event","trusted-chief","tundra-arms-league","tundra-star","vault-of-enigma","vision-of-dawn","war-preparation","working-overtime-2"]};
+ expect(Object.values(groups).flat().sort()).toEqual(gameEvents.map(e=>e.id).sort());
+ for(const id of groups.fixed){const e=gameEvents.find(e=>e.id===id)!;expect(e.schedule?.repeat).toMatchObject({kind:"every"});}
+ for(const id of groups.months)expect(gameEvents.find(e=>e.id===id)?.schedule?.repeat).toMatchObject({kind:"every",unit:"months"});
+ for(const id of groups.once)expect(gameEvents.find(e=>e.id===id)?.schedule?.repeat).toEqual({kind:"none"});
+ for(const id of [...groups.linked.filter(id=>id!=="flame-and-fang"),...groups.irregular,...groups.conditions,...groups.persistent,...groups.unknown])expect(gameEvents.find(e=>e.id===id)?.schedule?.repeat).toBeUndefined();
+});

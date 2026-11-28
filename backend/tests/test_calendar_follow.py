@@ -56,7 +56,7 @@ def test_castle_week_dependency_and_manual_conflicts(authenticated_client):
     castle2={**castle,"starts_at":"2090-03-25"}
     assert c.post(url,json=castle2).status_code==201
     items=[r for r in c.get(url,params={"start":"2090-03-01","end":"2090-04-01"}).json()["items"] if r.get("follow_rule_id")]
-    # March 11 and 25 are Saturdays in 2090? Determine the Friday from each actual anchor.
+    # Derive the Friday from each actual Castle week, not a guessed fixed interval.
     from datetime import date,timedelta
     for anchor in (castle["starts_at"],castle2["starts_at"]):
         day=date.fromisoformat(anchor)

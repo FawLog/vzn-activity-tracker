@@ -569,6 +569,37 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await review.getByRole("button",{name:"Save repeat interval",exact:true}).click();
     expect((await cadenceSaved).status()).toBe(200);
     await expect(review).toHaveCount(0);
+    // Add a state SvS cycle, then follow it from Flame and Fang without duplicate dates.
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+    await scheduleEditor.getByLabel("Event type").selectOption("cycle:svs");
+    await cycleEditor.getByLabel("Event starts (Monday, 00:00 UTC)").fill("2091-08-06");
+    await cycleEditor.getByLabel("Automatically maintain full cycles").uncheck();
+    await cycleEditor.getByLabel("Cycles to schedule (including first)").fill("1");
+    await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
+    await cycleEditor.getByLabel("I reviewed all phases and their local dates").check();
+    const svsSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/cycles"));
+    await cycleEditor.getByRole("button",{name:"Save cycle",exact:true}).click();
+    expect((await svsSaved).status()).toBe(201);
+    await expect(cycleEditor).toHaveCount(0);
+    await calendar.getByRole("button",{name:"Add event",exact:true}).click();
+    await scheduleEditor.getByLabel("Event type").selectOption("game:flame-and-fang");
+    await expect(scheduleEditor.getByText("Follow SvS preparation automatically",{exact:true})).toBeVisible();
+    await expect(scheduleEditor.getByText("2091-08-06 — 2091-08-09 (exclusive) · Estimated",{exact:true})).toBeVisible();
+    const followSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/follow"));
+    await scheduleEditor.getByRole("button",{name:"Save schedule",exact:true}).click();
+    expect((await followSaved).status()).toBe(200);
+    await expect(scheduleEditor).toHaveCount(0);
+    const flames=calendar.getByRole("button",{name:/Flame and Fang.*Follows SvS preparation.*Estimated/});
+    await expect(flames).toHaveCount(3);
+    await flames.first().click();
+    const parent=calendar.getByRole("region",{name:"Parent schedule"});
+    await expect(parent).toContainText("Follows SvS preparation");
+    await expect(calendar.getByRole("button",{name:"Edit schedule",exact:true})).toHaveCount(0);
+    page.once("dialog", dialog=>dialog.accept());
+    const followStopped=page.waitForResponse(r=>r.request().method()==="DELETE"&&r.url().includes("/calendar/follow/"));
+    await parent.getByRole("button",{name:"Stop following",exact:true}).click();
+    expect((await followStopped).status()).toBe(200);
+    await expect(flames).toHaveCount(0);
   }
 
 

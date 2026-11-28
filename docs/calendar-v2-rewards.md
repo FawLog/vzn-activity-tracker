@@ -1,0 +1,3 @@
+# Calendar v2.4 — tasks and rewards reference
+
+Build-time projection of the pinned 0.11.0 event files includes daily scoring, missions, milestones, tiers, ranking lists, expert tiers, general rewards, damage ranges and version-specific missions/tiers. Display is reference-only and does not change planning or analytics. Numeric values and pack units are preserved; unknown quantities/thresholds are explicitly unavailable. Compare exact action text only, within the selected event and stages; no inferred item equivalence, missing values are dashes, not zeros. Expert bonuses are not automatically applied. Version choice is explicit. Shop offers, nested combat levels, wave details and calculators are outside this increment. No backend migration or CI changes.

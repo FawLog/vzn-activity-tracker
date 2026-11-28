@@ -106,6 +106,7 @@ export function eventCatalogPlugin(): Plugin {
           stages: Array.isArray(event.days) ? event.days.map((d: {day?:unknown;name?:unknown;note?:unknown})=>({
             id: String(d.day??""), name: typeof d.name==="string"?d.name:undefined, note: typeof d.note==="string"?d.note:undefined
           })).filter((d:{id:string})=>d.id) : [],
+          details: Object.fromEntries(["days","missions","missionPointsLabel","scoreUnit","tiers","rewards","personalRankings","allianceRankings","allianceRankingUpdates","expertTiers","pointLevels","damageRewards","versions"].filter(key=>event[key]!==undefined).map(key=>[key,event[key]])),
           dayCount: Array.isArray(event.days) ? event.days.length : 0,
           missionCount: Array.isArray(event.missions) ? event.missions.length : 0,
           hasVariants: Array.isArray(event.versions) && event.versions.length > 0};

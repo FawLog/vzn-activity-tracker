@@ -258,8 +258,8 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   const defaultCalendarView=testInfo.project.name==="mobile-390"?"Agenda":"Week";
   await expect(page.getByRole("button",{name:defaultCalendarView,exact:true})).toHaveAttribute("aria-pressed","true");
   await expect(page.getByRole("region",{name:defaultCalendarView+" schedule",exact:true})).toBeVisible();
-  const currentGroupId=await page.getByLabel("Current group").inputValue();
-  const currentAllianceId=await page.getByLabel("Current alliance").inputValue();
+  const currentGroupId=await page.getByRole("combobox",{name:"Current group",exact:true}).inputValue();
+  const currentAllianceId=await page.getByRole("combobox",{name:"Current alliance",exact:true}).inputValue();
   await page.route("**/api/v1/groups/*/calendar?*",async route=>{
     const response=await route.fetch();
     expect(response.ok()).toBe(true);

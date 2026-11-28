@@ -34,7 +34,7 @@ def create_onboarded_group(client: TestClient, name: str = "WZN") -> dict[str, o
 def test_health_and_database_migration(client: TestClient) -> None:
     response = client.get("/api/v1/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ready", "migration_version": 11}
+    assert response.json() == {"status": "ok", "database": "ready", "migration_version": 12}
 
 
 def test_group_routes_require_authentication(client: TestClient) -> None:

@@ -62,9 +62,9 @@ export function OverviewPage() {
       {!data?.published_events&&<section className="foundation-banner">
         <div className="foundation-banner__content">
           <h2>The intelligence picture starts with verified records</h2>
-          <p>Add alliance players and create event records to build a trusted, reviewable history. Missing evidence is never converted to zero.</p>
+          <p>Add alliance players and enter scheduled event data to build a trusted, reviewable history. Missing evidence is never converted to zero.</p>
           <div className="button-row">
-            <><button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={18} />Add player</button><button className="button button--secondary" disabled={!selectedAlliance} onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={18} />Create event</button></>
+            <><button className="button button--primary" onClick={() => navigate("/admin?mode=players")}><UserPlus size={18} />Add player</button><button className="button button--secondary" disabled={!selectedAlliance} onClick={() => navigate("/calendar")}><CalendarPlus size={18} />Open calendar</button></>
           </div>
         </div>
       </section>}
@@ -72,16 +72,16 @@ export function OverviewPage() {
       {error ? <ErrorState message={error} /> : !data ? <LoadingState /> : (
         <div className="analytics-recent">
           <section className="data-panel">
-            <SectionHeader title="Recent events" description="Verified alliance event records, most recent first." action={<button className="button button--quiet" onClick={() => navigate("/admin?mode=events")}><CalendarPlus size={16} />Create event</button>} />
+            <SectionHeader title="Recent event records" description="Actual drafts and published records, most recent first." action={<button className="button button--quiet" onClick={() => navigate("/events")}>Event history</button>} />
             {data.recent_events.length === 0 ? (
-              <EmptyState compact title="No events yet" description="Create an event and it will appear here with its date, status, and participant count." action={<button className="button button--secondary" onClick={() => navigate("/admin?mode=events")}>Create event</button>} />
+              <EmptyState compact title="No events yet" description="Enter data from a scheduled event in Calendar. Historical records are available in Event history." action={<button className="button button--secondary" onClick={() => navigate("/calendar")}>Open calendar</button>} />
             ) : (
               <div className="table-wrap">
                 <table>
                   <thead><tr><th>Event</th><th>Date</th><th>Status</th><th className="number-cell">Participants</th></tr></thead>
                   <tbody>{data.recent_events.map((event) => (
                     <tr key={event.id} className="clickable-row">
-                      <td><button className="table-link event-name" onClick={() => navigate(`/events/${event.id}`)}><EventIcon eventType={event.event_type}/><span>{eventLabel(event.event_type)}</span></button></td><td>{formatDate(event.occurred_on)}</td><td><span className={`status status--${event.status}`}>{event.status}</span></td><td className="number-cell">{event.participant_count ?? 0}</td>
+                      <td><button className="table-link event-name" onClick={() => navigate(`/events/${event.id}`)}><EventIcon eventType={event.event_type}/><span>{eventLabel(event.event_type)}</span></button></td><td>{formatDate(event.occurred_on)}</td><td><span className={`status status--${event.status}`}>{event.status}</span></td><td className="number-cell">{event.participant_count ?? "—"}</td>
                     </tr>
                   ))}</tbody>
                 </table>

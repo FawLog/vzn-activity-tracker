@@ -2,6 +2,7 @@ import { EventIcon } from "../components/EventIcon";
 import { CalendarPlus, CheckCircle2, UserPlus, Shield } from "lucide-react";
 import { useEffect, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
+import { UpcomingEvents } from "../components/UpcomingEvents";
 import { AllianceAnalytics } from "../components/AllianceAnalytics";
 import { PageHeader, SectionHeader } from "../components/Page";
 import { api } from "../lib/api";
@@ -17,7 +18,7 @@ function AllianceEmblem({url,tag}:{url:string|null;tag:string}){
   return <div className="alliance-emblem">{allowed&&!failed?<img src={url!} alt={tag+" alliance flag"} onError={()=>setFailed(true)} />:<div className="alliance-emblem-fallback" role="img" aria-label={tag+" alliance emblem unavailable"}><Shield size={25} aria-hidden="true"/><span>{tag}</span></div>}</div>;
 }
 export function OverviewPage() {
-  const { selectedGroup, selectedAlliance } = useGroupContext();
+  const { selectedGroup, selectedAlliance, alliances } = useGroupContext();
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState("");
   const [now,setNow]=useState(Date.now);
@@ -56,6 +57,7 @@ export function OverviewPage() {
           <div className="alliance-observation"><small>Last observation</small><strong title={formatTimestamp(alliance.source_observed_at)}>{age?age+" ago":"—"}</strong><span>{formatTimestamp(alliance.source_observed_at)}</span></div>
         </div></section> : selectedAlliance ? <EmptyState compact title="No alliance statistics yet" description="Run WhiteoutStats Sync once configured; no external values are inferred." /> : null}
 
+      <UpcomingEvents key={selectedGroup.id} groupId={selectedGroup.id} alliances={alliances} selectedAllianceId={selectedAlliance?.id} now={now}/>
       <AllianceAnalytics key={selectedGroup.id+":"+selectedAlliance?.id} groupId={selectedGroup.id} allianceId={selectedAlliance?.id??""} allianceLabel={selectedAlliance?.tag??"Selected alliance"}/>
       {!data?.published_events&&<section className="foundation-banner">
         <div className="foundation-banner__content">

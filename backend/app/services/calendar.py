@@ -779,7 +779,7 @@ def edit_schedule_scope(path,group_id,occurrence_id,payload):
         token=hashlib.sha256(json.dumps({"row":row,"following":following,"siblings":sorted(siblings,key=lambda r:r["id"]),
             "series":dict(series) if series else None,"rolling":dict(rolling) if rolling else None,"cycle":dict(cycle) if cycle else None,
             "edit":payload.model_dump(mode="json",exclude={"preview","token"})},sort_keys=True).encode()).hexdigest()
-        if not payload.preview and payload.scope!="single" and payload.token!=token:
+        if not payload.preview and (payload.scope!="single" or payload.token is not None) and payload.token!=token:
             raise ValueError("Schedule changed; review the affected occurrences again")
         before={r["id"]:r for r in [row,*following]}
         if payload.preview:

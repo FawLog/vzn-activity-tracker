@@ -1,0 +1,7 @@
+# One calendar schedule editor
+
+All stored calendar occurrences use the same Edit schedule form and start/end fields, including linked Bear, Foundry and Canyon records. At Save schedule, recurring entries show exactly one choice: This event only, This and following events, or Following events only. A preview is computed in a rolled-back transaction. Saving a recurring edit rechecks its review token and applies changes atomically. Single non-recurring entries need no scope selection.
+
+A linked actual clock-time correction preserves the UTC event date, owner, phase, session ID, publication and results; it updates the calendar and linked session time together. Moving an actual event to another date or cancelling an actual record is deliberately protected. Future-only edits never change the selected occurrence. Later manual exceptions, elapsed dates and linked records are preserved; automatic renewal is updated. For full cycles the scope applies to the selected phase, with the cycle's phase order and shared battle date preserved. Explicit recurring legion times are estimated in subsequent forecasts; untouched legion times remain unknown. Cancelling a recurring cycle phase preserves the other phases. Existing whole-cycle cadence and review controls remain advanced operations, not alternative time correction editors. Dependent projections continue to follow their parent schedule and cannot independently be edited.
+
+No schema migration, deployment or CI configuration changes. Existing historical schedules are not rewritten.

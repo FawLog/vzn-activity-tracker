@@ -534,6 +534,27 @@ def future_rows(db, group_id, occurrence_id):
     return [dict(r) for r in rows if parse(r["starts_at"]) >= future_threshold(r["precision"], now)]
 
 
+def next_editable_occurrence(path, group_id, occurrence_id):
+    """Read-only jump from a historical or linked occurrence to its own series."""
+    with connection(path) as db:
+        require_group(db,group_id)
+        row=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,occurrence_id)).fetchone()
+        if row is None:
+            raise LookupError("Calendar occurrence not found")
+        if not row["series_id"]:
+            return {"item":None}
+        now=datetime.now(timezone.utc)
+        candidates=db.execute("""SELECT c.* FROM calendar_occurrences c
+            WHERE c.group_id=? AND c.series_id=? AND c.sequence>=?
+              AND c.schedule_status='scheduled' AND c.source='recurrence'
+              AND c.event_type=? AND c.scope=? AND c.alliance_id IS ? AND c.state_id=? AND c.phase=? AND c.precision=?
+              AND NOT EXISTS (SELECT 1 FROM calendar_event_links l WHERE l.occurrence_id=c.id)
+            ORDER BY c.sequence""",
+            (group_id,row["series_id"],row["sequence"],row["event_type"],row["scope"],row["alliance_id"],row["state_id"],row["phase"],row["precision"])).fetchall()
+        candidate=next((r for r in candidates if parse(r["starts_at"])>=future_threshold(r["precision"],now)),None)
+        return {"item":dict(candidate) if candidate else None}
+
+
 def preview_future(path, group_id, occurrence_id):
     with connection(path) as db:
         rows=future_rows(db,group_id,occurrence_id)

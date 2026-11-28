@@ -309,3 +309,39 @@ def test_foundry_linked_legions_share_one_result_identity(authenticated_client,s
     with connection(settings.database_path) as db:
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==1
         assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==2
+
+
+def test_jump_from_linked_historical_bear_to_future_preserves_actual_record(authenticated_client,settings):
+    from datetime import datetime,timedelta,timezone
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    now=datetime.now(timezone.utc).replace(second=0,microsecond=0)
+    start=(now-timedelta(days=1)).strftime("%Y-%m-%dT%H:%MZ")
+    payload={"event_type":"bear_trap","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":start,
+        "precision":"minute","phase":"Trap 2","occurrence_count":4,"interval_minutes":2880,"reject_existing":True,
+        "rolling":True,"bear_cycle_anchor":start,"bear_session_key":"trap_2"}
+    result=c.post(url,json=payload)
+    assert result.status_code==201,result.text
+    rows=result.json()["items"]
+    historical=rows[0]
+    entry=c.post(url+"/"+historical["id"]+"/start-entry",json={"revision":historical["revision"],"confirmed":True})
+    assert entry.status_code==200,entry.text
+    actual=entry.json()["linked"]
+    jump=c.get(url+"/"+historical["id"]+"/next-editable")
+    assert jump.status_code==200,jump.text
+    assert jump.json()["item"]["id"]==rows[1]["id"]
+    target=url+"/"+rows[1]["id"]+"/future"
+    plan=c.get(target).json()
+    new_time=(now+timedelta(days=1,hours=1)).strftime("%Y-%m-%dT%H:%MZ")
+    fields={k:rows[1][k] for k in ("event_type","scope","alliance_id","state_id","phase","precision","confidence","ends_at","revision")}
+    fields.update(starts_at=new_time,schedule_status="scheduled")
+    update=c.post(target,json={"action":"edit","schedule":fields,"interval_minutes":2880,
+        "revisions":{r["id"]:r["revision"] for r in plan["items"]}})
+    assert update.status_code==200,update.text
+    assert update.json()["items"][0]["starts_at"]==new_time
+    assert c.get(url+"/"+historical["id"]+"/event-link").json()["linked"]==actual
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(historical["id"],)).fetchone()[0]==start
+        assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==1
+    assert c.get(url+"/"+historical["id"]+"/next-editable").json()["item"]["starts_at"]==new_time

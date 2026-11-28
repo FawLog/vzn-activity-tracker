@@ -634,6 +634,14 @@ def create_api_router(settings: Settings) -> APIRouter:
         except LookupError as error:
             raise _not_found(str(error)) from error
 
+    @router.get("/groups/{group_id}/calendar/{occurrence_id}/next-editable")
+    async def get_calendar_next_editable(request: Request,group_id: str,occurrence_id: str):
+        require_admin(request,settings)
+        try:
+            return calendar.next_editable_occurrence(settings.database_path,group_id,occurrence_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
     @router.get("/groups/{group_id}/calendar/{occurrence_id}/future")
     async def get_calendar_future(request: Request, group_id: str, occurrence_id: str) -> dict[str, object]:
         require_admin(request, settings)

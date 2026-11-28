@@ -14,10 +14,21 @@ import type { RotationForecast } from "../lib/state-rotation";
 import { BearScheduleEditor } from "./BearScheduleEditor";
 import {creationEventOptions,creationType,cycleTypes} from "../lib/calendar-event-options";
 import type {CycleKind} from "../lib/calendar-cycles";
-type Props={manualType?:string;forecast?:RotationForecast;groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:CycleKind)=>void;onClose:()=>void;onSaved:(day:string)=>void};
+type Props={futureOnly?:boolean;manualType?:string;forecast?:RotationForecast;groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onCycle?:(kind:CycleKind)=>void;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
 export function ScheduleEditor(props:Props){
   const [type,setType]=useState(props.manualType??"bear:batch");
+  const [futureTarget,setFutureTarget]=useState<CalendarOccurrence|null>(null);
+  const [jumpBusy,setJumpBusy]=useState(false);
+  const [jumpError,setJumpError]=useState("");
+  const jumpLock=useRef(false);
+  useNavigationGuard(false,jumpBusy);
+  async function jump(){
+    if(!props.row||jumpLock.current||!allowNavigation())return;
+    jumpLock.current=true;setJumpBusy(true);setJumpError("");
+    try{const result=await api.nextEditableSchedule(props.groupId,props.row.id);if(!result.item)throw Error("No editable future occurrences remain in this series.");setFutureTarget(result.item);}
+    catch(e){setJumpError(message(e));}finally{jumpLock.current=false;setJumpBusy(false);}
+  }
   const [independent,setIndependent]=useState(false);
   function choose(value:string){if(!allowNavigation())return;if(cycleTypes[value]){props.onCycle?.(cycleTypes[value]);return;}setType(value);setIndependent(false);}
   if(!props.row&&!props.forecast&&followType(type)&&!independent)return <FollowScheduleEditor key={type} eventType={type} groupId={props.groupId} alliances={props.alliances} preferred={props.preferred} day={props.day} onEvent={choose} onManual={()=>{if(allowNavigation())setIndependent(true);}} onClose={props.onClose} onSaved={props.onSaved}/>;
@@ -25,9 +36,19 @@ export function ScheduleEditor(props:Props){
     if(cycleTypes[value]){props.onCycle?.(cycleTypes[value]);return;}
     if(allowNavigation()){setType(value);setIndependent(false);}
   }}/>;
-  return <GeneralScheduleEditor key={type} {...props} initialType={type==="bear:batch"?"bear_trap":type} onBear={()=>choose("bear:batch")} onFollow={choose}/>;
+  const source=props.row;
+  const protectedBear=source?.event_type==="bear_trap"&&(!!source.review||source.starts_at<(source.precision==="date"?new Date().toISOString().slice(0,10):new Date().toISOString().slice(0,16)+"Z"));
+  if(!futureTarget&&source&&protectedBear)return <section className="data-panel calendar-editor" aria-label="Schedule editor">
+    <h2>{source.phase||"Bear Trap"} schedule</h2>
+    <p>{source.starts_at} · {source.review?"Linked event record":"Past occurrence"}</p>
+    <p>This occurrence is protected. Its historical date and event data remain unchanged.</p>
+    {source.series_id&&<button type="button" className="button button--primary" disabled={jumpBusy} onClick={()=>void jump()}>{jumpBusy?"Finding next occurrence…":"Edit future occurrences"}</button>}
+    {jumpError&&<p role="alert">{jumpError}</p>}
+    <button type="button" className="button button--quiet" disabled={jumpBusy} onClick={()=>{if(allowNavigation())props.onClose();}}>Close editor</button>
+  </section>;
+  return <GeneralScheduleEditor key={futureTarget?.id??type} {...props} row={futureTarget??source} futureOnly={!!futureTarget||props.futureOnly} initialType={type==="bear:batch"?"bear_trap":type} onBear={()=>choose("bear:batch")} onFollow={choose}/>;
 }
-function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved,initialType,onBear,onFollow}:Props&{initialType:string;onBear:()=>void;onFollow:(type:string)=>void}){
+function GeneralScheduleEditor({futureOnly,forecast,groupId,alliances,preferred,day,row,onCycle,onClose,onSaved,initialType,onBear,onFollow}:Props&{initialType:string;onBear:()=>void;onFollow:(type:string)=>void}){
   const initialRepeat=referenceRepeat(gameEventForCalendar(initialType));
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
@@ -81,7 +102,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   const [reviewed,setReviewed]=useState<string|null>(null);
   const [status,setStatus]=useState(row?.schedule_status??"scheduled");
   const [decision,setDecision]=useState<FuturePreview|null>(null);
-  const [editScope,setEditScope]=useState<"single"|"future">("single");
+  const [editScope,setEditScope]=useState<"single"|"future">(futureOnly?"future":"single");
   const [editHours,setEditHours]=useState(48);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
@@ -181,7 +202,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
         if(eligibleSeries&&!decision){
           const result=await api.previewScheduleFuture(groupId,row.id);
           if(result.items[0]?.id!==row.id||result.items[0]?.revision!==row.revision)throw Error("Schedule changed; reopen the event before editing.");
-          setDecision(result);setEditScope("single");setEditHours((result.interval_minutes??2880)/60);
+          setDecision(result);setEditHours((result.interval_minutes??2880)/60);
           return;
         }
         if(decision&&editScope==="future"){
@@ -215,7 +236,12 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
   return <section className="data-panel calendar-editor" aria-label="Schedule editor">
     <h2>{row?"Edit scheduled event":"Add event"}</h2>
     <p>Planning only. No attendance or result records are created.</p>{forecast&&<p>Reference forecast from confirmed state date {forecast.anchor}. Review local timing before saving. Automatic renewal is optional.</p>}
+    {futureOnly&&<p>Editing future occurrences from {row?.starts_at}. Earlier dates and linked data are unchanged.</p>}
     <form onSubmit={save}>
+      {!decision&&eligibleSeries&&<fieldset disabled={busy} className="calendar-editor-fields"><legend>Apply changes to</legend>
+        <label><input type="radio" name="edit-scope" checked={editScope==="single"} onChange={()=>setEditScope("single")}/>This event only</label>
+        <label><input type="radio" name="edit-scope" checked={editScope==="future"} onChange={()=>setEditScope("future")}/>This and following events</label>
+      </fieldset>}
       <fieldset disabled={busy||decision!==null} className="calendar-editor-fields">
         <label>Event type<select disabled={!!row?.cycle_id} value={row?fields.event_type:creationType(fields.event_type)} onChange={e=>changeEvent(e.target.value)}>{row?<>{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}{(fields.event_type.startsWith("game:")||["svs_matchmaking","svs_triage"].includes(fields.event_type))&&<option value={fields.event_type}>{fields.event_type.startsWith("game:")?gameEventForCalendar(fields.event_type)?.name??fields.event_type:eventLabel(fields.event_type)}</option>}</>:creationEventOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></label>
         {!row&&fields.event_type==="bear_trap"&&<button type="button" className="button button--quiet" onClick={onBear}>Use multi-trap editor</button>}

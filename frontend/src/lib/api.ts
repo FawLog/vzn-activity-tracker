@@ -69,6 +69,7 @@ export const api = {
   createBearSchedule: (groupId:string,payload:BearSchedulePayload) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/bear-schedule`,{method:"POST",body:JSON.stringify(payload)}),
   createSchedule: (groupId:string,payload:ScheduleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar`,{method:"POST",body:JSON.stringify(payload)}),
   updateSchedule: (groupId:string,id:string,payload:ScheduleUpdate) => request<CalendarOccurrence>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}`,{method:"PUT",body:JSON.stringify(payload)}),
+  nextEditableSchedule:(groupId:string,id:string)=>request<{item:CalendarOccurrence|null}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/next-editable`),
   previewScheduleFuture: (groupId:string,id:string) => request<FuturePreview>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`),
   changeScheduleFuture: (groupId:string,id:string,payload:FutureChange) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`,{method:"POST",body:JSON.stringify(payload)}),
   stateCalendarProfiles: (groupId:string,signal?:AbortSignal) => request<{items:StateCalendarProfile[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/state-calendar-profiles`,{signal}),

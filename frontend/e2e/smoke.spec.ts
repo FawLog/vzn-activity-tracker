@@ -514,6 +514,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByRole("button",{name:"Import list"}).click();
   await expect(page.getByRole("alert")).toContainText("not found");
   await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");
+  const guardedUrl=page.url();
+  page.once("dialog", async dialog=>{expect(dialog.type()).toBe("confirm");await dialog.dismiss();});
+  await page.getByRole("button",{name:"Event history",exact:true}).last().click();
+  await expect(page).toHaveURL(guardedUrl);
+  await expect(page.getByLabel("Roster Scout Personal points")).toHaveValue("4500000000");
   const [saveResponse] = await Promise.all([
     page.waitForResponse(response => response.request().method() === "PUT" && /\/events\/[^/]+\/sessions\/[^/]+$/.test(response.url())),
     page.getByRole("button",{name:"Save draft"}).click(),

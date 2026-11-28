@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api } from "./api";
+import { allowNavigation } from "./navigation-guard";
 import { useAuth } from "./auth";
 import type { Alliance, AllianceGroup } from "./types";
 
@@ -46,8 +47,8 @@ export function GroupProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const selectGroup = useCallback((groupId: string) => { setSelectedGroupId(groupId); localStorage.setItem(GROUP_KEY, groupId); setSelectedAllianceId(null); localStorage.removeItem(ALLIANCE_KEY); }, []);
-  const selectAlliance = useCallback((allianceId: string) => { setSelectedAllianceId(allianceId); localStorage.setItem(ALLIANCE_KEY, allianceId); }, []);
+  const selectGroup = useCallback((groupId: string) => { if (!allowNavigation()) return; setSelectedGroupId(groupId); localStorage.setItem(GROUP_KEY, groupId); setSelectedAllianceId(null); localStorage.removeItem(ALLIANCE_KEY); }, []);
+  const selectAlliance = useCallback((allianceId: string) => { if (!allowNavigation()) return; setSelectedAllianceId(allianceId); localStorage.setItem(ALLIANCE_KEY, allianceId); }, []);
   const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? null;
   const selectedAlliance = alliances.find((alliance) => alliance.id === selectedAllianceId) ?? null;
   const value = useMemo(() => ({ groups, alliances, selectedGroup, selectedAlliance, loading, refresh, selectGroup, selectAlliance }), [groups, alliances, selectedGroup, selectedAlliance, loading, refresh, selectGroup, selectAlliance]);

@@ -26,13 +26,13 @@ function Protected({ children }: { children: ReactNode }) {
 }
 
 export default function App() {
-  const { path } = useLocation();
+  const { path, search } = useLocation();
   const { loading } = useAuth();
   useEffect(() => {
     const click = (event: MouseEvent) => {
       const link = (event.target as Element).closest<HTMLAnchorElement>("a[data-nav]");
       if (!link || event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      event.preventDefault(); navigate(link.pathname);
+      event.preventDefault(); navigate(link.pathname+link.search);
     };
     document.addEventListener("click", click);
     return () => document.removeEventListener("click", click);
@@ -46,7 +46,7 @@ export default function App() {
   else if (path === "/groups") content = <Protected><GroupsPage /></Protected>;
   else if (path === "/players") content = <Protected><PlayersPage /></Protected>;
   else if (path.startsWith("/players/")) content = <Protected><PlayerProfilePage fid={decodeURIComponent(path.slice(9))} /></Protected>;
-  else if (path === "/calendar") content = <Protected><CalendarPage /></Protected>;
+  else if (path === "/calendar") content = <Protected><CalendarPage key={search} /></Protected>;
   else if (path === "/events") content = <Protected><EventsPage /></Protected>;
   else if (path.startsWith("/events/")) content = <Protected><EventDetailPage id={decodeURIComponent(path.slice(8))} /></Protected>;
   else if (path === "/activity") content = <Protected><ActivityPage /></Protected>;

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import Literal
 import uuid
 import re
+import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator
 from ..database import connection, transaction
@@ -49,8 +50,36 @@ class PlayerRow(BaseModel):
     metrics: dict[str, StrictInt] = Field(default_factory=dict, max_length=8)
 
 
+class CanyonTeam(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rank: StrictInt = Field(ge=1,le=3)
+    state: str = Field(pattern=r"^\d{1,6}$")
+    legion: StrictInt = Field(ge=1,le=2)
+    tag: str = Field(min_length=1,max_length=24)
+    name: str = Field(min_length=1,max_length=120)
+    score: StrictInt = Field(ge=0,le=9007199254740991)
+
+
+class CanyonStat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str = Field(min_length=1,max_length=80)
+    value: str = Field(pattern=r"^[\d,.]+[KMBT]?$",max_length=32)
+    mvp: str | None = Field(default=None,max_length=120)
+    mvp_value: str | None = Field(default=None,pattern=r"^[\d,.]+[KMBT]?$",max_length=32)
+
+
+class CanyonSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rank: StrictInt = Field(ge=1,le=3)
+    legion: StrictInt = Field(ge=1,le=2)
+    reported_at: datetime | None = None
+    teams: list[CanyonTeam] = Field(min_length=3,max_length=3)
+    stats: list[CanyonStat] = Field(default_factory=list,max_length=40)
+
+
 class FoundryDetails(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    canyon_summary: CanyonSummary | None = None
     main_count: StrictInt | None = Field(default=None, ge=0, le=30)
     substitute_count: StrictInt | None = Field(default=None, ge=0, le=10)
     outcome: Literal["victory", "defeat"] | None = None
@@ -66,7 +95,7 @@ FOUNDRY_FIELDS = ("main_count", "substitute_count", "outcome", "own_score", "opp
 
 def foundry_details(db, session_id):
     row = db.execute("SELECT * FROM foundry_session_details WHERE session_id=?", (session_id,)).fetchone()
-    return {k: row[k] for k in FOUNDRY_FIELDS} if row else {}
+    return {**{k: row[k] for k in FOUNDRY_FIELDS}, **({"canyon_summary":json.loads(row["canyon_summary_json"])} if row["canyon_summary_json"] else {})} if row else {}
 
 
 class SessionSave(BaseModel):
@@ -162,7 +191,18 @@ def save(path, group_id, event_id, session_id, payload):
         if payload.foundry_details is not None and event["event_type"] not in ("foundry", "canyon"):
             raise ValueError("Battle metadata is only supported for legion battles")
         if event["event_type"] in ("foundry", "canyon"):
-            details = payload.foundry_details.model_dump() if payload.foundry_details is not None else foundry_details(db, session_id)
+            details = payload.foundry_details.model_dump(mode="json") if payload.foundry_details is not None else foundry_details(db, session_id)
+            summary = details.get("canyon_summary")
+            if summary:
+                teams = sorted(summary["teams"],key=lambda t:t["rank"])
+                if event["event_type"]!="canyon" or session["session_key"]!="legion_"+str(summary["legion"]) or [t["rank"] for t in teams]!=[1,2,3] or len({(t["state"],t["tag"],t["legion"]) for t in teams})!=3 or teams[summary["rank"]-1]["legion"]!=summary["legion"] or any(a["score"]<b["score"] for a,b in zip(teams,teams[1:])) or len({s["label"] for s in summary["stats"]})!=len(summary["stats"]):
+                    raise ValueError("Invalid Canyon team report or wrong legion")
+                owner=db.execute("SELECT tag,state_id FROM alliances WHERE id=?",(event["alliance_id"],)).fetchone()
+                own_team=teams[summary["rank"]-1]
+                if own_team["tag"].casefold()!=owner["tag"].casefold() or own_team["state"]!=owner["state_id"]:
+                    raise ValueError("Canyon report belongs to a different alliance")
+                if summary.get("reported_at") and str(summary["reported_at"])[:10]!=session["started_at"][:10]:
+                    raise ValueError("Canyon report date does not match the selected session")
             own, opponent, outcome = details.get("own_score"), details.get("opponent_score"), details.get("outcome")
             if own is not None and opponent is not None and outcome and ((outcome == "victory" and own <= opponent) or (outcome == "defeat" and own >= opponent)):
                 raise ValueError("Battle outcome conflicts with recorded team scores")
@@ -191,8 +231,8 @@ def save(path, group_id, event_id, session_id, payload):
                 raise ValueError("Completed missions exceed accepted missions")
             if event["event_type"] == "alliance_championship" and row.attendance != "unknown":
                 raise ValueError("Championship records registration only")
-            if event["event_type"] == "foundry" and row.metrics.get("personal_points", 0) > 0 and (row.attendance in ("excused", "no_duty") or row.eligibility == "no_duty"):
-                raise ValueError("Positive personal points conflict with a Foundry attendance exception")
+            if event["event_type"] in ("foundry","canyon") and row.metrics.get("personal_points", 0) > 0 and (row.attendance in ("excused", "no_duty") or row.eligibility == "no_duty"):
+                raise ValueError("Positive personal points conflict with a battle attendance exception")
             if row.attendance == "confirmed_absent" and any(row.metrics.get(k, 0) > 0 for k in ("damage", "personal_points")):
                 raise ValueError("Positive battle result conflicts with absence")
         db.execute("DELETE FROM event_session_roster WHERE session_id=?", (session_id,))
@@ -207,6 +247,7 @@ def save(path, group_id, event_id, session_id, payload):
                 own_score=excluded.own_score,opponent_score=excluded.opponent_score,opponent_tag=excluded.opponent_tag,
                 opponent_name=excluded.opponent_name,opponent_state=excluded.opponent_state""",
                 (session_id, *(details.get(k) for k in FOUNDRY_FIELDS)))
+            db.execute("UPDATE foundry_session_details SET canyon_summary_json=? WHERE session_id=?", (json.dumps(details["canyon_summary"],ensure_ascii=False) if details.get("canyon_summary") else None,session_id))
         db.execute("""UPDATE event_sessions SET revision=revision+1,roster_complete=?,registration_complete=?,attendance_complete=?,results_complete=? WHERE id=?""", (payload.roster_complete,payload.registration_complete,payload.attendance_complete,payload.results_complete,session_id))
         _audit(db, event_id, "session_saved")
     return read(path, group_id, event_id)
@@ -267,10 +308,8 @@ def finalize_attendance(db, event, group_id, review):
     """, (group_id,))}
     if not roster <= profiles.keys():
         raise ValueError("Roster contains a player outside this group")
-    if kind == "foundry" and any(not s["registration_complete"] or not s["results_complete"] for s in sessions):
+    if kind in ("foundry","canyon") and any(not s["registration_complete"] or not s["results_complete"] for s in sessions):
         raise ValueError("Confirm complete registration and personal results for both legions")
-    if kind == "canyon" and any(not s["registration_complete"] or not s["attendance_complete"] for s in sessions):
-        raise ValueError("Confirm complete registration and actual attendance for both legions")
     if kind in ("foundry", "canyon"):
         for s in sessions:
             details = foundry_details(db, s["id"])
@@ -284,7 +323,7 @@ def finalize_attendance(db, event, group_id, review):
             WHERE m.session_id=r.session_id AND m.player_fid=r.player_fid
             AND m.metric_key IN ('damage','personal_points') AND m.raw_value>0) AS scored
             FROM event_session_roster r WHERE r.session_id=?""", (s["id"],)):
-            if kind == "foundry":
+            if kind in ("foundry","canyon"):
                 fid = r["player_fid"]
                 score = db.execute("SELECT raw_value FROM event_session_metrics WHERE session_id=? AND player_fid=? AND metric_key='personal_points'", (s["id"], fid)).fetchone()
                 if r["registration"] == "registered":
@@ -292,8 +331,7 @@ def finalize_attendance(db, event, group_id, review):
                         raise ValueError("Review main/substitute role for all selected players")
                     if fid not in roster and not (score and score["raw_value"] > 0):
                         raise ValueError("Include selected players in the reviewed event roster or review their eligibility")
-                    if score is None and fid not in excused | no_duty:
-                        raise ValueError("A selected player has missing personal points; review results")
+                    # Complete ranking attestation establishes no-show for unlisted selected players; do not fabricate a zero metric.
                 elif score is not None:
                     raise ValueError("Reconcile personal results with the selected registration roster")
                 if score is not None and score["raw_value"] > 0:

@@ -25,7 +25,10 @@ function numberFrom(text:string):number|undefined {
   const n=Number(cleaned.replaceAll(",",""));
   return Number.isSafeInteger(n)&&n>=0?n:undefined;
 }
-export type FoundryImportInfo = {main_count?:number;substitute_count?:number;outcome?:"victory"|"defeat";own_score?:number;opponent_score?:number;opponent_state?:string;opponent_tag?:string;opponent_name?:string};
+export type CanyonTeam={rank:number;state:string;legion:number;tag:string;name:string;score:number};
+export type CanyonStat={label:string;value:string;mvp?:string;mvp_value?:string};
+export type CanyonSummary={rank:number;legion:number;reported_at?:string;teams:CanyonTeam[];stats:CanyonStat[]};
+export type FoundryImportInfo = {canyon_summary?:CanyonSummary;main_count?:number;substitute_count?:number;outcome?:"victory"|"defeat";own_score?:number;opponent_score?:number;opponent_state?:string;opponent_tag?:string;opponent_name?:string};
 type ParsedScreenshot = {rows:ParsedRow[];warnings:string[];foundry?:FoundryImportInfo};
 function numericRuns(line:Line):Array<Word & {value:number}> {
   const groups:Word[]=[];
@@ -114,11 +117,11 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
   if(registrationMode(mode)&&((mode==="foundry_registration"&&/\bCanyon\s+Clash\b/iu.test(mailText))||(mode==="canyon_registration"&&/\bFoundry\s+Battle\b/iu.test(mailText))))return {rows,warnings:["Mail belongs to a different event. Remove this screenshot."]};
   const legion=mailText.match(/\bLegion\s*([12])\b/iu)?.[1];
   if(legion&&sessionKey!=="legion_"+legion)return {rows,warnings:["Mail belongs to a different legion. Remove this screenshot."]};
-  const personal=lines.find(l=>/Personal\s+Arsenal\s+Points/iu.test(lineText(l)));
+  const personal=lines.find(l=>mode==="canyon_results"?/Personal\s+Point\s+Ranking/iu.test(lineText(l)):/Personal\s+Arsenal\s+Points/iu.test(lineText(l)));
   const section=/\b(Combatants|Substitutes)\s*:\s*(\d+)\s*\/\s*(\d+)/iu;
   const headers=lines.flatMap(l=>{const m=lineText(l).match(section);if(!m)return [];const role=m[1].toLowerCase()==="combatants"?"main" as const:"substitute" as const;const n=Number(m[2]);if(n<0||n>(role==="main"?30:10))return [];if(role==="main")foundry.main_count=n;else foundry.substitute_count=n;return [{y:l.y,role}];});
   if(registrationMode(mode)){
-    if(personal||/\b(?:Legion Tally|Personal Arsenal Points|DEFEAT!|VICTORY!)\b/iu.test(mailText))return {rows,warnings:["Battle result mail is not a registration list."]};
+    if(personal||/\b(?:Legion Tally|Personal Arsenal Points|Personal Point Ranking|DEFEAT!|VICTORY!)\b/iu.test(mailText))return {rows,warnings:["Battle result mail is not a registration list."]};
     const ranks=all.filter(w=>/^[RР]\s*[0-5]$/iu.test(w.text)&&w.x<maxX*.5).sort((a,b)=>a.y-b.y);
     for(let i=0;i<ranks.length;i++){
       const rank=ranks[i],prev=ranks[i-1],next=ranks[i+1];
@@ -174,7 +177,7 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
         const words=l.words.filter(w=>w.x>=n.x-n.height*.75&&w.x<maxX&&w.right>n.x-n.height*.25);
         const first=words[0],name=words.map(w=>w.text).join(" ").trim();
         return {l,first,name};
-      }).filter(v=>v.first&&Math.abs(v.first.x-n.x)<=n.height*1.1&&/[\p{L}]/u.test(v.name)&&!/(?:Personal Arsenal Points|Legion Tally|MVP|Rewards|Expires at|Mail|Delete)/iu.test(v.name));
+      }).filter(v=>v.first&&Math.abs(v.first.x-n.x)<=n.height*1.1&&/[\p{L}]/u.test(v.name)&&!/(?:Personal Arsenal Points|Personal Point Ranking|Legion Tally|MVP|Rewards|Expires at|Mail|Delete)/iu.test(v.name));
       const best=names[0];
       if(!best)continue;
       // A score must be in the nickname column, on its own line. Never use a
@@ -191,9 +194,68 @@ function foundryScreenshot(lines:Line[],mode:string,sessionKey:string,source:str
   else warnings.push("Personal results: "+rows.length+" rows including "+rows.filter(r=>r.points===0).length+" explicit zeros. Review all matches.");
   return {rows,warnings,foundry};
 }
+const canyonStatLabels=["Total Fuel Used","Enemy Squads Defeated","Occupied Buildings","Total Battle Speedups Used","Total March Accelerator I Used","Total March Accelerator II Used","Total Retreats","Total Advances"];
+function canyonScreenshot(lines:Line[],sessionKey:string,source:string):ParsedScreenshot {
+  const mailText=lines.map(lineText).join(" ");
+  const empty=(warning:string):ParsedScreenshot=>({rows:[],warnings:[warning]});
+  if(/\bFoundry\s+Battle\b|Personal\s+Arsenal\s+Points|Legion\s+Tally/iu.test(mailText))return empty("Mail belongs to a different event.");
+  const heading=mailText.match(/\[?Legion\s*([12])\]?\s+of\s+your\s+alliance\s+ranked\s+No\.?\s*([123])\b/iu);
+  if(!heading){
+    if(/ranked\s+No|Total Fuel Used|Enemy Squads Defeated|Occupied Buildings/iu.test(mailText))return empty("Incomplete Canyon summary header; use the complete report.");
+    return foundryScreenshot(lines,"canyon_results",sessionKey,source);
+  }
+  if(sessionKey!=="legion_"+heading[1])return empty("Canyon report belongs to a different legion.");
+  if(!/Canyon\s+Clash/iu.test(mailText))return empty("Cannot verify Canyon report title.");
+  const header=lines.find(l=>/\bStats\b/iu.test(lineText(l))&&/\bMVP\b/iu.test(lineText(l)));
+  const states=lines.flatMap(l=>l.words.map((w,i)=>({w,state:(w.text+" "+(l.words[i+1]?.text??"")).match(/^#\s*(\d{3,6})\b/u)?.[1]}))).filter(v=>v.state);
+  if(!header||states.length!==3)return empty("Cannot locate all three Canyon team columns; review report manually.");
+  const ordered=states.sort((a,b)=>a.w.x-b.w.x);
+  const xCenters=ordered.map(s=>(s.w.x+s.w.right)/2);
+  const teams:CanyonTeam[]=[];
+  for(let i=0;i<3;i++){
+    const anchor=ordered[i],left=i===0?-Infinity:(xCenters[i-1]+xCenters[i])/2,right=i===2?Infinity:(xCenters[i]+xCenters[i+1])/2;
+    const column=lines.filter(l=>l.y>anchor.w.y+anchor.w.height*.35&&l.y<header.y-header.height*.4).map(l=>({...l,words:l.words.filter(w=>(w.x+w.right)/2>=left&&(w.x+w.right)/2<right)})).filter(l=>l.words.length);
+    const legionLine=column.find(l=>/Legion\s*[12]/iu.test(lineText(l)));
+    const teamLine=column.find(l=>/\[\s*[^\]]+\s*\]/u.test(lineText(l)));
+    if(!legionLine||!teamLine)return empty("Incomplete team identity in Canyon report.");
+    const legion=Number(lineText(legionLine).match(/Legion\s*([12])/iu)?.[1]);
+    const scores=column.filter(l=>l.y>teamLine.y).flatMap(numericRuns);
+    if(scores.length!==1)return empty("Unreadable or ambiguous Canyon team score.");
+    const tagName=column.filter(l=>l.y>=teamLine.y&&l.y<scores[0].y).map(lineText).join(" ").match(/^\[\s*([^\]]+?)\s*\]\s*(.+)$/u);
+    if(!tagName||!legion)return empty("Incomplete Canyon alliance name.");
+    teams.push({rank:0,state:anchor.state!,legion,tag:tagName[1].replace(/\s+/gu,""),name:tagName[2].trim(),score:scores[0].value});
+  }
+  teams.sort((a,b)=>b.score-a.score);
+  if(new Set(teams.map(t=>t.score)).size!==3)return empty("Tied Canyon team scores require manual review of ranking.");
+  teams.forEach((t,i)=>t.rank=i+1);
+  const rank=Number(heading[2]),legion=Number(heading[1]);
+  if(teams[rank-1].legion!==legion)return empty("Canyon team ranking conflicts with report legion.");
+  const stats:CanyonStat[]=[];
+  const mvpWord=header.words.find(w=>/MVP/iu.test(w.text));
+  const statsWord=header.words.find(w=>/Stats/iu.test(w.text));
+  const split=mvpWord&&statsWord?(mvpWord.x+statsWord.right)/2:Infinity;
+  const area=lines.filter(l=>l.y>header.y);
+  const anchors=area.map(l=>{
+    const text=l.words.filter(w=>w.x<split).map(w=>w.text).join(" ");
+    const m=text.match(/^(.+?)\s*:\s*([\d,.]+\s*[KMBT]?)\s*$/iu);
+    const label=m&&canyonStatLabels.find(k=>k.toLowerCase()===m[1].trim().toLowerCase());
+    return label&&m?{l,label,value:m[2].replace(/\s+/gu,"")}:null;
+  }).filter((v):v is {l:Line;label:string;value:string}=>v!==null);
+  for(let i=0;i<anchors.length;i++){
+    const a=anchors[i],prev=anchors[i-1],next=anchors[i+1];
+    const top=prev?(prev.l.y+a.l.y)/2:header.y,bottom=next?(a.l.y+next.l.y)/2:a.l.y+a.l.height*2;
+    const rightText=area.filter(l=>l.y>top&&l.y<bottom).flatMap(l=>l.words.filter(w=>w.x>=split)).map(w=>w.text).join(" ").trim();
+    const mvp=rightText.match(/^(.+?)\s*:\s*([\d,.]+\s*[KMBT]?)$/iu);
+    stats.push({label:a.label,value:a.value,...(mvp?{mvp:mvp[1].trim(),mvp_value:mvp[2].replace(/\s+/gu,"")}:{})});
+  }
+  const timestamp=mailText.match(/\b(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})\b/u);
+  return {rows:[],warnings:["Canyon team report: verify three teams, placement and recognized statistics. "+stats.length+" statistic rows read."],foundry:{canyon_summary:{rank,legion,teams,stats,...(timestamp?{reported_at:timestamp[1]+"T"+timestamp[2]+"Z"}:{})}}};
+}
+
 export function parseScreenshot(preview:OcrPreview,eventType:string,sessionKey:string,source:string):ParsedScreenshot {
   const lines=linesFrom(preview), rows:ParsedRow[]=[],warnings:string[]=[];
   if(!lines.length)return {rows,warnings:["No word coordinates; inspect the original screenshot and raw text."]};
+  if(eventType==="canyon_results")return canyonScreenshot(lines,sessionKey,source);
   if(registrationMode(eventType)||eventType==="foundry_results")return foundryScreenshot(lines,eventType,sessionKey,source);
   if(eventType==="bear_trap"){
     const heading=lines.find(l=>/(?:Trap\s*[12]\s*Damage\s*Rewards|(?:ловушк[аеиу]|капкан)\s*[12])/iu.test(lineText(l)));

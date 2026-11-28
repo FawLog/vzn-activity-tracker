@@ -738,7 +738,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     expect((await addedResult.json()).event_id).toBe(eventId);
     await expect(workspace.getByRole("button",{name:/Legion 2 · Registration pending/})).toBeVisible();
     await workspace.getByRole("button",{name:"Battle results",exact:true}).click();
-    await expect(workspace.getByText(/Automatic result OCR is not yet available/)).toBeVisible();
+    await expect(workspace.getByRole("button",{name:"Upload battle result screenshots",exact:true})).toBeVisible();
     await card.getByRole("button",{name:"Back to calendar"}).click();
     await calendar.getByRole("region",{name:"Jul 05, 2091",exact:true}).getByRole("button",{name:/Canyon Clash.*Registration.*Estimated/}).click();
     await expect(workspace.getByRole("button",{name:/Legion 1 · Registration pending/})).toBeVisible();

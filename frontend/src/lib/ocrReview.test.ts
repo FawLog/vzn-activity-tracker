@@ -29,3 +29,10 @@ it("flags conflicting Canyon registration roles and merges duplicates by FID",()
  expect(summarizeReview([a,b],"canyon_registration").duplicates).toBe(1);
  expect(summarizeReview([a,{...b,role:"substitute"}],"canyon_registration").conflicts.has("1")).toBe(true);
 });
+
+it("deduplicates Canyon personal rankings and detects conflicting points or ranks",()=>{
+ const a=row("1","BobMarley",{points:223633,rank:8}),b={...a,source:"next.png"};
+ expect(summarizeReview([a,b],"canyon_results").duplicates).toBe(1);
+ expect(summarizeReview([a,{...b,rank:9}],"canyon_results").conflicts.has("1")).toBe(true);
+ expect(summarizeReview([a,{...b,points:0}],"canyon_results").conflicts.has("1")).toBe(true);
+});

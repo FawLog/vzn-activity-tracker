@@ -1,0 +1,5 @@
+# Canyon result screenshots
+
+The existing Vision transport and battle review UI support Canyon personal rankings and the three-team summary. The summary validates the report's own legion and alliance, retains displayed abbreviated statistic values rather than inventing precision, and stores reviewed metadata separately from player scores. Personal ranking continuation pages require rank anchors and use existing nickname/FID matching and overlap deduplication. No automatic publication.
+
+For Foundry and Canyon, verified full registration and personal ranking are required for automatic final attendance. Registered zero-point players and registered players absent from a complete ranking are no-shows; missing results in an incomplete ranking remain unknown. No synthetic zero metrics. Existing excused/no-duty and cycle-level attendance protections remain. Historical legacy Canyon attendance records are not rewritten. Regression fixtures are reconstructed from the supplied screenshots, not actual Google Vision responses. No OCR service, CI or infrastructure change.

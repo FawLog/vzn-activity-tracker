@@ -595,6 +595,7 @@ class CalendarCycleCreate(BaseModel):
     phases: list[CalendarInput] = Field(min_length=2,max_length=5)
     occurrence_count: int = Field(default=1,ge=1,le=14)
     interval_days: int | None = Field(default=None,ge=1,le=366)
+    rolling: bool = False
 
     @model_validator(mode="after")
     def validate_phases(self):
@@ -627,6 +628,8 @@ class CalendarCycleCreate(BaseModel):
                 raise ValueError("Cycle phases must not overlap")
             if parse(p.ends_at or p.starts_at)-parse(first.starts_at)>timedelta(days=31):
                 raise ValueError("Maximum cycle duration is 31 days")
+        if self.rolling and (self.interval_days is None or self.interval_days<7 or self.interval_days>60 or self.occurrence_count!=1+60//self.interval_days):
+            raise ValueError("Automatic renewal requires a 7–60 day cadence and the initial 60-day preview")
         if (self.occurrence_count>1)!=(self.interval_days is not None):
             raise ValueError("Provide a repeat interval for multiple cycles")
         if self.interval_days is not None:
@@ -639,25 +642,71 @@ class CalendarCycleCreate(BaseModel):
         return self
 
 
+def project_cycle(kind, phases, days):
+    result=[]
+    for p in phases:
+        values=p.model_dump()
+        values.update(starts_at=shift(p.starts_at,days*1440),ends_at=shift(p.ends_at,days*1440),confidence="estimated")
+        if kind!="svs" and p.phase in {"Battle","Legion 1","Legion 2"}:
+            values.update(starts_at=values["starts_at"][:10],ends_at=None,precision="date")
+        result.append(CalendarInput.model_validate(values))
+    CalendarCycleCreate(kind=kind,request_key="projected-cycle-template",phases=result)
+    return result
+
+
 def cycle_occurrences(payload:CalendarCycleCreate):
-    cycles=[payload.phases]
-    for i in range(1,payload.occurrence_count):
-        phases=[]
-        for p in payload.phases:
-            minutes=i*(payload.interval_days or 0)*1440
-            values=p.model_dump()
-            values.update(starts_at=shift(p.starts_at,minutes),ends_at=shift(p.ends_at,minutes),confidence="estimated")
-            if payload.kind!="svs" and p.phase in {"Battle","Legion 1","Legion 2"}:
-                values.update(starts_at=values["starts_at"][:10],ends_at=None,precision="date")
-            phases.append(CalendarInput.model_validate(values))
-        # Revalidate the generated cycle, including date-only battle ordering.
-        CalendarCycleCreate(kind=payload.kind,request_key=payload.request_key,phases=phases)
-        cycles.append(phases)
-    return cycles
+    return [payload.phases]+[project_cycle(payload.kind,payload.phases,i*(payload.interval_days or 0)) for i in range(1,payload.occurrence_count)]
+
+
+def cycle_owner(phase):
+    return "a:"+phase.alliance_id if phase.scope=="alliance" else "s:"+phase.state_id
+
+
+def validate_cycle_insert(db,group_id,phases):
+    for p in phases:
+        validate_scope(db,group_id,p)
+        if p.phase in {"Legion 1","Legion 2"}:
+            if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=?
+                AND substr(starts_at,1,10)=? AND (lower(phase) IN ('battle','') OR replace(lower(phase),'_',' ')=?)""",
+                (group_id,p.alliance_id,p.event_type,p.starts_at[:10],p.phase.lower())).fetchone():
+                raise ValueError("A matching battle or legion schedule already exists; review the calendar")
+            require_open_cycle_for_grouping(db,group_id,p.event_type,p.starts_at[:10],p.alliance_id)
+            if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=? AND entry_cycle_date=? AND entry_session_key=?""",(group_id,p.alliance_id,p.event_type,p.starts_at[:10],"legion_"+p.phase[-1])).fetchone():
+                raise ValueError("Legion already assigned in this cycle")
+        # Blank legacy phase may represent the same event. Never silently duplicate it.
+        existing=db.execute("""SELECT starts_at,precision FROM calendar_occurrences
+            WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=?
+            AND (phase=? OR phase='') AND starts_at>=? AND starts_at<?""",
+            (group_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.phase,p.starts_at[:10],
+             (parse(p.starts_at).date()+timedelta(days=1)).isoformat())).fetchall()
+        if any(r["starts_at"]==p.starts_at or r["precision"]=="date" or p.precision=="date" for r in existing):
+            raise ValueError("A matching scheduled or cancelled phase already exists; review the calendar")
+
+def insert_cycle(db,group_id,kind,phases,series_id=None,sequence=0,forecast=False,system=False):
+    cycle_id=uuid.uuid4().hex
+    db.execute("INSERT INTO calendar_cycles(id,group_id,kind) VALUES (?,?,?)",(cycle_id,group_id,kind))
+    if series_id:
+        db.execute("INSERT INTO calendar_cycle_series_members(cycle_id,series_id,sequence) VALUES (?,?,?)",(cycle_id,series_id,sequence))
+    items=[]
+    for p in phases:
+        oid=uuid.uuid4().hex
+        db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence,"recurrence" if forecast else "manual"))
+        if p.phase in {"Legion 1","Legion 2"}:
+            db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(p.starts_at[:10],"legion_"+p.phase[-1],oid))
+        if system:
+            db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('created','calendar_occurrence',?,'system')",(oid,))
+        else:
+            audit(db,"created",oid)
+        items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(oid,)).fetchone()))
+    return items
 
 
 def create_cycle(path,group_id,payload:CalendarCycleCreate):
     excluded={"request_key"}
+    if not payload.rolling:
+        excluded.add("rolling")
     if payload.occurrence_count==1:
         excluded.update(("occurrence_count","interval_days"))
     fingerprint=hashlib.sha256(json.dumps({"cycle":payload.model_dump(mode="json",exclude=excluded)},sort_keys=True,separators=(",",":")).encode()).hexdigest()
@@ -669,49 +718,78 @@ def create_cycle(path,group_id,payload:CalendarCycleCreate):
             if previous["payload_hash"]!=fingerprint:
                 raise ValueError("Request key already used for a different schedule")
             return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?",(group_id,oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
-        for p in (p for phases in cycles for p in phases):
-            validate_scope(db,group_id,p)
-            if p.phase in {"Legion 1","Legion 2"}:
-                if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=?
-                    AND substr(starts_at,1,10)=? AND (lower(phase) IN ('battle','') OR replace(lower(phase),'_',' ')=?)""",
-                    (group_id,p.alliance_id,p.event_type,p.starts_at[:10],p.phase.lower())).fetchone():
-                    raise ValueError("A matching battle or legion schedule already exists; review the calendar")
-                require_open_cycle_for_grouping(db,group_id,p.event_type,p.starts_at[:10],p.alliance_id)
-                if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=? AND entry_cycle_date=? AND entry_session_key=?""",(group_id,p.alliance_id,p.event_type,p.starts_at[:10],"legion_"+p.phase[-1])).fetchone():
-                    raise ValueError("Legion already assigned in this cycle")
-            # Blank legacy phase may represent the same event. Never silently duplicate it.
-            existing=db.execute("""SELECT starts_at,precision FROM calendar_occurrences
-                WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=?
-                AND (phase=? OR phase='') AND starts_at>=? AND starts_at<?""",
-                (group_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.phase,p.starts_at[:10],
-                 (parse(p.starts_at).date()+timedelta(days=1)).isoformat())).fetchall()
-            if any(r["starts_at"]==p.starts_at or r["precision"]=="date" or p.precision=="date" for r in existing):
-                raise ValueError("A matching scheduled or cancelled phase already exists; review the calendar")
-        items=[]
         for phases in cycles:
-            cycle_id=uuid.uuid4().hex
-            db.execute("INSERT INTO calendar_cycles(id,group_id,kind) VALUES (?,?,?)",(cycle_id,group_id,payload.kind))
-            for p in phases:
-                oid=uuid.uuid4().hex
-                db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'manual')""",
-                    (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence))
-                if p.phase in {"Legion 1","Legion 2"}:
-                    db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(p.starts_at[:10],"legion_"+p.phase[-1],oid))
-                audit(db,"created",oid)
-                items.append(dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(oid,)).fetchone()))
+            validate_cycle_insert(db,group_id,phases)
+        series_id=None
+        if payload.occurrence_count>1:
+            owner=cycle_owner(payload.phases[0])
+            if payload.rolling and db.execute("SELECT 1 FROM calendar_cycle_series WHERE group_id=? AND kind=? AND owner_key=? AND status IN ('active','conflict')",(group_id,payload.kind,owner)).fetchone():
+                raise ValueError("An automatic cycle schedule already exists for this owner; review or stop it first")
+            series_id=uuid.uuid4().hex
+            db.execute("""INSERT INTO calendar_cycle_series(id,group_id,kind,owner_key,interval_days,template_json,next_sequence,status)
+                VALUES (?,?,?,?,?,?,?,?)""",(series_id,group_id,payload.kind,owner,payload.interval_days,
+                json.dumps([p.model_dump(mode="json") for p in payload.phases]),len(cycles),"active" if payload.rolling else "finite"))
+        items=[]
+        for i,phases in enumerate(cycles):
+            items.extend(insert_cycle(db,group_id,payload.kind,phases,series_id,i,forecast=i>0))
         db.execute("INSERT INTO calendar_create_requests(group_id,request_key,payload_hash,occurrence_ids) VALUES (?,?,?,?)",(group_id,payload.request_key,fingerprint,json.dumps([r["id"] for r in items])))
         return {"items":items}
+
+
+def cycle_series(db,group_id,cycle_id):
+    return db.execute("""SELECT s.*,m.sequence FROM calendar_cycle_series s JOIN calendar_cycle_series_members m ON m.series_id=s.id
+        WHERE s.group_id=? AND m.cycle_id=?""",(group_id,cycle_id)).fetchone()
+
+
+def cycle_rows(db,group_id,cycle_id):
+    if not db.execute("SELECT 1 FROM calendar_cycles WHERE id=? AND group_id=?",(cycle_id,group_id)).fetchone():
+        raise LookupError("Calendar cycle not found")
+    return [dict(r) for r in db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND cycle_id=? ORDER BY starts_at,id",(group_id,cycle_id))]
 
 
 def get_cycle(path,group_id,cycle_id):
     with connection(path) as db:
         require_group(db,group_id)
-        cycle=db.execute("SELECT * FROM calendar_cycles WHERE id=? AND group_id=?",(cycle_id,group_id)).fetchone()
-        if cycle is None:
-            raise LookupError("Calendar cycle not found")
-        rows=db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND cycle_id=? ORDER BY starts_at,id",(group_id,cycle_id)).fetchall()
-        return {"kind":cycle["kind"],"items":[dict(r) for r in rows]}
+        rows=cycle_rows(db,group_id,cycle_id)
+        kind=db.execute("SELECT kind FROM calendar_cycles WHERE id=?",(cycle_id,)).fetchone()[0]
+        series=cycle_series(db,group_id,cycle_id)
+        return {"kind":kind,"items":rows,"series":{k:series[k] for k in ("id","interval_days","status","revision","sequence")} if series else None}
+
+
+def renew_cycle_series(path,series_id,now):
+    with transaction(path) as db:
+        series=db.execute("""SELECT s.* FROM calendar_cycle_series s JOIN alliance_groups g ON g.id=s.group_id
+            WHERE s.id=? AND s.status='active' AND g.status='active'""",(series_id,)).fetchone()
+        if not series:
+            return 0
+        template=[CalendarInput.model_validate(p) for p in json.loads(series["template_json"])]
+        interval=series["interval_days"]
+        anchor=parse(template[0].starts_at)
+        threshold=future_threshold(template[0].precision,now)
+        # Never backfill missed cycles after downtime.
+        seq=max(series["next_sequence"],max(0,(threshold-anchor)//timedelta(days=interval)))
+        if anchor+timedelta(days=seq*interval)<threshold:
+            seq+=1
+        horizon=now+timedelta(days=ROLLING_HORIZON_DAYS)
+        count=0
+        status="active"
+        while anchor+timedelta(days=seq*interval)<=horizon:
+            if (anchor+timedelta(days=seq*interval)).year>2099:
+                status="stopped"
+                break
+            try:
+                phases=project_cycle(series["kind"],template,seq*interval)
+                validate_cycle_insert(db,series["group_id"],phases)
+            except (ValueError,LookupError):
+                status="conflict"
+                break
+            insert_cycle(db,series["group_id"],series["kind"],phases,series_id,seq,forecast=True,system=True)
+            count+=len(phases)
+            seq+=1
+        if seq!=series["next_sequence"] or status!=series["status"]:
+            db.execute("UPDATE calendar_cycle_series SET next_sequence=?,status=?,revision=revision+1 WHERE id=?",(seq,status,series_id))
+        return count
+
 
 # Only types with established alliance-owned result workflows. Bear has a group
 # cycle and host-specific sessions; it needs a separate mapping.
@@ -1309,4 +1387,8 @@ def renew_schedules(path, now=None):
     total = 0
     for series_id in ids:
         total += renew_series(path,series_id,now)
+    with connection(path) as db:
+        cycle_ids=[r[0] for r in db.execute("SELECT id FROM calendar_cycle_series WHERE status='active'")]
+    for series_id in cycle_ids:
+        total += renew_cycle_series(path,series_id,now)
     return total

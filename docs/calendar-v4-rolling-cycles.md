@@ -1,0 +1,2 @@
+# Whole-cycle recurrence
+New Foundry, Canyon and SvS schedules can maintain a 60-day rolling window from the chosen anchor using the existing hourly renewal. The selected initial cycle remains reviewed; forecasts are estimated with unknown local legion times. Renewal skips missed historical cycles, rejects conflicting phases atomically and stops on conflict. Finite repeating batches retain a series identity. Existing legacy cycles stay intact and are not silently enrolled. Review and stop controls are implemented in a subsequent change.

@@ -3,7 +3,7 @@ import {gameEventForCalendar,type GameRun} from "./game-event-catalog";
 import {fixedGameInterval,runMinutes,referenceEnd} from "./game-forecast";
 import type {ScheduleFields} from "./schedule-editor";
 export type CycleKind="canyon"|"foundry"|"svs";
-export type CycleCreate={kind:CycleKind;request_key:string;phases:ScheduleFields[];occurrence_count?:number;interval_days?:number};
+export type CycleCreate={kind:CycleKind;request_key:string;phases:ScheduleFields[];occurrence_count?:number;interval_days?:number;rolling?:boolean};
 const weekdays=["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 export function cycleReference(kind:CycleKind){return gameEventForCalendar(kind==="svs"?"svs_preparation":kind);}
 export function cycleIntervalDays(kind:CycleKind):number|null{
@@ -75,4 +75,9 @@ export function cycleOccurrences(kind:CycleKind,phases:ScheduleFields[],count:nu
     if(kind!=="svs"&&isBattlePhase(p.phase))return {...p,starts_at:move(p.starts_at).slice(0,10),ends_at:null,precision:"date",confidence:"estimated"};
     return {...p,starts_at:move(p.starts_at),ends_at:p.ends_at?move(p.ends_at):null,confidence:"estimated"};
   }));
+}
+
+export type CycleSeries={id:string;interval_days:number;status:"active"|"finite"|"stopped"|"conflict";revision:number;sequence:number};
+export function initialCycleCount(interval:number|null,rolling:boolean,count:number){
+  return rolling&&interval!==null&&interval>=7&&interval<=60?1+Math.floor(60/interval):count;
 }

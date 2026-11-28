@@ -634,23 +634,25 @@ def create_api_router(settings: Settings) -> APIRouter:
         except LookupError as error:
             raise _not_found(str(error)) from error
 
-    @router.post("/groups/{group_id}/calendar/{occurrence_id}/correct-time")
-    async def post_calendar_correct_time(request: Request,group_id: str,occurrence_id: str,payload: calendar.BearTimeCorrection):
-        require_csrf(request,require_admin(request,settings))
+    @router.get("/groups/{group_id}/calendar/{occurrence_id}/scoped-edit")
+    async def get_calendar_scoped_edit(request: Request,group_id: str,occurrence_id: str):
+        require_admin(request,settings)
         try:
-            return calendar.correct_bear_time(settings.database_path,group_id,occurrence_id,payload)
+            return calendar.scoped_edit_info(settings.database_path,group_id,occurrence_id)
         except LookupError as error:
             raise _not_found(str(error)) from error
         except ValueError as error:
             raise HTTPException(status_code=409,detail=str(error)) from error
 
-    @router.get("/groups/{group_id}/calendar/{occurrence_id}/next-editable")
-    async def get_calendar_next_editable(request: Request,group_id: str,occurrence_id: str):
-        require_admin(request,settings)
+    @router.post("/groups/{group_id}/calendar/{occurrence_id}/scoped-edit")
+    async def post_calendar_scoped_edit(request: Request,group_id: str,occurrence_id: str,payload: calendar.ScopedScheduleEdit):
+        require_csrf(request,require_admin(request,settings))
         try:
-            return calendar.next_editable_occurrence(settings.database_path,group_id,occurrence_id)
+            return calendar.edit_schedule_scope(settings.database_path,group_id,occurrence_id,payload)
         except LookupError as error:
             raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
 
     @router.get("/groups/{group_id}/calendar/{occurrence_id}/future")
     async def get_calendar_future(request: Request, group_id: str, occurrence_id: str) -> dict[str, object]:

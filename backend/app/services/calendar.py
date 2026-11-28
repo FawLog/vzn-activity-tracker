@@ -44,7 +44,7 @@ class CalendarInput(BaseModel):
 
 
 class CalendarCreate(CalendarInput):
-    request_key: str | None = Field(default=None, min_length=16, max_length=128, pattern=r'^[A-Za-z0-9_-]+
+    request_key: str | None = Field(default=None, min_length=16, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
     interval_minutes: int | None = Field(default=None, ge=60, le=525600)
     occurrence_count: int = Field(default=1, ge=1, le=180)
 

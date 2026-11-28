@@ -716,7 +716,7 @@ def insert_cycle(db,group_id,kind,phases,series_id=None,sequence=0,forecast=Fals
     for p in phases:
         oid=uuid.uuid4().hex
         db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,alliance_id,state_id,starts_at,ends_at,precision,phase,confidence,source)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (oid,group_id,cycle_id,p.event_type,p.scope,p.alliance_id,p.state_id,p.starts_at,p.ends_at,p.precision,p.phase,p.confidence,"recurrence" if forecast else "manual"))
         if p.phase in {"Legion 1","Legion 2"}:
             db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=? WHERE id=?",(p.starts_at[:10],"legion_"+p.phase[-1],oid))

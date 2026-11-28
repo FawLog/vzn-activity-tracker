@@ -1,3 +1,4 @@
+import type { EventDetailsData } from "./event-rewards";
 import { catalog, catalogVersion } from "virtual:wos-event-catalog";
 
 export type RepeatRule =
@@ -25,6 +26,7 @@ export interface GameEventSummary {
   phases?:{name:string;description:string}[];
   unlockDay?:number;
   stages:GameStage[];
+  details:EventDetailsData;
   dayCount:number;
   missionCount:number;
   hasVariants:boolean;

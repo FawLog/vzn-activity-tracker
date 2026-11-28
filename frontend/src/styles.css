@@ -967,3 +967,14 @@ td strong { color: var(--text); font-weight: 650; }
 .calendar-stage-tabs button[aria-pressed=true]{border-color:currentColor;font-weight:600}
 .calendar-stage-detail{padding:.75rem;border:1px solid var(--border, #536477);border-radius:.5rem;min-width:0}
 .calendar-stage-label,.calendar-day-number{font-weight:500;overflow-wrap:anywhere}
+
+/* Calendar v2.4: scoring and reward tables */
+.game-event-rewards{display:grid;gap:.65rem;min-width:0;max-width:100%;overflow-wrap:anywhere}
+.game-event-rewards details{min-width:0;margin-block:.3rem}
+.game-event-rewards label{display:grid;gap:.3rem;min-width:0}
+.game-event-rewards select,.game-event-rewards input{max-width:100%;min-width:0}
+.game-reward-scroll{overflow-x:auto;max-width:100%;min-width:0}
+.game-reward-scroll table{border-collapse:collapse;width:100%;font-size:.875rem}
+.game-reward-scroll td,.game-reward-scroll th{padding:.45rem .6rem;border-bottom:1px solid var(--border,#536477);text-align:left;vertical-align:top}
+.game-reward-scroll td:not(:first-child),.game-reward-scroll th:not(:first-child){text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.game-reward-list{margin-block:.4rem;padding-inline-start:1.3rem}

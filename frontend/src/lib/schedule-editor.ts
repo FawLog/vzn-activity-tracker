@@ -65,7 +65,7 @@ export function recurrence(count:number,days:number){
   if(!Number.isInteger(days)||days<1||(count-1)*days>366)throw new Error("Recurrence must fit within 366 days");
   return {occurrence_count:count,interval_minutes:days*1440};
 }
-export function futureChange(rows:CalendarOccurrence[],action:"shift"|"cancel",minutes:number):FutureChange{
+export function futureChange(rows:CalendarOccurrence[],action:"shift"|"cancel",minutes:number):Extract<FutureChange,{action:"shift"|"cancel"}>{
   if(!rows.length)throw new Error("No eligible occurrences");
   if(action==="shift"&&(!Number.isInteger(minutes)||!minutes||Math.abs(minutes)>527040))throw new Error("Enter a nonzero shift within 366 days");
   if(action==="shift"&&rows.some(r=>r.precision==="date")&&minutes%1440!==0)throw new Error("Date-only events require whole-day shifts");

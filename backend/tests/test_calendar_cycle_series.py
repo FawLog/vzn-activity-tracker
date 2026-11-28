@@ -83,3 +83,49 @@ def test_cycle_shift_rejects_protected_overlap_and_stale_revision(authenticated_
     data["shift_days"]=1
     data["revisions"][rows[0]["id"]]=999
     assert c.post(first,json=data).status_code==409
+
+
+def test_cadence_changes_following_cycles_and_renewal_without_moving_anchor(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    rows=create(c,root,aid)
+    url=root+"/calendar/cycles/"+rows[5]["cycle_id"]+"/reconcile"
+    # Confirm the anchor; confirmation is not permission to move it.
+    confirm=c.get(url).json()
+    assert c.post(url,json={"action":"confirm","revisions":{r["id"]:r["revision"] for r in confirm["confirm_items"]},"series_revision":confirm["series_revision"]}).status_code==200
+    plan=c.get(url+"?interval_days=7").json()
+    assert len(plan["items"])==15
+    assert plan["proposed"][0]["starts_at"]=="2090-03-27"
+    assert plan["next_start"]=="2090-04-17"
+    data={"action":"cadence","following":True,"interval_days":7,"series_revision":plan["series_revision"],
+        "revisions":{r["id"]:r["revision"] for r in plan["anchor_items"]+plan["items"]}}
+    stale={**data,"revisions":{**data["revisions"],rows[5]["id"]:999}}
+    assert c.post(url,json=stale).status_code==409
+    response=c.post(url,json=data)
+    assert response.status_code==200,response.text
+    assert c.post(url,json=data).status_code==409
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT interval_days FROM calendar_cycle_series").fetchone()[0]==7
+        assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(rows[5]["id"],)).fetchone()[0]=="2090-03-20"
+        assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(rows[0]["id"],)).fetchone()[0]=="2090-03-06"
+        assert db.execute("SELECT entry_cycle_date FROM calendar_occurrences WHERE id=?",(rows[13]["id"],)).fetchone()[0]=="2090-04-02"
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+    assert renew_schedules(settings.database_path,datetime(2090,4,16,tzinfo=timezone.utc))>0
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT 1 FROM calendar_occurrences WHERE phase='Voting' AND starts_at='2090-04-17'").fetchone()
+
+
+def test_cadence_rejects_overlap_with_protected_cycle(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    rows=create(c,root,aid,rolling=False)
+    base=root+"/calendar/cycles/"
+    protected=base+rows[5]["cycle_id"]+"/reconcile"
+    plan=c.get(protected).json()
+    assert c.post(protected,json={"action":"confirm","revisions":{r["id"]:r["revision"] for r in plan["confirm_items"]},"series_revision":plan["series_revision"]}).status_code==200
+    url=base+rows[0]["cycle_id"]+"/reconcile"
+    assert c.get(url+"?interval_days=7").status_code==409
+    assert c.get(url+"?interval_days=6").status_code==409
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT interval_days FROM calendar_cycle_series").fetchone()[0]==14
+        assert db.execute("SELECT starts_at FROM calendar_occurrences WHERE id=?",(rows[10]["id"],)).fetchone()[0]=="2090-04-03"

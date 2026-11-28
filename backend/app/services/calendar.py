@@ -783,9 +783,10 @@ def get_cycle(path,group_id,cycle_id):
 
 class CycleReconcile(BaseModel):
     model_config=ConfigDict(extra="forbid")
-    action: Literal["confirm","shift","stop"]
+    action: Literal["confirm","shift","stop","cadence"]
     following: bool=False
     shift_days: int=Field(default=0,ge=-366,le=366)
+    interval_days: int|None=Field(default=None,ge=7,le=60)
     revisions: dict[str,int]=Field(default_factory=dict,max_length=500)
     series_revision: int|None=Field(default=None,ge=1)
 
@@ -793,8 +794,12 @@ class CycleReconcile(BaseModel):
     def valid_action(self):
         if (self.action=="shift")!=bool(self.shift_days):
             raise ValueError("Only a shift requires a nonzero number of days")
-        if self.following and self.action!="shift":
-            raise ValueError("Only shifts may affect following cycles")
+        if (self.action=="cadence")!=(self.interval_days is not None):
+            raise ValueError("Only cadence changes require a repeat interval")
+        if self.action=="cadence" and not self.following:
+            raise ValueError("Cadence changes affect following cycles")
+        if self.following and self.action not in {"shift","cadence"}:
+            raise ValueError("Only shifts and cadence changes may affect following cycles")
         return self
 
 
@@ -854,9 +859,12 @@ def cycle_reconcile_plan(db,group_id,cycle_id,following,now):
         "series_revision":series["revision"] if series else None,"series_status":series["status"] if series else None}
 
 
-def preview_cycle_reconcile(path,group_id,cycle_id,following=False):
+def preview_cycle_reconcile(path,group_id,cycle_id,following=False,interval_days=None):
     with connection(path) as db:
-        return cycle_reconcile_plan(db,group_id,cycle_id,following,datetime.now(timezone.utc))
+        now=datetime.now(timezone.utc)
+        if interval_days is not None:
+            return cadence_plan(db,group_id,cycle_id,interval_days,now)[0]
+        return cycle_reconcile_plan(db,group_id,cycle_id,following,now)
 
 
 def validate_shifted_cycles(db,group_id,proposed,ids,now):
@@ -885,10 +893,97 @@ def validate_shifted_cycles(db,group_id,proposed,ids,now):
         ranges.append((first,last))
 
 
+def cadence_plan(db,group_id,cycle_id,interval_days,now):
+    require_group(db,group_id)
+    series=cycle_series(db,group_id,cycle_id)
+    if not series or series["status"] not in {"active","finite","conflict"}:
+        raise ValueError("Choose an existing active or finite cycle series")
+    if not 7<=interval_days<=60 or interval_days==series["interval_days"]:
+        raise ValueError("Choose a different repeat interval between 7 and 60 days")
+    anchor_rows=cycle_rows(db,group_id,cycle_id)
+    anchor,end=cycle_span(anchor_rows)
+    if end<=now or any(r["schedule_status"]!="scheduled" for r in anchor_rows):
+        raise ValueError("Choose a current or future scheduled cycle as the anchor")
+    for r in anchor_rows:
+        validate_scope(db,group_id,CalendarInput.model_validate({k:r[k] for k in CalendarInput.model_fields}))
+    if end-anchor>timedelta(days=interval_days):
+        raise ValueError("Repeat interval cannot be shorter than the selected cycle")
+    template=[CalendarInput.model_validate(p) for p in json.loads(series["template_json"])]
+    template_start=parse(template[0].starts_at)
+    delta=anchor-template_start
+    if delta.seconds or delta.microseconds:
+        raise ValueError("The anchor start time differs from the series template; review its dates first")
+    # Keep sequence IDs stable and align the new recurrence with the selected cycle.
+    moved=project_cycle(series["kind"],template,delta.days-series["sequence"]*interval_days)
+    projected_anchor=project_cycle(series["kind"],moved,series["sequence"]*interval_days)
+    projected_span=cycle_span([p.model_dump() for p in projected_anchor])
+    if projected_span[1]-projected_span[0]>timedelta(days=interval_days):
+        raise ValueError("Repeat interval cannot be shorter than the template cycle")
+    members=db.execute("""SELECT cycle_id,sequence FROM calendar_cycle_series_members
+        WHERE series_id=? AND sequence>? ORDER BY sequence LIMIT 101""",(series["id"],series["sequence"])).fetchall()
+    if len(members)>100:
+        raise ValueError("Too many cycles for one review; choose a later forecast")
+    rows=[]; proposed=[]; protected=0
+    for member in members:
+        group=cycle_rows(db,group_id,member["cycle_id"])
+        if not movable_cycle(db,group,now):
+            protected+=1
+            continue
+        target=anchor+timedelta(days=(member["sequence"]-series["sequence"])*interval_days)
+        offset=target-cycle_span(group)[0]
+        if offset.seconds or offset.microseconds:
+            raise ValueError("A forecast start time differs from the series template")
+        rows.extend(group)
+        proposed.extend({**r,"starts_at":shift(r["starts_at"],offset.days*1440),"ends_at":shift(r["ends_at"],offset.days*1440),
+            "entry_cycle_date":shift(r["entry_cycle_date"],offset.days*1440)} for r in group)
+    if not rows and series["status"]=="finite":
+        raise ValueError("No following forecasts to reschedule")
+    validate_shifted_cycles(db,group_id,proposed,{r["id"] for r in rows},now)
+    next_start=None
+    if series["status"] in {"active","conflict"}:
+        next_cycle=project_cycle(series["kind"],moved,series["next_sequence"]*interval_days)
+        next_start=next_cycle[0].starts_at
+        if parse(next_start)<=now:
+            raise ValueError("New renewal anchor would be in the past")
+        next_rows=[p.model_dump() for p in next_cycle]
+        validate_cycle_overlap(db,group_id,next_rows,{r["id"] for r in rows})
+        lo,hi=cycle_span(next_rows)
+        by_cycle={}
+        for r in proposed:
+            by_cycle.setdefault(r["cycle_id"],[]).append(r)
+        if any(a<hi and b>lo for a,b in (cycle_span(rr) for rr in by_cycle.values())):
+            raise ValueError("Next automatic cycle overlaps a proposed forecast")
+    return {"items":rows,"proposed":proposed,"anchor_items":anchor_rows,"protected_cycles":protected,
+        "interval_days":interval_days,"series_revision":series["revision"],"next_start":next_start},moved
+
+
+def write_cycle_moves(db,proposed,following):
+    # Avoid transient legion uniqueness conflicts when several cycles exchange dates.
+    for r in proposed:
+        if r["entry_session_key"]:
+            db.execute("UPDATE calendar_occurrences SET entry_cycle_date=NULL,entry_session_key=NULL WHERE id=?",(r["id"],))
+    for r in proposed:
+        db.execute("""UPDATE calendar_occurrences SET starts_at=?,ends_at=?,entry_cycle_date=?,entry_session_key=?,source=?,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (r["starts_at"],r["ends_at"],r["entry_cycle_date"],r["entry_session_key"],"recurrence" if following else "manual",r["id"]))
+        audit(db,"rescheduled",r["id"])
+
+
 def reconcile_cycle(path,group_id,cycle_id,payload):
     now=datetime.now(timezone.utc)
     with transaction(path) as db:
         require_group(db,group_id,True)
+        if payload.action=="cadence":
+            plan,moved=cadence_plan(db,group_id,cycle_id,payload.interval_days,now)
+            rows=plan["anchor_items"]+plan["items"]
+            if plan["series_revision"]!=payload.series_revision or {r["id"]:r["revision"] for r in rows}!=payload.revisions:
+                raise ValueError("Cycle or series changed; refresh the interval preview")
+            series=cycle_series(db,group_id,cycle_id)
+            write_cycle_moves(db,plan["proposed"],True)
+            db.execute("UPDATE calendar_cycle_series SET interval_days=?,template_json=?,revision=revision+1 WHERE id=?",
+                (payload.interval_days,json.dumps([p.model_dump(mode="json") for p in moved]),series["id"]))
+            for r in plan["anchor_items"]:
+                audit(db,"cycle_cadence_changed",r["id"])
+            return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(r["id"],)).fetchone()) for r in rows]}
         plan=cycle_reconcile_plan(db,group_id,cycle_id,payload.following,now)
         series=cycle_series(db,group_id,cycle_id)
         if plan["series_revision"]!=payload.series_revision:
@@ -920,14 +1015,7 @@ def reconcile_cycle(path,group_id,cycle_id,payload):
                 if parse(next_cycle[0].starts_at)<=now:
                     raise ValueError("New renewal anchor would be in the past")
                 db.execute("UPDATE calendar_cycle_series SET template_json=?,revision=revision+1 WHERE id=?",(json.dumps([p.model_dump(mode="json") for p in moved]),series["id"]))
-            # Clear moved keys first to avoid transient unique-index collisions.
-            for r in proposed:
-                if r["entry_session_key"]:
-                    db.execute("UPDATE calendar_occurrences SET entry_cycle_date=NULL,entry_session_key=NULL WHERE id=?",(r["id"],))
-            for r in proposed:
-                db.execute("""UPDATE calendar_occurrences SET starts_at=?,ends_at=?,entry_cycle_date=?,entry_session_key=?,source=?,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                    (r["starts_at"],r["ends_at"],r["entry_cycle_date"],r["entry_session_key"],"recurrence" if payload.following else "manual",r["id"]))
-                audit(db,"rescheduled",r["id"])
+            write_cycle_moves(db,proposed,payload.following)
         return {"items":[dict(db.execute("SELECT * FROM calendar_occurrences WHERE id=?",(r["id"],)).fetchone()) for r in rows]}
 
 

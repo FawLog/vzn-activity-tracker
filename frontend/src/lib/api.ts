@@ -1,5 +1,5 @@
 import type { AnalyticsReport } from "./analytics";
-import type { CycleCreate, CycleSeries, CycleReconcilePlan, CycleReconcilePayload } from "./calendar-cycles";
+import type { CycleCreate, CycleSeries, CycleReconcilePlan, CycleReconcilePayload, CycleCadencePlan } from "./calendar-cycles";
 import type { CalendarOccurrence, CalendarReview } from "./calendar";
 import type { BearSchedulePayload } from "./bear-schedule";
 import type { ScheduleCreate, ScheduleUpdate, FutureChange, FuturePreview, ScheduleTemplate, ScheduleTemplateInput } from "./schedule-editor";
@@ -54,6 +54,7 @@ export const api = {
   eventSchedules:(groupId:string,id:string,signal?:AbortSignal)=>request<{items:(CalendarOccurrence&{linked_session_id?:string|null})[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/calendar`,{signal}),
   createCycle: (groupId:string,payload:CycleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles`,{method:"POST",body:JSON.stringify(payload)}),
   cycleReconcilePreview:(groupId:string,cycleId:string,following:boolean,signal?:AbortSignal)=>request<CycleReconcilePlan>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}/reconcile?following=${following}`,{signal}),
+  cycleCadencePreview:(groupId:string,cycleId:string,days:number,signal?:AbortSignal)=>request<CycleCadencePlan>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}/reconcile?following=true&interval_days=${days}`,{signal}),
   reconcileCycle:(groupId:string,cycleId:string,payload:CycleReconcilePayload)=>request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}/reconcile`,{method:"POST",body:JSON.stringify(payload)}),
   calendarCycle: (groupId:string,cycleId:string,signal?:AbortSignal) => request<{kind:string;items:CalendarOccurrence[];series:CycleSeries|null}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}`,{signal}),
   scheduleTemplates: (groupId:string,signal?:AbortSignal) => request<{items:ScheduleTemplate[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/templates`,{signal}),

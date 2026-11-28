@@ -551,6 +551,18 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await review.getByRole("button",{name:"Move forecast cycles",exact:true}).click();
     expect((await shifted).status()).toBe(200);
     await expect(review).toHaveCount(0);
+    const shiftedVoting=calendar.getByRole("region",{name:"Jun 05, 2091",exact:true}).getByRole("button",{name:/Foundry Battle.*Voting.*Estimated/});
+    await shiftedVoting.click();
+    await review.getByRole("button",{name:"Review cycle dates",exact:true}).click();
+    await review.getByLabel("Change repeat interval").check();
+    await review.getByLabel("Repeat every (days)").fill("21");
+    await review.getByRole("button",{name:"Preview new interval",exact:true}).click();
+    await expect(review.getByText("4 movable following cycles · 0 protected cycles.",{exact:true})).toBeVisible();
+    await review.getByLabel("I reviewed the new interval and forecast dates").check();
+    const cadenceSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/reconcile"));
+    await review.getByRole("button",{name:"Save repeat interval",exact:true}).click();
+    expect((await cadenceSaved).status()).toBe(200);
+    await expect(review).toHaveCount(0);
   }
 
 

@@ -1,5 +1,5 @@
 import {describe,it,expect} from "vitest";
-import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd} from "./calendar-cycles";
+import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,legionPhases} from "./calendar-cycles";
 describe("reviewed event cycle draft",()=>{
   it("keeps Canyon battle time unknown and all dates estimated",()=>{
     const rows=cycleDraft("canyon","2028-01-03","4284","a");
@@ -27,4 +27,14 @@ it("previews repeated complete Canyon cycles, with unknown future battle times",
   expect(rows[1][3].ends_at).toBeNull();
   expect(rows[1].every(p=>p.confidence==="estimated")).toBe(true);
   expect(()=>cycleOccurrences("canyon",first,3,4)).toThrow();
+});
+
+it("builds Foundry from the supplement and keeps future legion times unknown",()=>{
+ const rows=cycleDraft("foundry","2026-11-30","4284","a");
+ expect(cycleIntervalDays("foundry")).toBe(14);
+ expect(rows.map(p=>p.starts_at)).toEqual(["2026-11-30","2026-12-02","2026-12-04","2026-12-06"]);
+ expect(rows[2].ends_at).toBe("2026-12-06");
+ const split=legionPhases(rows,true);
+ expect(split.slice(-2).map(p=>p.phase)).toEqual(["Legion 1","Legion 2"]);
+ expect(cycleOccurrences("foundry",split,2,14)[1].slice(-2).map(p=>p.starts_at)).toEqual(["2026-12-20","2026-12-20"]);
 });

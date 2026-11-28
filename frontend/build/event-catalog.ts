@@ -90,6 +90,7 @@ export function eventCatalogPlugin(): Plugin {
         if(!Number.isInteger(m.day)||m.day<0)throw Error("Invalid state timeline day");
         return {day:m.day,eventIds:m.eventIds??[],heroIds:m.heroIds??[],petIds:m.petIds??[],expertIds:m.expertIds??[],fireCrystalLevelIds:m.fireCrystalLevelIds??[],unlocks:(m.unlocks??[]).map(u=>({name:u.name,requirement:u.requirement}))};
       }).sort((a,b)=>a.day-b.day);
+      const overrides=JSON.parse(readFileSync(new URL("./game-catalog-overrides.json",import.meta.url),"utf8"));
       const imports: string[] = [];
       const rows = files.map((file, index) => {
         const event = JSON.parse(readFileSync(join(directory, file), "utf8"));
@@ -104,8 +105,13 @@ export function eventCatalogPlugin(): Plugin {
             imports.push("import " + icon + " from " + JSON.stringify(path.replaceAll("\\", "/") + "?url") + ";");
           }
         }
-        const {id, name, category, description, frequency, duration, schedule, requirements, phases} = event;
-        const summary = {id, name, category, description, frequency, duration, schedule, requirements, phases,
+        const {id, name, category, description, frequency, duration, requirements} = event;
+        const patch=overrides[id];
+        const supplement=patch&&!event.schedule?.runs?.some((run:{label?:string})=>run.label==="Voting")?patch:undefined;
+        const schedule=supplement?{...event.schedule,runs:supplement.runs}:event.schedule;
+        const phases=event.phases??supplement?.phases;
+        const scheduleOverride=supplement?{source:supplement.source,checkedOn:supplement.checkedOn,note:supplement.note}:undefined;
+        const summary = {id, name, category, description, frequency, duration, schedule, requirements, phases, scheduleOverride,
           unlockDay: timeline.find(m=>m.eventIds?.includes(id))?.day,
           stages: Array.isArray(event.days) ? event.days.map((d: {day?:unknown;name?:unknown;note?:unknown})=>({
             id: String(d.day??""), name: typeof d.name==="string"?d.name:undefined, note: typeof d.note==="string"?d.note:undefined

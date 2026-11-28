@@ -1,0 +1,51 @@
+{
+  "foundry-battle": {
+    "source": "https://centurygames.helpshift.com/hc/en/64-whiteout-survival/faq/6576-foundry-schedule/",
+    "checkedOn": "2026-11-28",
+    "note": "Official FAQ confirms phase lengths, not absolute weekdays. Monday reset and Sunday battle are a planning assumption; verify in-game.",
+    "runs": [
+      {
+        "label": "Voting",
+        "length": 2,
+        "unit": "days",
+        "startWeekday": "monday"
+      },
+      {
+        "label": "Registration",
+        "length": 2,
+        "unit": "days",
+        "startWeekday": "wednesday"
+      },
+      {
+        "label": "Matchmaking",
+        "length": 2,
+        "unit": "days",
+        "startWeekday": "friday"
+      },
+      {
+        "label": "Battle",
+        "length": 60,
+        "unit": "minutes",
+        "startWeekday": "sunday"
+      }
+    ],
+    "phases": [
+      {
+        "name": "Voting",
+        "description": "2 days"
+      },
+      {
+        "name": "Registration",
+        "description": "2 days"
+      },
+      {
+        "name": "Matchmaking",
+        "description": "2 days"
+      },
+      {
+        "name": "Battle",
+        "description": "60 minutes"
+      }
+    ]
+  }
+}

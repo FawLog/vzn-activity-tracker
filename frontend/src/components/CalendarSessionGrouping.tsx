@@ -21,7 +21,7 @@ export function CalendarSessionGrouping({groupId,row,data,writable,blocked,onSav
     <h4>{bear?"Group Bear cycle":"Battle session grouping"}</h4>
     <p>{data.entry_cycle_date?"Cycle "+data.entry_cycle_date+" · "+data.entry_session_key?.replaceAll("_"," "):"No explicit grouping. Choose the same cycle date for related schedules."}</p>
     {!!data.group_members?.length&&<ul>{data.group_members.map(s=><li key={s.id}>{s.tag} · {s.entry_session_key.replaceAll("_"," ")} · {s.starts_at} · {s.linked?"Record linked":"Planned only"}</li>)}</ul>}
-    {writable&&!data.linked&&<div className="calendar-editor-fields">
+    {writable&&!data.linked&&!(row.cycle_id&&/^Legion [12]$/.test(row.phase))&&<div className="calendar-editor-fields">
       <label>Shared cycle date (UTC)<input type="date" value={day} disabled={busy||blocked} onChange={e=>setDay(e.target.value)}/></label>
       <label>{bear?"Unique trap within group cycle":"Legion identity"}<select value={session} disabled={busy||blocked} onChange={e=>setSession(e.target.value)}><option value="">Choose explicitly</option>{Array.from({length:bear?30:2},(_,i)=><option key={i} value={(bear?"trap_":"legion_")+(i+1)}>{bear?"Trap ":"Legion "}{i+1}</option>)}</select></label>
       <button className="button button--primary" disabled={busy||blocked||!day||!session} onClick={()=>void save()}>Save grouping</button>

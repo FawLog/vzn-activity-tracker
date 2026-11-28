@@ -339,6 +339,8 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const transitionEditor=calendar.getByRole("region",{name:"Schedule editor"});
   await expect(transitionEditor.getByRole("heading",{name:"Bear Trap schedule",exact:true})).toBeVisible();
+  for(const label of ["Bear Trap","Foundry Battle","Canyon Clash","State of Power (SvS)"])await expect(transitionEditor.getByLabel("Event type").getByRole("option",{name:label,exact:true})).toHaveCount(1);
+  await expect(transitionEditor.getByLabel("Event type").getByRole("option",{name:/advanced single trap|all phases|SvS Preparation|SvS Battle/})).toHaveCount(0);
   await transitionEditor.getByLabel("Trap 1 time (UTC)",{exact:true}).fill("15:00");
   await transitionEditor.getByRole("button",{name:"Add another trap",exact:true}).click();
   await transitionEditor.getByLabel("Trap 2 time (UTC)",{exact:true}).fill("20:00");
@@ -350,7 +352,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(transitionEditor.getByRole("button",{name:"Save schedule",exact:true})).toBeEnabled();
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   page.once("dialog", dialog=>dialog.accept());
-  await transitionEditor.getByLabel("Event type").selectOption("bear_trap");
+  await transitionEditor.getByRole("button",{name:"Advanced: single trap",exact:true}).click();
   await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved transition check");
   page.once("dialog", dialog=>dialog.dismiss());
@@ -363,7 +365,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toBeVisible();
   await calendar.getByRole("button",{name:"Close details"}).click();
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
-  await transitionEditor.getByLabel("Event type").selectOption("bear_trap");
+  await transitionEditor.getByRole("button",{name:"Advanced: single trap",exact:true}).click();
   await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved period check");
   page.once("dialog", dialog=>dialog.accept());
@@ -375,7 +377,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});
   await expect(scheduleEditor).toBeVisible();
-  await scheduleEditor.getByLabel("Event type").selectOption("bear_trap");
+  await scheduleEditor.getByRole("button",{name:"Advanced: single trap",exact:true}).click();
   await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await scheduleEditor.getByRole("checkbox",{name:"Group recurring Bear traps"}).check();
   await scheduleEditor.getByLabel("Precision").selectOption("minute");
@@ -388,7 +390,16 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await scheduleEditor.getByLabel("Precision").selectOption("date");
   await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2090-06-02");
   await scheduleEditor.getByRole("button",{name:"Hide advanced settings",exact:true}).click();
-  await scheduleEditor.getByLabel("Event type").selectOption("foundry");
+  page.once("dialog", dialog=>dialog.accept());
+  await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
+  const cycleEditor=calendar.getByRole("region",{name:"Cycle editor"});
+  await expect(cycleEditor.getByLabel("Event type")).toHaveValue("cycle:foundry");
+  await cycleEditor.getByLabel("Schedule Legion 2").check();
+  await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
+  await expect(cycleEditor.getByRole("group",{name:"Legion 2",exact:true})).toBeVisible();
+  await expect(cycleEditor.getByText("Game repeat rule: every 14 days.",{exact:false})).toBeVisible();
+  page.once("dialog", dialog=>dialog.accept());
+  await cycleEditor.getByRole("button",{name:"Advanced: schedule battle only",exact:true}).click();
   await expect(scheduleEditor.getByText("4 occurrences · Every 14 days",{exact:true})).toBeVisible();
   await expect(scheduleEditor.getByRole("checkbox",{name:"Keep schedule up to date automatically"})).toBeChecked();
   await expect(scheduleEditor.getByText("Automatically extends the estimated schedule 60 days ahead.",{exact:true})).toBeVisible();
@@ -459,7 +470,8 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(cancelledEntries).toHaveCount(3);
     for(const dayEntry of await cancelledEntries.all())await expect(dayEntry).toBeVisible();
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
-    await scheduleEditor.getByLabel("Event type").selectOption("foundry");
+    await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
+    await calendar.getByRole("button",{name:"Advanced: schedule battle only",exact:true}).click();
     await scheduleEditor.getByLabel("Precision").selectOption("minute");
     await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-10T15:00");
     await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();

@@ -42,7 +42,7 @@ export function forecastRows(fields:ScheduleFields,count:number,minutes:number){
 export function runForType(event:GameEventSummary|undefined,type:string):GameRun|undefined{
   const runs=event?.schedule?.runs??[];
   if(type==="svs_preparation")return runs.find(r=>r.label==="Preparation");
-  if(type==="svs_battle"||type==="canyon")return runs.find(r=>r.label==="Battle");
+  if(type==="svs_battle"||type==="canyon"||type==="foundry")return runs.find(r=>r.label==="Battle");
   return runs.length===1?runs[0]:undefined;
 }
 // Only a structured run (not descriptive prose or a repeat cooldown) can supply a duration.
@@ -83,7 +83,7 @@ export function sourceRunWarning(event:GameEventSummary|undefined,type:string,fi
   if(type==="svs_preparation")result.push("SvS source duration is inconsistent; confirm the end manually, including the extended fifth stage.");
   if(type==="alliance_showdown")result.push("The last stage can extend into Sunday. Confirm the end manually.");
   if(type==="castle_battle")result.push("Castle weeks can overlap SvS; verify the local rotation.");
-  if(type==="canyon")result.push("This schedules the battle only; use Canyon Clash — all phases for a full cycle.");
+  if(type==="canyon"||type==="foundry")result.push("This schedules a battle only; use the full event editor for a complete cycle.");
   if(event.id==="bear-hunt")result.push("47.5 hours is a cooldown, not the alliance's chosen schedule.");
   if(event.id==="alliance-mobilization")result.push("The monthly/early-state rotation needs a locally verified pattern; use manual scheduling.");
   return result;

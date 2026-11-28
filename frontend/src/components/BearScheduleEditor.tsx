@@ -3,8 +3,7 @@ import {Plus,Trash2} from "lucide-react";
 import {api} from "../lib/api";
 import {bearSchedulePlan,type BearSlot} from "../lib/bear-schedule";
 import {utcDay} from "../lib/calendar";
-import {eventTypeOptions} from "../lib/format";
-import {extraCalendarEvents} from "../lib/game-event-catalog";
+import {creationEventOptions} from "../lib/calendar-event-options";
 import {allowNavigation,useNavigationGuard} from "../lib/navigation-guard";
 import type {Alliance} from "../lib/types";
 
@@ -47,11 +46,9 @@ export function BearScheduleEditor({groupId,alliances,preferred,day,onClose,onSa
     <form onSubmit={save}>
       <fieldset disabled={busy} className="calendar-editor-fields">
         <label>Event type<select value="bear:batch" onChange={e=>onEvent(e.target.value)}>
-          <option value="bear:batch">Bear Trap</option><option value="bear_trap">Bear Trap (advanced single trap)</option>
-          <optgroup label="Full event cycles"><option value="cycle:canyon">Canyon Clash — all phases</option><option value="cycle:svs">SvS — all phases</option></optgroup>
-          {eventTypeOptions.filter(([v])=>v!=="bear_trap").map(([v,name])=><option key={v} value={v}>{name}</option>)}
-          <optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup>
+          {creationEventOptions.map(([v,name])=><option key={v} value={v}>{name}</option>)}
         </select></label>
+        <button type="button" className="button button--quiet" onClick={()=>onEvent("bear_trap")}>Advanced: single trap</button>
         <label>First cycle date (UTC)<input required type="date" min={utcDay()} max="2099-12-31" value={date} onChange={e=>setDate(e.target.value)}/></label>
         <label>Repeat every (hours)<input required type="number" min={47.5} max={168} step="any" value={hours} onChange={e=>setHours(Number(e.target.value))}/></label>
       </fieldset>

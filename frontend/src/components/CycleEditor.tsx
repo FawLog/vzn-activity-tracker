@@ -1,18 +1,20 @@
 import { allowNavigation, useNavigationGuard } from "../lib/navigation-guard";
 import {useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
-import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,type CycleKind} from "../lib/calendar-cycles";
+import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,isBattlePhase,legionPhases,cycleReference,type CycleKind} from "../lib/calendar-cycles";
+import {creationEventOptions,cycleTypes} from "../lib/calendar-event-options";
 import {weekStart,type CalendarOccurrence} from "../lib/calendar";
 import {serializeTime,utcInput,type ScheduleFields} from "../lib/schedule-editor";
 import type {Alliance} from "../lib/types";
-type Props={initialKind?:CycleKind;groupId:string;alliances:Alliance[];preferred?:string;day:string;onClose:()=>void;onSaved:(day:string)=>void};
-export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,day,onClose,onSaved}:Props){
+type Props={onAdvanced?:(type:string)=>void;onEvent?:(type:string)=>void;initialKind?:CycleKind;groupId:string;alliances:Alliance[];preferred?:string;day:string;onClose:()=>void;onSaved:(day:string)=>void};
+export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,alliances,preferred,day,onClose,onSaved}:Props){
   const active=alliances.filter(a=>a.group_id===groupId&&a.status==="active");
   const [kind,setKind]=useState<CycleKind>(initialKind);
   const [owner,setOwner]=useState(active.find(a=>a.id===preferred)?.id??active[0]?.id??"");
   const [anchor,setAnchor]=useState(weekStart(day));
   const [phases,setPhases]=useState<ScheduleFields[]>([]);
   const [count,setCount]=useState(3);
+  const [twoLegions,setTwoLegions]=useState(false);
   const interval=cycleIntervalDays(kind);
   let cycles:ScheduleFields[][]=[],repeatError="";
   if(phases.length)try{cycles=cycleOccurrences(kind,phases,count,interval??1);}catch(e){repeatError=e instanceof Error?e.message:"Invalid cycle";}
@@ -21,7 +23,7 @@ export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,da
   const [busy,setBusy]=useState(false);
   const lock=useRef(false);
   const request=useRef<{fingerprint:string;key:string}|null>(null);
-  const fingerprint=JSON.stringify({kind,owner,anchor,phases,count});
+  const fingerprint=JSON.stringify({kind,owner,anchor,phases,count,twoLegions});
   const initial=useRef(fingerprint);
   useNavigationGuard(initial.current!==fingerprint,busy);
   const invalidate=()=>{setPhases([]);setReview("");setError("");};
@@ -29,7 +31,8 @@ export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,da
     try{
       const a=active.find(a=>a.id===owner);
       if(!a)throw Error("Choose an active alliance");
-      setPhases(cycleDraft(kind,anchor,a.state_id,a.id));setReview("");setError("");
+      const draft=cycleDraft(kind,anchor,a.state_id,a.id);
+      setPhases(kind==="svs"?draft:legionPhases(draft,twoLegions));setReview("");setError("");
     }catch(e){setError(e instanceof Error?e.message:"Unable to preview");}
   }
   function patch(index:number,next:Partial<ScheduleFields>){
@@ -48,22 +51,25 @@ export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,da
   return <section className="data-panel calendar-editor" aria-label="Cycle editor">
     <h2>Add event cycle</h2><p>Review every phase. This creates linked calendar entries only, never actual event results.</p>
     <fieldset disabled={busy} className="calendar-editor-fields">
-      <label>Cycle type<select value={kind} onChange={e=>{setKind(e.target.value as CycleKind);invalidate();}}><option value="canyon">Canyon Clash</option><option value="svs">SvS</option></select></label>
+      <label>Event type<select value={"cycle:"+kind} onChange={e=>{const type=e.target.value;if(onEvent){onEvent(type);return;}if(cycleTypes[type]){setKind(cycleTypes[type]);invalidate();}}}>{creationEventOptions.filter(([type])=>onEvent||cycleTypes[type]).map(([type,label])=><option key={type} value={type}>{label}</option>)}</select></label>
       <label>{kind==="svs"?"State (via active alliance)":"Alliance"}<select value={owner} onChange={e=>{setOwner(e.target.value);invalidate();}}>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}</select></label>
       <label>Event starts (Monday, 00:00 UTC)<input type="date" value={anchor} onChange={e=>{setAnchor(e.target.value);invalidate();}}/></label>
       <label>Cycles to schedule (including first)<input type="number" min={1} max={interval?Math.min(14,1+Math.floor(366/interval)):1} value={count} onChange={e=>{setCount(Number(e.target.value));setReview("");}}/></label>
       <small>{interval?"Game repeat rule: every "+interval+" days. Future cycles are estimates; finite preview.":"No fixed repeat rule; schedule one cycle."}</small>
+      {kind!=="svs"&&<label className="calendar-checkbox"><input type="checkbox" checked={twoLegions} onChange={e=>{setTwoLegions(e.target.checked);if(phases.length)setPhases(legionPhases(phases,e.target.checked));setReview("");}}/>Schedule Legion 2</label>}
       <button type="button" className="button button--quiet" onClick={preview}>Preview cycle</button>
+      {kind!=="svs"&&onAdvanced&&<button type="button" className="button button--quiet" onClick={()=>{if(allowNavigation())onAdvanced(kind);}}>Advanced: schedule battle only</button>}
     </fieldset>
     {!!phases.length&&<div className="calendar-series-preview">
-      <p>Source: whiteout-survival-data 0.11.0. All suggested dates are estimated. Canyon battle time is unknown; SvS preparation duration is inconsistent in the source, so review the extended fifth day.</p>
+      <p>All suggested dates are estimated. {kind==="svs"?"Review the extended preparation day.":"Set confirmed legion times when known."}</p>
+      {cycleReference(kind)?.scheduleOverride&&<p><a href={cycleReference(kind)?.scheduleOverride?.source} target="_blank" rel="noreferrer">Official schedule supplement</a> · {cycleReference(kind)?.scheduleOverride?.note}</p>}
       {phases.map((p,i)=><fieldset key={p.phase} disabled={busy} className="calendar-editor-fields"><legend>{p.phase}</legend>
         <label>Precision<select value={p.precision} onChange={e=>{const precision=e.target.value as ScheduleFields["precision"];patch(i,{precision,starts_at:precision==="date"?p.starts_at.slice(0,10):"",ends_at:null});}}><option value="date">Date only</option><option value="minute">UTC time</option></select></label>
-        <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";const next={...p,starts_at};patch(i,{starts_at,...(kind==="canyon"&&p.phase==="Battle"?{ends_at:canyonBattleEnd(next)}:{})});}}/></label>
+        <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";const next={...p,starts_at};patch(i,{starts_at,...(kind!=="svs"&&isBattlePhase(p.phase)?{ends_at:canyonBattleEnd(next)}:{})});}}/></label>
         <label>Ends (optional, exclusive)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.ends_at??"",p.precision)} onChange={e=>patch(i,{ends_at:e.target.value?serializeTime(e.target.value,p.precision):null})}/></label>
         <label>Confidence<select value={p.confidence} onChange={e=>patch(i,{confidence:e.target.value as ScheduleFields["confidence"]})}><option value="estimated">Estimated</option><option value="confirmed">Confirmed</option></select></label>
       </fieldset>)}
-      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>Future Canyon battle times remain unconfirmed. Verify each local cycle.</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
+      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>Future legion battle times remain unconfirmed. Verify each local cycle.</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
       <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!repeatError} checked={review===fingerprint} onChange={e=>setReview(e.target.checked?fingerprint:"")}/>I reviewed all phases and their local dates</label>
     </div>}
     {error&&<p role="alert">{error}</p>}

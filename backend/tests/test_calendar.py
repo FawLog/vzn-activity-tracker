@@ -274,3 +274,38 @@ def test_repeated_canyon_cycles_are_atomic_and_future_battle_time_unknown(authen
         assert db.execute("SELECT COUNT(*) FROM calendar_cycles").fetchone()[0]==3
         assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==12
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+
+
+def test_foundry_linked_legions_share_one_result_identity(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar/cycles"
+    common={"event_type":"foundry","scope":"alliance","alliance_id":aid,"state_id":"1001","precision":"date","confidence":"estimated"}
+    phases=[{**common,"phase":phase,"starts_at":start,"ends_at":end} for phase,start,end in [
+        ("Voting","2090-03-06","2090-03-08"),("Registration","2090-03-08","2090-03-10"),
+        ("Matchmaking","2090-03-10","2090-03-12"),("Legion 1","2090-03-12",None),("Legion 2","2090-03-12",None)]]
+    payload={"kind":"foundry","request_key":"foundry-cycle-000001","phases":phases,"occurrence_count":2,"interval_days":14}
+    response=c.post(url,json=payload)
+    assert response.status_code==201,response.text
+    rows=response.json()["items"]
+    assert len(rows)==10 and len({r["cycle_id"] for r in rows})==2
+    assert rows[3]["entry_cycle_date"]==rows[4]["entry_cycle_date"]=="2090-03-12"
+    assert [r["entry_session_key"] for r in rows[3:5]]==["legion_1","legion_2"]
+    assert c.post(url,json=payload).json()==response.json()
+    assert c.post(url,json={**payload,"request_key":"foundry-cycle-000002"}).status_code==409
+    for i,clock in ((3,"19:00"),(4,"14:00")):
+        row=rows[i]
+        change={**phases[i],"precision":"minute","starts_at":"2090-03-12T"+clock+"Z","confidence":"confirmed","revision":row["revision"]}
+        result=c.put(root+"/calendar/"+row["id"],json=change)
+        assert result.status_code==200,result.text
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+    assert c.post(root+"/calendar/"+rows[0]["id"]+"/start-entry",json={"revision":1,"confirmed":True}).status_code==409
+    first=c.post(root+"/calendar/"+rows[3]["id"]+"/start-entry",json={"revision":2,"confirmed":True})
+    second=c.post(root+"/calendar/"+rows[4]["id"]+"/start-entry",json={"revision":2,"confirmed":True})
+    assert first.status_code==second.status_code==200,(first.text,second.text)
+    assert first.json()["linked"]["id"]==second.json()["linked"]["id"]
+    assert first.json()["linked"]["session_id"]!=second.json()["linked"]["session_id"]
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==1
+        assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==2

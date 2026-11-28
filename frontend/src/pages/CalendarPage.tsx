@@ -6,6 +6,8 @@ import { StateForecastPanel } from "../components/StateForecastPanel";
 import type { RotationForecast } from "../lib/state-rotation";
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
+import type {CycleKind} from "../lib/calendar-cycles";
+import {cycleTypes} from "../lib/calendar-event-options";
 import { CycleEditor, CycleDetails } from "../components/CycleEditor";
 import { CalendarEventLink } from "../components/CalendarEventLink";
 import { EventStageTimeline } from "../components/EventStageTimeline";
@@ -31,7 +33,7 @@ export function CalendarPage(){
   const [filtersOpen,setFiltersOpen]=useState(false);
   const [moreOpen,setMoreOpen]=useState(false);
   const [workspaceBlocked,setWorkspaceBlocked]=useState(false);
-  const [cycleEditor,setCycleEditor]=useState<"canyon"|"svs"|null>(null);
+  const [cycleEditor,setCycleEditor]=useState<CycleKind|null>(null);
   const [day,setDay]=useState(()=>{const value=new URLSearchParams(window.location.search).get("day");return value&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value+"T00:00Z").toISOString().slice(0,10)===value&&Number(value.slice(0,4))>=2000&&Number(value.slice(0,4))<=2099?value:utcDay();});
   const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches?"Agenda":"Week");
   const [scope,setScope]=useState("all");
@@ -40,7 +42,7 @@ export function CalendarPage(){
   const [loaded,setLoaded]=useState<{key:string;items:CalendarOccurrence[]}|null>(null);
   const [failure,setFailure]=useState<{key:string;message:string}|null>(null);
   const [retry,setRetry]=useState(0);
-  const [editor,setEditor]=useState<{groupId:string;row:CalendarOccurrence|null;forecast?:RotationForecast}|null>(null);
+  const [editor,setEditor]=useState<{groupId:string;row:CalendarOccurrence|null;forecast?:RotationForecast;manualType?:string}|null>(null);
   const [detail,setDetail]=useState<{groupId:string;row:CalendarOccurrence}|null>(null);
   const {start,end,days}=calendarRange(day,view);
   const key=groupId+"|"+start+"|"+end+"|"+retry;
@@ -89,8 +91,8 @@ export function CalendarPage(){
     </div>
     {showForecast&&<StateForecastPanel key={groupId} groupId={groupId} preferredState={selectedAlliance?.state_id} writable={writable} onClose={()=>setShowForecast(false)} onReview={forecast=>{if(!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null,forecast});}}/>}
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
-    {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
-    {editing&&writable&&<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} forecast={editing.forecast} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>} 
+    {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onEvent={type=>{if(!allowNavigation())return;closeWorkspace();if(cycleTypes[type])setCycleEditor(cycleTypes[type]);else setEditor({groupId,row:null,manualType:type});}} onAdvanced={type=>{closeWorkspace();setEditor({groupId,row:null,manualType:type});}} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
+    {editing&&writable&&<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} forecast={editing.forecast} manualType={editing.manualType} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>} 
     {error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>
       {view!=="Agenda"&&<div className="calendar-weekdays" aria-hidden="true">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span key={d}>{d}</span>)}</div>}

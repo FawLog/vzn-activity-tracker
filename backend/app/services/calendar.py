@@ -388,12 +388,13 @@ def get_cycle(path,group_id,cycle_id):
 
 # Only types with established alliance-owned result workflows. Bear has a group
 # cycle and host-specific sessions; it needs a separate mapping.
-LINKABLE_TYPES = {"foundry","canyon","alliance_mobilization","alliance_championship"}
+LINKABLE_TYPES = {"foundry","canyon","alliance_mobilization","alliance_championship","bear_trap"}
 
 
 class CalendarEventLink(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_id: str | None = Field(max_length=64)
+    session_id: str | None = Field(default=None,max_length=64)
     revision: int = Field(ge=1)
 
 
@@ -411,8 +412,29 @@ def link_eligible(row):
             and not (row["event_type"]=="canyon" and row["cycle_id"] and row["phase"]!="Battle"))
 
 
+def session_candidates(db,row,event_id=None):
+    if not link_eligible(row) or row["event_type"] not in {"bear_trap","foundry","canyon"}:
+        return []
+    # Bear cycle date belongs to the group record; the actual trap date and host
+    # are taken from the session, including academy traps on another UTC day.
+    day=row["starts_at"][:10]
+    sessions=db.execute("""SELECT s.id,s.event_id,s.session_key,s.started_at,s.host_alliance_id,e.status,e.occurred_on
+        FROM event_sessions s JOIN events e ON e.id=s.event_id
+        JOIN alliances a ON a.id=e.alliance_id JOIN alliances h ON h.id=s.host_alliance_id
+        WHERE a.group_id=? AND h.group_id=? AND h.state_id=? AND h.id=? AND e.event_type=?
+        AND substr(s.started_at,1,10)=? AND (? IS NULL OR e.id=?)
+        AND (e.event_type='bear_trap' OR e.alliance_id=h.id)
+        AND NOT EXISTS (SELECT 1 FROM calendar_event_links l WHERE l.session_id=s.id AND l.occurrence_id<>?)
+        ORDER BY s.started_at,s.id LIMIT 101""",
+        (row["group_id"],row["group_id"],row["state_id"],row["alliance_id"],row["event_type"],day,event_id,event_id,row["id"])).fetchall()
+    # Do not infer identity from display labels. Explicit UTC minute, if supplied,
+    # must match the recorded session; date-only entries can be reviewed manually.
+    return [dict(s) for s in sessions if row["precision"]=="date" or
+            parse(s["started_at"][:16]+"Z")==parse(row["starts_at"])]
+
+
 def link_candidates(db,row):
-    if not link_eligible(row):
+    if not link_eligible(row) or row["event_type"]=="bear_trap":
         return []
     return [dict(r) for r in db.execute("""SELECT e.id,e.event_type,e.occurred_on,e.status,e.alliance_id
         FROM events e JOIN alliances a ON a.id=e.alliance_id
@@ -423,11 +445,12 @@ def link_candidates(db,row):
 def event_link(path,group_id,occurrence_id):
     with connection(path) as db:
         row=link_occurrence(db,group_id,occurrence_id)
-        linked=db.execute("""SELECT e.id,e.event_type,e.occurred_on,e.status,e.alliance_id
-            FROM calendar_event_links l JOIN events e ON e.id=l.event_id JOIN alliances a ON a.id=e.alliance_id
+        linked=db.execute("""SELECT e.id,e.event_type,e.occurred_on,e.status,e.alliance_id,l.session_id,s.session_key,s.started_at
+            FROM calendar_event_links l JOIN events e ON e.id=l.event_id JOIN alliances a ON a.id=e.alliance_id LEFT JOIN event_sessions s ON s.id=l.session_id
             WHERE l.occurrence_id=? AND a.group_id=?""",(occurrence_id,group_id)).fetchone()
         candidates=link_candidates(db,row)
-        return {"linked":dict(linked) if linked else None,"items":candidates[:100],"truncated":len(candidates)>100,
+        sessions=session_candidates(db,row,linked["id"] if linked else None)
+        return {"linked":dict(linked) if linked else None,"items":candidates[:100],"sessions":sessions[:100],"truncated":len(candidates)>100 or len(sessions)>100,
                 "eligible":link_eligible(row),"revision":row["revision"]}
 
 
@@ -437,19 +460,29 @@ def set_event_link(path,group_id,occurrence_id,payload):
         row=link_occurrence(db,group_id,occurrence_id)
         if row["revision"]!=payload.revision:
             raise ValueError("Calendar entry changed; reload before linking")
+        if payload.event_id is None and payload.session_id is not None:
+            raise ValueError("Session requires an event")
         if payload.event_id is not None:
             validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
             if not link_eligible(row):
                 raise ValueError("This occurrence cannot be linked to an alliance result")
-            event=db.execute("""SELECT e.id FROM events e JOIN alliances a ON a.id=e.alliance_id
-                WHERE e.id=? AND a.group_id=? AND a.state_id=? AND e.alliance_id=? AND e.event_type=? AND e.occurred_on=?""",
-                (payload.event_id,group_id,row["state_id"],row["alliance_id"],row["event_type"],row["starts_at"][:10])).fetchone()
-            if event is None:
-                raise ValueError("Event must match alliance, state, type and UTC start date")
-            old=db.execute("SELECT event_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
-            if old and old["event_id"]!=payload.event_id:
-                raise ValueError("Unlink the existing event first")
-            db.execute("INSERT OR IGNORE INTO calendar_event_links(occurrence_id,event_id) VALUES (?,?)",(occurrence_id,payload.event_id))
+            if payload.session_id:
+                session=next((s for s in session_candidates(db,row,payload.event_id) if s["id"]==payload.session_id),None)
+                if session is None:
+                    raise ValueError("Session must match the schedule host, state, type and UTC date/time and be unlinked elsewhere")
+            elif row["event_type"]=="bear_trap":
+                raise ValueError("Bear schedules require an explicit trap session")
+            else:
+                event=db.execute("""SELECT e.id FROM events e JOIN alliances a ON a.id=e.alliance_id
+                    WHERE e.id=? AND a.group_id=? AND a.state_id=? AND e.alliance_id=? AND e.event_type=? AND e.occurred_on=?""",
+                    (payload.event_id,group_id,row["state_id"],row["alliance_id"],row["event_type"],row["starts_at"][:10])).fetchone()
+                if event is None:
+                    raise ValueError("Event must match alliance, state, type and UTC start date")
+            old=db.execute("SELECT event_id,session_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
+            if old and (old["event_id"]!=payload.event_id or (old["session_id"] and old["session_id"]!=payload.session_id)):
+                raise ValueError("Unlink the existing event or session first")
+            db.execute("INSERT INTO calendar_event_links(occurrence_id,event_id,session_id) VALUES (?,?,?) ON CONFLICT(occurrence_id) DO UPDATE SET session_id=excluded.session_id",
+                       (occurrence_id,payload.event_id,payload.session_id))
         else:
             db.execute("DELETE FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,))
         db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(occurrence_id,))
@@ -462,5 +495,5 @@ def event_schedules(path,group_id,event_id):
         require_group(db,group_id)
         if not db.execute("SELECT 1 FROM events e JOIN alliances a ON a.id=e.alliance_id WHERE e.id=? AND a.group_id=?",(event_id,group_id)).fetchone():
             raise LookupError("Event not found in selected group")
-        return {"items":[dict(r) for r in db.execute("""SELECT c.* FROM calendar_occurrences c JOIN calendar_event_links l ON l.occurrence_id=c.id
+        return {"items":[dict(r) for r in db.execute("""SELECT c.*,l.session_id AS linked_session_id FROM calendar_occurrences c JOIN calendar_event_links l ON l.occurrence_id=c.id
             WHERE c.group_id=? AND l.event_id=? ORDER BY c.starts_at,c.id""",(group_id,event_id)).fetchall()]}

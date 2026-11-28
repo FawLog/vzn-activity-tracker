@@ -1,5 +1,6 @@
 import type { AnalyticsReport } from "./analytics";
 import type { CalendarOccurrence } from "./calendar";
+import type { ScheduleCreate, ScheduleUpdate, FutureChange } from "./schedule-editor";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
 interface ErrorEnvelope {
@@ -39,6 +40,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
 
 export const api = {
+  createSchedule: (groupId:string,payload:ScheduleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar`,{method:"POST",body:JSON.stringify(payload)}),
+  updateSchedule: (groupId:string,id:string,payload:ScheduleUpdate) => request<CalendarOccurrence>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}`,{method:"PUT",body:JSON.stringify(payload)}),
+  previewScheduleFuture: (groupId:string,id:string) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`),
+  changeScheduleFuture: (groupId:string,id:string,payload:FutureChange) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`,{method:"POST",body:JSON.stringify(payload)}),
   calendar: (groupId:string,start:string,end:string,signal?:AbortSignal) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar?`+new URLSearchParams({start,end}),{signal}),
   analytics: (groupId:string,allianceId:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/analytics?`+new URLSearchParams({start,end,...(allianceId?{alliance_id:allianceId}:{})})),
   playerActivity: (groupId:string,fid:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}/activity?`+new URLSearchParams({start,end})),

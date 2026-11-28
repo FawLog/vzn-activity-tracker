@@ -298,6 +298,16 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
   await page.unroute("**/api/v1/groups/*/calendar?*");
+  await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
+  const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});
+  await expect(scheduleEditor).toBeVisible();
+  await scheduleEditor.getByLabel("Occurrences (including first)").fill("3");
+  await expect(scheduleEditor.getByLabel("Repeat every (days)")).toBeVisible();
+  await scheduleEditor.getByLabel("Precision").selectOption("minute");
+  await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveAttribute("type","datetime-local");
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  await scheduleEditor.getByRole("button",{name:"Close editor"}).click();
+  await expect(scheduleEditor).toHaveCount(0);
 
 
   // Verify Overall default, low-score sorting, missing evidence and responsive table.

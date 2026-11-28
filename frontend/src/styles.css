@@ -938,3 +938,13 @@ td strong { color: var(--text); font-weight: 650; }
  .calendar-schedule--month .calendar-entry-copy small { font-size:8px; }
  .calendar-schedule--month .calendar-entry .event-icon,.calendar-schedule--month .calendar-entry .event-icon img { width:16px;height:16px; }
 }
+
+.calendar-editor {padding:16px;margin:12px 0;min-width:0;}
+.calendar-editor h2 {margin:0 0 8px;font-size:16px;}
+.calendar-editor p {color:var(--text-soft);font-size:12px;overflow-wrap:anywhere;}
+.calendar-editor-fields {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr));gap:12px;border:0;padding:0;margin:12px 0;min-width:0;}
+.calendar-editor-fields label {display:grid;gap:6px;min-width:0;font-size:12px;}
+.calendar-editor-fields input,.calendar-editor-fields select {box-sizing:border-box;width:100%;min-width:0;min-height:40px;}
+.calendar-editor [role=alert] {color:var(--red);}
+.calendar-series-preview {max-height:240px;overflow:auto;overflow-wrap:anywhere;}
+@media(max-width:620px){.calendar-editor-fields{grid-template-columns:minmax(0,1fr)}.calendar-editor-fields input,.calendar-editor-fields select,.calendar-editor .button{min-height:44px}.calendar-editor-fields input,.calendar-editor-fields select{font-size:16px}}

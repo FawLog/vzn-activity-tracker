@@ -28,3 +28,23 @@ describe("UTC calendar",()=>{
     expect(calendarTime(dateOnly,"2028-02-29")).toBe("Time not set");
   });
 });
+
+import { futureChange, recurrence, scheduleFields, serializeTime } from "./schedule-editor";
+describe("schedule editor payloads",()=>{
+  it("preserves date-only precision and explicit UTC time",()=>{
+    expect(serializeTime("2028-02-29","date")).toBe("2028-02-29");
+    expect(serializeTime("2028-02-29T23:30","minute")).toBe(row.starts_at);
+    expect(scheduleFields(row)).not.toHaveProperty("revision");
+  });
+  it("bounds recurring schedules",()=>{
+    expect(recurrence(1,2)).toEqual({occurrence_count:1,interval_minutes:null});
+    expect(recurrence(3,2)).toEqual({occurrence_count:3,interval_minutes:2880});
+    expect(()=>recurrence(180,3)).toThrow();
+  });
+  it("passes reviewed revisions and restricts date-only shifts",()=>{
+    const dateRow:CalendarOccurrence={...row,precision:"date",starts_at:"2028-02-29",ends_at:null};
+    expect(futureChange([dateRow],"cancel",60)).toEqual({action:"cancel",shift_minutes:0,revisions:{a:1}});
+    expect(()=>futureChange([dateRow],"shift",60)).toThrow();
+    expect(futureChange([dateRow],"shift",-1440).shift_minutes).toBe(-1440);
+  });
+});

@@ -1,6 +1,6 @@
 import {describe,it,expect} from "vitest";
 import {gameEventForCalendar} from "./game-event-catalog";
-import {advancedPlan,fixedGameInterval,forecastRows,intervalPayload,sourceRunWarning,stateAge} from "./game-forecast";
+import {advancedPlan,fixedGameInterval,forecastRows,intervalPayload,sourceRunWarning,stateAge,referenceEnd} from "./game-forecast";
 import type {ScheduleFields} from "./schedule-editor";
 const fields:ScheduleFields={event_type:"foundry",scope:"alliance",alliance_id:"a",state_id:"1001",starts_at:"2028-02-29",ends_at:null,precision:"date",phase:"",confidence:"confirmed"};
 describe("anchored calendar forecast",()=>{
@@ -37,5 +37,14 @@ describe("variable calendar repeats",()=>{
   it("uses selected weekdays without assuming a fixed gap",()=>{
     expect(advancedPlan({...fields,starts_at:"2028-02-29"},4,1440,"weekdays",1,[1,3]).rows.map(r=>r.start)).toEqual(["2028-02-29","2028-03-02","2028-03-07","2028-03-09"]);
     expect(()=>advancedPlan(fields,4,1440,"weekdays",1,[0])).toThrow();
+  });
+});
+
+describe("reference duration",()=>{
+  it("uses structured day and minute lengths without inventing unknown battle time",()=>{
+    expect(referenceEnd(gameEventForCalendar("game:lucky-wheel"),{...fields,event_type:"game:lucky-wheel",starts_at:"2026-11-24"})).toBe("2026-11-27");
+    expect(referenceEnd(gameEventForCalendar("foundry"),fields)).toBeNull();
+    expect(referenceEnd(gameEventForCalendar("foundry"),{...fields,precision:"minute",starts_at:"2026-11-28T23:30Z"})).toBe("2026-11-29T00:30Z");
+    expect(referenceEnd(gameEventForCalendar("alliance_showdown"),{...fields,event_type:"alliance_showdown",precision:"minute",starts_at:"2026-11-23T00:00Z"})).toBe("2026-11-29T12:00Z");
   });
 });

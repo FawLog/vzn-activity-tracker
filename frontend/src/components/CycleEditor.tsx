@@ -1,7 +1,7 @@
 import { allowNavigation, useNavigationGuard } from "../lib/navigation-guard";
 import {useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
-import {cycleDraft,type CycleKind} from "../lib/calendar-cycles";
+import {cycleDraft,cycleIntervalDays,cycleOccurrences,canyonBattleEnd,type CycleKind} from "../lib/calendar-cycles";
 import {weekStart,type CalendarOccurrence} from "../lib/calendar";
 import {serializeTime,utcInput,type ScheduleFields} from "../lib/schedule-editor";
 import type {Alliance} from "../lib/types";
@@ -12,12 +12,16 @@ export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,da
   const [owner,setOwner]=useState(active.find(a=>a.id===preferred)?.id??active[0]?.id??"");
   const [anchor,setAnchor]=useState(weekStart(day));
   const [phases,setPhases]=useState<ScheduleFields[]>([]);
+  const [count,setCount]=useState(3);
+  const interval=cycleIntervalDays(kind);
+  let cycles:ScheduleFields[][]=[],repeatError="";
+  if(phases.length)try{cycles=cycleOccurrences(kind,phases,count,interval??1);}catch(e){repeatError=e instanceof Error?e.message:"Invalid cycle";}
   const [review,setReview]=useState("");
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
   const lock=useRef(false);
   const request=useRef<{fingerprint:string;key:string}|null>(null);
-  const fingerprint=JSON.stringify({kind,owner,anchor,phases});
+  const fingerprint=JSON.stringify({kind,owner,anchor,phases,count});
   const initial=useRef(fingerprint);
   useNavigationGuard(initial.current!==fingerprint,busy);
   const invalidate=()=>{setPhases([]);setReview("");setError("");};
@@ -32,11 +36,11 @@ export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,da
     setPhases(old=>old.map((p,i)=>i===index?{...p,...next}:p));setReview("");
   }
   async function save(){
-    if(lock.current||review!==fingerprint||!phases.length)return;
+    if(lock.current||review!==fingerprint||!phases.length||repeatError||count>1&&interval===null)return;
     lock.current=true;setBusy(true);setError("");
     try{
       if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,key:crypto.randomUUID()};
-      const result=await api.createCycle(groupId,{kind,phases,request_key:request.current.key});
+      const result=await api.createCycle(groupId,{kind,phases,request_key:request.current.key,...(count>1&&interval!==null?{occurrence_count:count,interval_days:interval}:{})});
       onSaved(result.items[0].starts_at.slice(0,10));
     }catch(e){setError(e instanceof Error?e.message:"Unable to save cycle");}
     finally{lock.current=false;setBusy(false);}
@@ -46,21 +50,24 @@ export function CycleEditor({initialKind="canyon",groupId,alliances,preferred,da
     <fieldset disabled={busy} className="calendar-editor-fields">
       <label>Cycle type<select value={kind} onChange={e=>{setKind(e.target.value as CycleKind);invalidate();}}><option value="canyon">Canyon Clash</option><option value="svs">SvS</option></select></label>
       <label>{kind==="svs"?"State (via active alliance)":"Alliance"}<select value={owner} onChange={e=>{setOwner(e.target.value);invalidate();}}>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}</select></label>
-      <label>Monday anchor (UTC)<input type="date" value={anchor} onChange={e=>{setAnchor(e.target.value);invalidate();}}/></label>
+      <label>Event starts (Monday, 00:00 UTC)<input type="date" value={anchor} onChange={e=>{setAnchor(e.target.value);invalidate();}}/></label>
+      <label>Cycles to schedule (including first)<input type="number" min={1} max={interval?Math.min(14,1+Math.floor(366/interval)):1} value={count} onChange={e=>{setCount(Number(e.target.value));setReview("");}}/></label>
+      <small>{interval?"Game repeat rule: every "+interval+" days. Future cycles are estimates; finite preview.":"No fixed repeat rule; schedule one cycle."}</small>
       <button type="button" className="button button--quiet" onClick={preview}>Preview cycle</button>
     </fieldset>
     {!!phases.length&&<div className="calendar-series-preview">
       <p>Source: whiteout-survival-data 0.11.0. All suggested dates are estimated. Canyon battle time is unknown; SvS preparation duration is inconsistent in the source, so review the extended fifth day.</p>
       {phases.map((p,i)=><fieldset key={p.phase} disabled={busy} className="calendar-editor-fields"><legend>{p.phase}</legend>
         <label>Precision<select value={p.precision} onChange={e=>{const precision=e.target.value as ScheduleFields["precision"];patch(i,{precision,starts_at:precision==="date"?p.starts_at.slice(0,10):"",ends_at:null});}}><option value="date">Date only</option><option value="minute">UTC time</option></select></label>
-        <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>patch(i,{starts_at:e.target.value?serializeTime(e.target.value,p.precision):""})}/></label>
+        <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";const next={...p,starts_at};patch(i,{starts_at,...(kind==="canyon"&&p.phase==="Battle"?{ends_at:canyonBattleEnd(next)}:{})});}}/></label>
         <label>Ends (optional, exclusive)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.ends_at??"",p.precision)} onChange={e=>patch(i,{ends_at:e.target.value?serializeTime(e.target.value,p.precision):null})}/></label>
         <label>Confidence<select value={p.confidence} onChange={e=>patch(i,{confidence:e.target.value as ScheduleFields["confidence"]})}><option value="estimated">Estimated</option><option value="confirmed">Confirmed</option></select></label>
       </fieldset>)}
-      <label className="calendar-checkbox"><input type="checkbox" disabled={busy} checked={review===fingerprint} onChange={e=>setReview(e.target.checked?fingerprint:"")}/>I reviewed all phases and their local dates</label>
+      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>Future Canyon battle times remain unconfirmed. Verify each local cycle.</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
+      <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!repeatError} checked={review===fingerprint} onChange={e=>setReview(e.target.checked?fingerprint:"")}/>I reviewed all phases and their local dates</label>
     </div>}
     {error&&<p role="alert">{error}</p>}
-    <div className="calendar-controls"><button type="button" className="button button--primary" disabled={busy||!phases.length||review!==fingerprint||phases.some(p=>!p.starts_at)} onClick={()=>void save()}>Save cycle</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close cycle editor</button></div>
+    <div className="calendar-controls"><button type="button" className="button button--primary" disabled={busy||!phases.length||review!==fingerprint||!!repeatError||count>1&&interval===null||phases.some(p=>!p.starts_at)} onClick={()=>void save()}>Save cycle</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close cycle editor</button></div>
   </section>;
 }
 export function CycleDetails({groupId,cycleId,onSelect}:{groupId:string;cycleId:string;onSelect:(row:CalendarOccurrence)=>void}){

@@ -1,3 +1,4 @@
+import { allowNavigation, useNavigationGuard } from "../lib/navigation-guard";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type StateCalendarProfile } from "../lib/api";
 import { eventTypeOptions, eventLabel } from "../lib/format";
@@ -66,6 +67,8 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
     }catch(e){previewError=message(e);}
   }
   const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays});
+  const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status}));
+  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status})||manualDate!==null,busy);
   function useReference(){
     if(suggested===null)return;
     const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
@@ -129,7 +132,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         </div>}
       </>}
       {error&&<p role="alert">{error}</p>}
-      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||(!row&&count>1&&(!!previewError||reviewed!==fingerprint))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={onClose}>Close editor</button></div>
+      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||(!row&&count>1&&(!!previewError||reviewed!==fingerprint))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
     </form>
   </section>;
 }
@@ -140,6 +143,7 @@ export function FutureScheduleEditor({groupId,row,onClose,onSaved}:{groupId:stri
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const lock=useRef(false);
+  useNavigationGuard(preview!==null||action!=="shift"||minutes!==(row.precision==="date"?1440:60),busy);
   async function run(save:boolean){
     if(lock.current)return;lock.current=true;setBusy(true);setError("");
     try{
@@ -156,6 +160,6 @@ export function FutureScheduleEditor({groupId,row,onClose,onSaved}:{groupId:stri
     </fieldset>
     {preview&&<div className="calendar-series-preview"><h3>{preview.length} affected occurrences</h3><ul>{preview.map(r=><li key={r.id}>{eventLabel(r.event_type)} · {r.starts_at}{action==="shift"&&" → "+shiftedStart(r,minutes)}</li>)}</ul></div>}
     {error&&<p role="alert">{error}</p>}
-    <div className="calendar-controls"><button className="button button--quiet" disabled={busy} onClick={()=>void run(false)}>Preview affected occurrences</button><button className="button button--primary" disabled={busy||!preview?.length} onClick={()=>void run(true)}>Apply series change</button><button className="button button--quiet" disabled={busy} onClick={onClose}>Close editor</button></div>
+    <div className="calendar-controls"><button className="button button--quiet" disabled={busy} onClick={()=>void run(false)}>Preview affected occurrences</button><button className="button button--primary" disabled={busy||!preview?.length} onClick={()=>void run(true)}>Apply series change</button><button className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
   </section>;
 }

@@ -1,3 +1,4 @@
+import { allowNavigation, useNavigationGuard } from "../lib/navigation-guard";
 import {useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
 import {cycleDraft,type CycleKind} from "../lib/calendar-cycles";
@@ -17,6 +18,8 @@ export function CycleEditor({groupId,alliances,preferred,day,onClose,onSaved}:Pr
   const lock=useRef(false);
   const request=useRef<{fingerprint:string;key:string}|null>(null);
   const fingerprint=JSON.stringify({kind,owner,anchor,phases});
+  const initial=useRef(fingerprint);
+  useNavigationGuard(initial.current!==fingerprint,busy);
   const invalidate=()=>{setPhases([]);setReview("");setError("");};
   function preview(){
     try{
@@ -57,7 +60,7 @@ export function CycleEditor({groupId,alliances,preferred,day,onClose,onSaved}:Pr
       <label className="calendar-checkbox"><input type="checkbox" disabled={busy} checked={review===fingerprint} onChange={e=>setReview(e.target.checked?fingerprint:"")}/>I reviewed all phases and their local dates</label>
     </div>}
     {error&&<p role="alert">{error}</p>}
-    <div className="calendar-controls"><button type="button" className="button button--primary" disabled={busy||!phases.length||review!==fingerprint||phases.some(p=>!p.starts_at)} onClick={()=>void save()}>Save cycle</button><button type="button" className="button button--quiet" disabled={busy} onClick={onClose}>Close cycle editor</button></div>
+    <div className="calendar-controls"><button type="button" className="button button--primary" disabled={busy||!phases.length||review!==fingerprint||phases.some(p=>!p.starts_at)} onClick={()=>void save()}>Save cycle</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close cycle editor</button></div>
   </section>;
 }
 export function CycleDetails({groupId,cycleId,onSelect}:{groupId:string;cycleId:string;onSelect:(row:CalendarOccurrence)=>void}){

@@ -1,3 +1,4 @@
+import { useNavigationGuard } from "../lib/navigation-guard";
 import {useState,useRef} from "react";
 import {api,type CalendarEventLinkState} from "../lib/api";
 import type {CalendarOccurrence} from "../lib/calendar";
@@ -9,6 +10,7 @@ export function CalendarSessionGrouping({groupId,row,data,writable,blocked,onSav
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
   const lock=useRef(false);
+  useNavigationGuard(day!==(data.entry_cycle_date??"")||session!==(data.entry_session_key??""),busy);
   async function save(clear=false){
     if(lock.current)return;lock.current=true;setBusy(true);onEditingChange(true);setError("");
     try{onSaved(await api.setCalendarEntryGrouping(groupId,row.id,data.revision,clear?null:day,clear?null:session));}

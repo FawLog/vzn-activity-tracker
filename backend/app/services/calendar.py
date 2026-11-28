@@ -223,6 +223,8 @@ def update(path, group_id, occurrence_id, payload: CalendarUpdate):
         if db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone():
             if any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","starts_at","ends_at","precision","schedule_status")):
                 raise ValueError("Unlink the actual event before changing its schedule or cancelling it")
+        if row["entry_cycle_date"] and any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase","starts_at","ends_at","precision","schedule_status")):
+            raise ValueError("Clear the session grouping before changing this schedule")
         if row["cycle_id"]:
             if any(row[k]!=getattr(payload,k) for k in ("event_type","scope","alliance_id","state_id","phase")):
                 raise ValueError("Cycle phase identity and owner cannot be changed")
@@ -286,6 +288,8 @@ def change_future(path, group_id, occurrence_id, payload: CalendarFutureChange):
         now = datetime.now(timezone.utc)
         if any(db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(row["id"],)).fetchone() for row in rows):
             raise ValueError("Unlink actual events before changing this series")
+        if any(row["entry_cycle_date"] for row in rows):
+            raise ValueError("Clear session grouping before changing this series")
         moving_ids = {row["id"] for row in rows}
         proposed = []
         for row in rows:
@@ -395,7 +399,7 @@ LINKABLE_TYPES = {"foundry","canyon","alliance_mobilization","alliance_champions
 class CalendarEventLink(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_id: str | None = Field(max_length=64)
-    session_id: str | None = Field(default=None,max_length=64)
+    session_id: str | None = Field(default=None,min_length=1,max_length=64)
     revision: int = Field(ge=1)
 
 
@@ -452,7 +456,8 @@ def event_link(path,group_id,occurrence_id):
         candidates=link_candidates(db,row)
         sessions=session_candidates(db,row,linked["id"] if linked else None)
         return {"linked":dict(linked) if linked else None,"items":candidates[:100],"sessions":sessions[:100],"truncated":len(candidates)>100 or len(sessions)>100,
-                "eligible":link_eligible(row),"revision":row["revision"],"review":review_status(db,group_id,[occurrence_id]).get(occurrence_id)}
+                "eligible":link_eligible(row),"revision":row["revision"],"review":review_status(db,group_id,[occurrence_id]).get(occurrence_id),
+                "entry_cycle_date":row["entry_cycle_date"],"entry_session_key":row["entry_session_key"],"group_members":entry_group_members(db,row)}
 
 
 def set_event_link(path,group_id,occurrence_id,payload):
@@ -464,6 +469,8 @@ def set_event_link(path,group_id,occurrence_id,payload):
         if payload.event_id is None and payload.session_id is not None:
             raise ValueError("Session requires an event")
         if payload.event_id is not None:
+            if row["entry_cycle_date"]:
+                raise ValueError("Use Enter event data for a grouped schedule")
             validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
             if not link_eligible(row):
                 raise ValueError("This occurrence cannot be linked to an alliance result")
@@ -521,6 +528,8 @@ def create_linked_draft(path,group_id,occurrence_id,payload):
         old=db.execute("SELECT event_id,session_id FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone()
         if old and (old["session_id"] or old["event_id"]!=payload.event_id):
             raise ValueError("Schedule already linked; open the existing record")
+        if row["entry_cycle_date"]:
+            raise ValueError("Use Enter event data for a grouped schedule")
         kind=row["event_type"]
         day=row["starts_at"][:10]
         is_session=kind in {"bear_trap","foundry","canyon"}
@@ -678,15 +687,26 @@ def start_entry(path,group_id,occurrence_id,payload):
                 raise ValueError("Calendar entry changed; reload before entering data")
             if row["confidence"]!="confirmed":
                 raise ValueError("Confirm the schedule before entering data")
-            if kind=="bear_trap":
+            if kind=="bear_trap" and not row["entry_cycle_date"]:
                 raise ValueError("Review the group Bear cycle and trap identity first")
             if session_kind and row["precision"]!="minute":
                 raise ValueError("Set the actual session time before entering data")
             if kind=="canyon" and row["phase"].strip().lower() not in {"battle","legion 1","legion 2","legion_1","legion_2"}:
                 raise ValueError("Select an explicit Canyon battle schedule")
-            day=row["starts_at"][:10]
+            day=row["entry_cycle_date"] or row["starts_at"][:10]
             owner=row["alliance_id"]
-            events=db.execute("SELECT id,status FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=? ORDER BY id",(owner,kind,day)).fetchall()
+            event_owner=owner
+            if kind=="bear_trap":
+                primary=db.execute("SELECT id FROM alliances WHERE group_id=? AND alliance_type='primary' AND status='active'",(group_id,)).fetchone()
+                if primary is None:
+                    raise ValueError("An active primary alliance is required")
+                event_owner=primary["id"]
+                events=db.execute("""SELECT e.id,e.status,e.alliance_id FROM events e JOIN alliances a ON a.id=e.alliance_id
+                    WHERE a.group_id=? AND e.event_type=? AND e.occurred_on=? ORDER BY e.id""",(group_id,kind,day)).fetchall()
+                if any(e["alliance_id"]!=event_owner for e in events):
+                    raise ValueError("Existing Bear cycle owner requires review")
+            else:
+                events=db.execute("SELECT id,status FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=? ORDER BY id",(owner,kind,day)).fetchall()
             if old:
                 events=[e for e in events if e["id"]==old["event_id"]]
                 if not events:
@@ -698,7 +718,7 @@ def start_entry(path,group_id,occurrence_id,payload):
             if session_kind:
                 # A legion is not inferred from arbitrary labels or its start time.
                 match=re.fullmatch(r"legion[ _]([12])",row["phase"].strip().lower())
-                key="legion_"+match[1] if match else None
+                key=row["entry_session_key"] or ("legion_"+match[1] if match else None)
                 if eid:
                     sessions=db.execute("SELECT id,session_key,started_at,host_alliance_id FROM event_sessions WHERE event_id=?",(eid,)).fetchall()
                     matches=[s for s in sessions if s["host_alliance_id"]==owner and s["started_at"][:16]==row["starts_at"][:16]]
@@ -723,7 +743,7 @@ def start_entry(path,group_id,occurrence_id,payload):
                 raise ValueError("Reopen the existing published event before adding a session")
             if not eid:
                 eid=uuid.uuid4().hex
-                db.execute("INSERT INTO events(id,alliance_id,event_type,occurred_on,status) VALUES (?,?,?,?,'draft')",(eid,owner,kind,day))
+                db.execute("INSERT INTO events(id,alliance_id,event_type,occurred_on,status) VALUES (?,?,?,?,'draft')",(eid,event_owner,kind,day))
                 db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('created','event',?,'admin')",(eid,))
                 if not session_kind:
                     db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
@@ -732,9 +752,68 @@ def start_entry(path,group_id,occurrence_id,payload):
                 sid=uuid.uuid4().hex
                 db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
                     (sid,eid,key,parse(row["starts_at"]).isoformat(),owner))
+                if kind=="bear_trap":
+                    db.execute("UPDATE events SET bear_cycle_complete=0 WHERE id=?",(eid,))
                 db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('session_created','event',?,'admin')",(eid,))
             db.execute("""INSERT INTO calendar_event_links(occurrence_id,event_id,session_id) VALUES (?,?,?)
                 ON CONFLICT(occurrence_id) DO UPDATE SET session_id=excluded.session_id""",(occurrence_id,eid,sid))
             db.execute("UPDATE calendar_occurrences SET revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",(occurrence_id,))
             audit(db,"data_entry_started",occurrence_id)
     return event_link(path,group_id,occurrence_id)
+
+class EntryGrouping(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    cycle_date: date | None = None
+    session_key: str | None = Field(default=None,max_length=32)
+
+    @model_validator(mode="after")
+    def paired(self):
+        if (self.cycle_date is None)!=(self.session_key is None):
+            raise ValueError("Provide both cycle date and session identity, or clear both")
+        return self
+
+
+def set_entry_grouping(path,group_id,occurrence_id,payload):
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        row=link_occurrence(db,group_id,occurrence_id)
+        if row["revision"]!=payload.revision:
+            raise ValueError("Calendar entry changed; reload before grouping")
+        if db.execute("SELECT 1 FROM calendar_event_links WHERE occurrence_id=?",(occurrence_id,)).fetchone():
+            raise ValueError("Unlink the actual record before changing session grouping")
+        kind=row["event_type"]
+        if payload.cycle_date is not None:
+            validate_scope(db,group_id,CalendarInput(**{k:row[k] for k in CalendarInput.model_fields}))
+            if not link_eligible(row) or kind not in {"bear_trap","foundry","canyon"}:
+                raise ValueError("Choose a supported alliance battle or trap schedule")
+            if kind=="canyon" and row["phase"].strip().lower() not in {"battle","legion 1","legion 2","legion_1","legion_2"}:
+                raise ValueError("Choose an explicit Canyon battle phase")
+            if not 2000<=payload.cycle_date.year<=2099 or abs((parse(row["starts_at"][:10]).date()-payload.cycle_date).days)>7:
+                raise ValueError("Cycle date must be within seven days of this schedule")
+            pattern=r"trap_(?:[1-9]|[12][0-9]|30)" if kind=="bear_trap" else r"legion_[12]"
+            if not re.fullmatch(pattern,payload.session_key or ""):
+                raise ValueError("Invalid group session identity")
+            label=re.fullmatch(r"legion[ _]([12])",row["phase"].strip().lower())
+            if kind!="bear_trap" and label and payload.session_key!="legion_"+label[1]:
+                raise ValueError("Session identity disagrees with the scheduled legion")
+            duplicate=db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND event_type=?
+                AND entry_cycle_date=? AND entry_session_key=? AND id<>?
+                AND (?='bear_trap' OR alliance_id=?)""",(group_id,kind,payload.cycle_date.isoformat(),payload.session_key,occurrence_id,kind,row["alliance_id"])).fetchone()
+            if duplicate:
+                raise ValueError("Session identity already assigned in this cycle")
+        db.execute("UPDATE calendar_occurrences SET entry_cycle_date=?,entry_session_key=?,revision=revision+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (payload.cycle_date.isoformat() if payload.cycle_date else None,payload.session_key,occurrence_id))
+        audit(db,"session_grouping_changed",occurrence_id)
+    return event_link(path,group_id,occurrence_id)
+
+
+def entry_group_members(db,row):
+    if not row["entry_cycle_date"]:
+        return []
+    return [dict(r) for r in db.execute("""SELECT c.id,c.alliance_id,c.starts_at,c.precision,c.entry_session_key,c.confidence,c.schedule_status,a.tag,
+        EXISTS(SELECT 1 FROM calendar_event_links l WHERE l.occurrence_id=c.id) AS linked
+        FROM calendar_occurrences c JOIN alliances a ON a.id=c.alliance_id
+        WHERE c.group_id=? AND c.event_type=? AND c.entry_cycle_date=?
+        AND (?='bear_trap' OR c.alliance_id=?) ORDER BY c.starts_at,c.id""",
+        (row["group_id"],row["event_type"],row["entry_cycle_date"],row["event_type"],row["alliance_id"]))]

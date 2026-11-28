@@ -94,7 +94,7 @@ export function CalendarPage(){
   const saved=(next?:string)=>{setCycleEditor(null);setEditor(null);setDetail(null);if(next){setDay(next);if(view==="Agenda"&&next<utcDay())setView("Week");}setScope("all");setRecordFilter("all");setRetry(n=>n+1);};
   const openRow=(row:CalendarOccurrence)=>{if(selected?.id===row.id)return;if(allowNavigation()){closeWorkspace();setDetail({groupId,row});}};
   const eventName=(row:CalendarOccurrence)=>row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name??eventLabel(row.event_type):eventLabel(row.event_type);
-  const agendaHeading=(date:string,ongoing:boolean)=>ongoing?"Ongoing":date===utcDay(now)?"Today":date===addDays(utcDay(now),1)?"Tomorrow":weekday(date)+" "+formatDate(date);
+  const agendaHeading=(date:string)=>date===utcDay(now)?"Today":date===addDays(utcDay(now),1)?"Tomorrow":weekday(date)+" "+formatDate(date);
   return <div className="page calendar-page">
     <header className="calendar-top"><div><h1>Event Calendar</h1><p>{selectedGroup.name} · UTC</p></div>{writable&&<button className="button button--primary" disabled={workspaceBlocked} onClick={()=>{if((editing&&!editing.row)||!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null});}}><Plus size={16}/>Add event</button>}</header>
     <div className="calendar-compact-nav">
@@ -129,17 +129,17 @@ export function CalendarPage(){
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>
       {view!=="Agenda"&&<div className="calendar-weekdays" aria-hidden="true">{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(d=><span key={d}>{d}</span>)}</div>}
       {view==="Agenda"?<div className="calendar-days">
-        {agenda.length?agenda.map(group=><section key={group.ongoing?"ongoing":group.day} className={"calendar-day"+(group.day===utcDay(now)?" calendar-day--today":"")} aria-label={agendaHeading(group.day,group.ongoing)}>
-          <h3>{agendaHeading(group.day,group.ongoing)}{group.ongoing?"":group.day===utcDay(now)||group.day===addDays(utcDay(now),1)?" · "+formatDate(group.day):""}</h3>
+        {agenda.length?agenda.map(group=><section key={group.day} className={"calendar-day"+(group.day===utcDay(now)?" calendar-day--today":"")} aria-label={agendaHeading(group.day)}>
+          <h3>{agendaHeading(group.day)}{group.day===utcDay(now)||group.day===addDays(utcDay(now),1)?" · "+formatDate(group.day):""}</h3>
           {group.items.map(row=>{
-            const dayNumber=group.ongoing?eventDay(row,group.day):null;
-            const stage=group.ongoing?stagesOn(row,group.day).map(s=>s.name).join(" / "):"";
-            const summary=[row.phase,dayNumber,stage?stage+" (est.)":null,agendaTime(row,group.day,group.ongoing),row.schedule_status==="cancelled"?"Cancelled":null].filter(Boolean).join(" · ");
+            const dayNumber=group.day===utcDay(now)?eventDay(row,group.day):null;
+            const stage=group.day===utcDay(now)?stagesOn(row,group.day).map(s=>s.name).join(" / "):"";
+            const summary=[row.phase,dayNumber,stage?stage+" (est.)":null,agendaTime(row,group.day),row.schedule_status==="cancelled"?"Cancelled":null].filter(Boolean).join(" · ");
             return <button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} title={status(row)} disabled={workspaceBlocked} onClick={()=>openRow(row)}>
               <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{eventName(row)}</strong>{summary&&<small>{summary}</small>}</span>
             </button>;
           })}
-        </section>):<p className="calendar-agenda-empty">No upcoming events in this period.</p>}
+        </section>):<p className="calendar-agenda-empty">No scheduled events in this period.</p>}
       </div>:<div className="calendar-days">{days.map(date=>{
         const events=visible.filter(row=>occursOn(row,date));
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>

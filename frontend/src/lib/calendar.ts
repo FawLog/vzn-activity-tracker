@@ -69,45 +69,41 @@ export function moveCalendar(day:string,view:CalendarView,direction:number,now=n
   }
   return view==="Month"?addMonths(day,direction):addDays(day,direction*7);
 }
-export type AgendaGroup={day:string;ongoing:boolean;items:CalendarOccurrence[]};
-// A date-only event has no asserted clock time. Its occupied dates remain
-// visible through the last day; a timed point without an end has no invented duration.
+export type AgendaGroup={day:string;items:CalendarOccurrence[]};
+// Agenda is a day-based work list: completed events stay accessible until
+// the UTC day ends, so attendance/results can be entered from their cards.
 export function agendaGroups(rows:CalendarOccurrence[],start:string,end:string,now=new Date()):AgendaGroup[]{
-  const today=utcDay(now),minute=now.toISOString().slice(0,16)+"Z";
-  const first=start<today?today:start;
-  const current:CalendarOccurrence[]=[],byDay=new Map<string,CalendarOccurrence[]>();
+  const today=utcDay(now),first=start<today?today:start;
+  const byDay=new Map<string,CalendarOccurrence[]>();
   const seen=new Set<string>();
   for(const row of rows){
     if(seen.has(row.id))continue;
     seen.add(row.id);
-    const day=row.starts_at.slice(0,10);
-    const active=row.schedule_status==="scheduled"&&!!row.ends_at&&
-      (row.precision==="date"?row.starts_at<=today&&row.ends_at>today:row.starts_at<=minute&&row.ends_at>minute);
-    if(active&&first===today){current.push(row);continue;}
+    const startDay=row.starts_at.slice(0,10);
+    // Carry a multi-day event into Today once, but not into later days/pages.
+    const day=first===today&&startDay<today&&occursOn(row,today)?today:startDay;
     if(day<first||day>=end)continue;
-    if(day===today&&row.precision==="minute"&&row.starts_at<minute)continue;
-    if(day===today&&row.ends_at&&(row.precision==="date"?row.ends_at<=today:row.ends_at<=minute))continue;
     const items=byDay.get(day)??[];
     items.push(row);byDay.set(day,items);
   }
-  const compare=(a:CalendarOccurrence,b:CalendarOccurrence)=>a.starts_at.localeCompare(b.starts_at)||a.id.localeCompare(b.id);
-  const groups:AgendaGroup[]=[];
-  if(current.length)groups.push({day:today,ongoing:true,items:current.sort((a,b)=>(a.ends_at??"").localeCompare(b.ends_at??"")||compare(a,b))});
-  for(const [day,items] of [...byDay.entries()].sort(([a],[b])=>a.localeCompare(b)))groups.push({day,ongoing:false,items:items.sort(compare)});
-  return groups;
+  const compare=(a:CalendarOccurrence,b:CalendarOccurrence)=>
+    Number(a.precision==="minute")-Number(b.precision==="minute")||
+    a.starts_at.localeCompare(b.starts_at)||a.id.localeCompare(b.id);
+  return [...byDay.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([day,items])=>({day,items:items.sort(compare)}));
 }
 const agendaDate=(day:string)=>new Intl.DateTimeFormat("en",{month:"short",day:"numeric",timeZone:"UTC"}).format(new Date(day+"T00:00Z"));
-export function agendaTime(row:CalendarOccurrence,day:string,ongoing:boolean):string|null{
+export function agendaTime(row:CalendarOccurrence,day:string):string|null{
+  const continued=row.starts_at.slice(0,10)<day;
   const end=row.ends_at?calendarEndInput(row.ends_at,row.precision):null;
   if(row.precision==="date"){
     // Display the last occupied date, never a fake midnight or "Time not set".
-    return end&&(ongoing||end!==row.starts_at)? "Ends "+(end===day?"today":agendaDate(end)):null;
+    return end&&(continued||end!==row.starts_at)? "Ends "+(end===day?"today":agendaDate(end)):null;
   }
   const start=row.starts_at.slice(11,16)+" UTC";
-  if(!end)return ongoing?null:start;
+  if(!end)return continued?null:start;
   const endDay=end.slice(0,10),endClock=end.slice(11);
   const finish=(endDay===day?"":agendaDate(endDay)+" ")+endClock+" UTC";
-  return ongoing?"Ends "+finish:start+" · Ends "+finish;
+  return continued?"Ends "+finish:start+" · Ends "+finish;
 }
 export function occursOn(row:CalendarOccurrence,day:string):boolean {
   const next=addDays(day,1);

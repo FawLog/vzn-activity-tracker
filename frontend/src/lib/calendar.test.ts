@@ -96,7 +96,7 @@ describe("upcoming agenda",()=>{
     expect(moveCalendar("2026-11-28","Agenda",1,now)).toBe("2026-12-28");
     expect(moveCalendar("2026-12-28","Agenda",-1,now)).toBe("2026-11-28");
   });
-  it("keeps ongoing and upcoming records only, with no empty days or repeated multi-day cards",()=>{
+  it("keeps all events occupying today, with untimed events first and timed events in chronological order",()=>{
     const active=allDay("ongoing","2026-11-25","2026-11-30");
     const groups=agendaGroups([
       timed("late","2026-11-28T19:30Z"),allDay("ended","2026-11-25","2026-11-28"),
@@ -107,10 +107,9 @@ describe("upcoming agenda",()=>{
       active,active,allDay("unknown-today","2026-11-28"),
       timed("early","2026-11-28T19:00Z"),allDay("later","2026-12-10","2026-12-13")
     ],"2026-11-28","2026-12-28",now);
-    expect(groups.map(g=>[g.day,g.ongoing,g.items.map(r=>r.id)])).toEqual([
-      ["2026-11-28",true,["active-timed","ongoing"]],
-      ["2026-11-28",false,["unknown-today","early","late"]],
-      ["2026-12-10",false,["later"]]
+    expect(groups.map(g=>[g.day,g.items.map(r=>r.id)])).toEqual([
+      ["2026-11-28",["ongoing","unknown-today","midnight-trap","point-past","active-timed","finished-at-this-minute","early","late"]],
+      ["2026-12-10",["later"]]
     ]);
   });
   it("does not repeat an earlier multi-day event in the next future page",()=>{
@@ -119,15 +118,20 @@ describe("upcoming agenda",()=>{
     expect(agendaGroups([earlier,next],"2026-12-28","2027-01-27",now).flatMap(g=>g.items.map(r=>r.id))).toEqual(["next"]);
   });
   it("shows meaningful time only and preserves midnight end-of-day convention",()=>{
-    expect(agendaTime(allDay("mia","2026-11-28"),"2026-11-28",false)).toBeNull();
-    expect(agendaTime(allDay("one-day","2026-11-28","2026-11-29"),"2026-11-28",false)).toBeNull();
-    expect(agendaTime(allDay("multi","2026-11-25","2026-11-30"),"2026-11-28",true)).toBe("Ends Nov 29");
-    expect(agendaTime(timed("trap","2026-11-28T19:00Z","2026-11-28T19:30Z"),"2026-11-28",false)).toBe("19:00 UTC · Ends 19:30 UTC");
-    expect(agendaTime(timed("midnight","2026-11-28T23:30Z","2026-11-29T00:00Z"),"2026-11-28",false)).toBe("23:30 UTC · Ends 24:00 UTC");
+    expect(agendaTime(allDay("mia","2026-11-28"),"2026-11-28")).toBeNull();
+    expect(agendaTime(allDay("one-day","2026-11-28","2026-11-29"),"2026-11-28")).toBeNull();
+    expect(agendaTime(allDay("multi","2026-11-25","2026-11-30"),"2026-11-28")).toBe("Ends Nov 29");
+    expect(agendaTime(timed("trap","2026-11-28T19:00Z","2026-11-28T19:30Z"),"2026-11-28")).toBe("19:00 UTC · Ends 19:30 UTC");
+    expect(agendaTime(timed("midnight","2026-11-28T23:30Z","2026-11-29T00:00Z"),"2026-11-28")).toBe("23:30 UTC · Ends 24:00 UTC");
   });
-  it("removes finished events as the clock advances without changing the schedule",()=>{
-    const event=timed("trap","2026-11-28T19:00Z","2026-11-28T19:30Z");
-    expect(agendaGroups([event],"2026-11-28","2026-12-28",new Date("2026-11-28T19:05Z"))[0].ongoing).toBe(true);
-    expect(agendaGroups([event],"2026-11-28","2026-12-28",new Date("2026-11-28T19:30Z"))).toEqual([]);
+  it("keeps a completed trap clickable all day and removes it only at the next UTC date",()=>{
+    const event=timed("trap","2026-11-28T00:30Z","2026-11-28T01:00Z");
+    for(const instant of ["2026-11-28T00:00Z","2026-11-28T00:45Z","2026-11-28T01:00Z","2026-11-28T23:59Z"]){
+      expect(agendaGroups([event],"2026-11-28","2026-12-28",new Date(instant))).toEqual([{day:"2026-11-28",items:[event]}]);
+    }
+    expect(agendaGroups([event],"2026-11-28","2026-12-28",new Date("2026-11-29T00:00Z"))).toEqual([]);
+    const acrossMidnight=timed("overnight","2026-11-27T23:30Z","2026-11-28T00:30Z");
+    expect(agendaGroups([acrossMidnight],"2026-11-28","2026-12-28",now)).toEqual([{day:"2026-11-28",items:[acrossMidnight]}]);
+    expect(agendaTime(acrossMidnight,"2026-11-28")).toBe("Ends 00:30 UTC");
   });
 });

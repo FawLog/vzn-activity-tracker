@@ -68,3 +68,29 @@ export function stateAge(startDate:string,anchor:string):number{
   if(last<first)throw Error("Anchor precedes the state start date");
   return (last-first)/(DAY*60000);
 }
+
+export type RepeatMode="fixed"|"months"|"weekdays";
+export function advancedPlan(fields:ScheduleFields,count:number,minutes:number,mode:RepeatMode,months:number,weekdays:number[]){
+  if(mode==="fixed"||count===1)return {payload:intervalPayload(count,minutes,fields.precision),rows:forecastRows(fields,count,minutes)};
+  if(!Number.isInteger(count)||count<2||count>180)throw Error("Choose 2–180 occurrences");
+  const anchor=parse(fields.starts_at,fields.precision),end=fields.ends_at?parse(fields.ends_at,fields.precision):null;
+  if(end!==null&&(end<=anchor||end-anchor>31*DAY*60000))throw Error("End must follow start, with duration at most 31 days");
+  const a=new Date(anchor),offsets=[0],dayMs=86400000;
+  if(mode==="months"){
+    if(!Number.isInteger(months)||months<1||months>12)throw Error("Choose 1–12 calendar months");
+    for(let i=1;i<count;i++){
+      const target=new Date(anchor);
+      target.setUTCDate(1);target.setUTCMonth(a.getUTCMonth()+i*months);
+      const last=new Date(Date.UTC(target.getUTCFullYear(),target.getUTCMonth()+1,0)).getUTCDate();
+      target.setUTCDate(Math.min(a.getUTCDate(),last));
+      offsets.push(target.getTime()-anchor);
+    }
+  }else{
+    const first=(a.getUTCDay()+6)%7;
+    if(!weekdays.includes(first)||weekdays.some(d=>!Number.isInteger(d)||d<0||d>6)||new Set(weekdays).size!==weekdays.length)throw Error("Anchor must match a selected weekday");
+    for(let day=1;day<=366&&offsets.length<count;day++)if(weekdays.includes((first+day)%7))offsets.push(day*dayMs);
+  }
+  if(offsets.length!==count||offsets[offsets.length-1]>366*dayMs)throw Error("Maximum recurrence horizon is 366 days");
+  const payload={occurrence_count:count,interval_minutes:null,...(mode==="months"?{repeat_months:months}:{repeat_weekdays:[...weekdays].sort((a,b)=>a-b)})};
+  return {payload,rows:offsets.map((offset,i)=>({start:format(anchor+offset,fields.precision),end:end===null?null:format(end+offset,fields.precision),confidence:i===0?fields.confidence:"estimated"}))};
+}

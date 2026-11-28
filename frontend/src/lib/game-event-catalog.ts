@@ -37,7 +37,7 @@ const calendarIds:Readonly<Record<string,string>> = {
   svs_battle:"svs-state-of-power", castle_battle:"sunfire-castle",
 };
 export function gameEventForCalendar(type:string):GameEventSummary|undefined {
-  const id=calendarIds[type];
+  const id=type.startsWith("game:")?type.slice(5):calendarIds[type];
   return id?byId.get(id):undefined;
 }
 export function searchGameEvents(query:string,category:string="all"):GameEventSummary[]{
@@ -50,3 +50,5 @@ export function repeatLabel(rule?:RepeatRule):string{
   if(rule.kind==="weekly")return "Weekly · "+rule.weekdays.join(", ");
   return "Every "+rule.every+" "+(rule.every===1?rule.unit.slice(0,-1):rule.unit);
 }
+
+export const extraCalendarEvents=gameEvents.filter(e=>!Object.values(calendarIds).includes(e.id));

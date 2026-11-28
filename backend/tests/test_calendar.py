@@ -114,3 +114,24 @@ def test_forecast_does_not_duplicate_existing_or_cancelled_entries(authenticated
     with connection(settings.database_path) as db:
         assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==3
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+
+def test_advanced_calendar_rules_and_catalog_types(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    payload={"event_type":"game:lucky-wheel","scope":"state","state_id":"1001","starts_at":"2092-01-31","ends_at":"2092-02-02","precision":"date","repeat_months":1,"occurrence_count":4,"reject_existing":True}
+    result=c.post(url,json=payload)
+    assert result.status_code==201,result.text
+    rows=result.json()["items"]
+    assert [r["starts_at"] for r in rows]==["2092-01-31","2092-02-29","2092-03-31","2092-04-30"]
+    assert [r["ends_at"] for r in rows]==["2092-02-02","2092-03-02","2092-04-02","2092-05-02"]
+    assert all(r["series_id"]==rows[0]["series_id"] for r in rows)
+    assert c.post(url,json={**payload,"event_type":"game:unknown"}).status_code==422
+    assert c.post(url,json={**payload,"interval_minutes":1440}).status_code==422
+    assert c.post(url,json={**payload,"occurrence_count":15}).status_code==422
+    weekly={**payload,"event_type":"game:crazy-joe","starts_at":"2092-01-01","ends_at":None,"repeat_months":None,"repeat_weekdays":[1,3],"occurrence_count":4}
+    # Jan 1 2092 is Tuesday.
+    r=c.post(url,json=weekly)
+    assert r.status_code==201,r.text
+    assert [x["starts_at"] for x in r.json()["items"]]==["2092-01-01","2092-01-03","2092-01-08","2092-01-10"]
+    assert c.post(url,json={**weekly,"repeat_weekdays":[0]}).status_code==422

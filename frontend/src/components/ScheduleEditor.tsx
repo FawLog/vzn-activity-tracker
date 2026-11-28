@@ -3,8 +3,8 @@ import { api, type StateCalendarProfile } from "../lib/api";
 import { eventTypeOptions, eventLabel } from "../lib/format";
 import type { Alliance } from "../lib/types";
 import type { CalendarOccurrence } from "../lib/calendar";
-import { gameEventForCalendar, repeatLabel } from "../lib/game-event-catalog";
-import { fixedGameInterval, forecastRows, intervalPayload, sourceRunWarning, stateAge } from "../lib/game-forecast";
+import { gameEventForCalendar, repeatLabel, extraCalendarEvents } from "../lib/game-event-catalog";
+import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, stateAge, type RepeatMode } from "../lib/game-forecast";
 import { futureChange, scheduleFields, serializeTime, utcInput, type ScheduleFields } from "../lib/schedule-editor";
 
 type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onClose:()=>void;onSaved:(day:string)=>void};
@@ -14,6 +14,9 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
   const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
   const [count,setCount]=useState(1);
+  const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
+  const [months,setMonths]=useState(1);
+  const [weekdays,setWeekdays]=useState<number[]>([1,3]);
   const [days,setDays]=useState(2);
   const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
   const [profiles,setProfiles]=useState<StateCalendarProfile[]>([]);
@@ -51,21 +54,22 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
   const changePrecision=(precision:ScheduleFields["precision"])=>setFields(old=>({...old,precision,starts_at:precision==="date"?old.starts_at.slice(0,10):old.starts_at.slice(0,10)+"T00:00Z",ends_at:null}));
   const reference=gameEventForCalendar(fields.event_type);
   const suggested=fixedGameInterval(reference);
+  const rule=reference?.schedule?.repeat;
   const minutes=days*({days:1440,hours:60,minutes:1}[intervalUnit]);
   const warnings=sourceRunWarning(reference,fields.event_type,fields);
   let preview:ReturnType<typeof forecastRows>=[],previewError="",age:number|null=null;
   if(!row){
     try{
-      preview=forecastRows(fields,count,minutes);
+      preview=advancedPlan(fields,count,minutes,repeatMode,months,weekdays).rows;
       if(stateStart)age=stateAge(stateStart,fields.starts_at);
       if(age!==null&&reference?.unlockDay!==undefined&&age<reference.unlockDay)warnings.push("Anchor is earlier than the reference unlock day "+reference.unlockDay+". Verify availability in game.");
     }catch(e){previewError=message(e);}
   }
-  const fingerprint=JSON.stringify({fields,count,minutes,stateStart});
+  const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays});
   function useReference(){
     if(suggested===null)return;
     const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
-    setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(4);setReviewed(null);
+    setRepeatMode("fixed");setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(4);setReviewed(null);
   }
   async function save(e:FormEvent){
     e.preventDefault();if(lock.current)return;
@@ -79,7 +83,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
       }else{
         if(previewError)throw Error(previewError);
         if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
-        const payload={...fields,...intervalPayload(count,minutes,fields.precision),...(count>1?{reject_existing:true}:{})};
+        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1?{reject_existing:true}:{})};
         const requestFingerprint=JSON.stringify(payload);
         if(request.current?.fingerprint!==requestFingerprint)request.current={fingerprint:requestFingerprint,key:crypto.randomUUID()};
         const result=await api.createSchedule(groupId,{...payload,request_key:request.current.key});
@@ -93,7 +97,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
     <p>Planning only. No attendance or result records are created.</p>
     <form onSubmit={save}>
       <fieldset disabled={busy} className="calendar-editor-fields">
-        <label>Event type<select value={fields.event_type} onChange={e=>patch({event_type:e.target.value})}>{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}</select></label>
+        <label>Event type<select value={fields.event_type} onChange={e=>patch({event_type:e.target.value})}>{eventTypeOptions.map(([v,label])=><option key={v} value={v}>{label}</option>)}<optgroup label="Game catalog (planning only)">{extraCalendarEvents.map(event=><option key={event.id} value={"game:"+event.id}>{event.name}</option>)}</optgroup></select></label>
         <label>Schedule owner<select required value={fields.scope==="alliance"?fields.alliance_id??"":"state:"+fields.state_id} onChange={e=>changeOwner(e.target.value)}><option value="" disabled>Choose owner</option>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}{states.map(s=><option key={s} value={"state:"+s}>State #{s}</option>)}</select></label>
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>patch({starts_at:e.target.value?serializeTime(e.target.value,fields.precision):""})}/></label>
@@ -102,7 +106,10 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         <label>Confidence<select value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
         <label>Occurrences (including first)<input type="number" min={1} max={180} required value={count} onChange={e=>setCount(Number(e.target.value))}/></label>
-        {count>1&&<><label>Repeat every ({intervalUnit})<input type="number" min={1} step={intervalUnit==="hours"?"any":1} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label><label>Repeat unit<select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value as typeof intervalUnit)}><option value="days">Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label></>}
+        {count>1&&<label>Repeat pattern<select value={repeatMode} onChange={e=>setRepeatMode(e.target.value as RepeatMode)}><option value="fixed">Fixed interval</option><option value="months">Calendar months</option><option value="weekdays">Selected weekdays</option></select></label>}
+        {count>1&&repeatMode==="months"&&<label>Repeat every (months)<input type="number" min={1} max={12} value={months} onChange={e=>setMonths(Number(e.target.value))}/></label>}
+        {count>1&&repeatMode==="weekdays"&&<div><strong>UTC weekdays</strong>{["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map((name,i)=><label key={name}><input type="checkbox" checked={weekdays.includes(i)} onChange={e=>setWeekdays(old=>e.target.checked?[...old,i]:old.filter(d=>d!==i))}/>{name}</label>)}</div>}
+        {count>1&&repeatMode==="fixed"&&<><label>Repeat every ({intervalUnit})<input type="number" min={1} step={intervalUnit==="hours"?"any":1} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label><label>Repeat unit<select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value as typeof intervalUnit)}><option value="days">Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label></>}
         <label>State start date (optional, reference only)<input type="date" value={stateStart} onChange={e=>setManualDate({stateId:fields.state_id,value:e.target.value})}/></label>
         </>}
       </fieldset>
@@ -112,6 +119,8 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         {profileError&&<p role="alert">{profileError}</p>}
         {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{repeatLabel(reference.schedule?.repeat)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
           {suggested!==null&&<button type="button" className="button button--quiet" disabled={busy} onClick={useReference}>Use game repeat rule</button>}
+          {rule?.kind==="every"&&rule.unit==="months"&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setRepeatMode("months");setMonths(rule.every);setCount(4);setReviewed(null);}}>Use calendar-month rule (verify local rotation)</button>}
+          {rule?.kind==="weekly"&&<button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setRepeatMode("weekdays");setWeekdays(rule.weekdays.map(d=>["monday","tuesday","wednesday","thursday","friday","saturday","sunday"].indexOf(d.toLowerCase())));setCount(4);setReviewed(null);}}>Use weekday rule</button>}
           {warnings.map(w=><p key={w}>{w}</p>)}
           <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}
         {count>1&&<div className="calendar-series-preview"><h3>Proposed schedule</h3><p>Future occurrences are estimated. Maximum horizon: 366 days.</p>

@@ -3,7 +3,8 @@ import {useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
 import {cycleDraft,cycleIntervalDays,cycleOccurrences,moveCyclePhaseStart,legionPhases,cycleReference,initialCycleCount,type CycleKind,type CycleSeries} from "../lib/calendar-cycles";
 import {creationEventOptions,cycleTypes} from "../lib/calendar-event-options";
-import {weekStart,type CalendarOccurrence} from "../lib/calendar";
+import {weekStart,calendarEndLabel,type CalendarOccurrence} from "../lib/calendar";
+import {CalendarEndField} from "./CalendarEndField";
 import {serializeTime,utcInput,type ScheduleFields} from "../lib/schedule-editor";
 import type {Alliance} from "../lib/types";
 import {CycleReconcileEditor} from "./CycleReconcileEditor";
@@ -72,10 +73,10 @@ export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,all
       {phases.map((p,i)=><fieldset key={p.phase} disabled={busy} className="calendar-editor-fields"><legend>{p.phase}</legend>
         <label>Precision<select value={p.precision} onChange={e=>{const precision=e.target.value as ScheduleFields["precision"];patch(i,moveCyclePhaseStart({...p,precision,starts_at:"",ends_at:null},precision==="date"?p.starts_at.slice(0,10):""));}}><option value="date">Date only</option><option value="minute">UTC time</option></select></label>
         <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";patch(i,moveCyclePhaseStart(p,starts_at));}}/></label>
-        <label>Ends (optional, exclusive)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.ends_at??"",p.precision)} onChange={e=>patch(i,{ends_at:e.target.value?serializeTime(e.target.value,p.precision):null})}/></label>
+        <CalendarEndField value={p.ends_at} precision={p.precision} onChange={ends_at=>patch(i,{ends_at})}/>
         <label>Confidence<select value={p.confidence} onChange={e=>patch(i,{confidence:e.target.value as ScheduleFields["confidence"]})}><option value="estimated">Estimated</option><option value="confirmed">Confirmed</option></select></label>
       </fieldset>)}
-      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>{kind==="svs"?"Future phase dates remain estimates. Verify each local cycle.":"Future legion battle times remain unconfirmed. Verify each local cycle."}</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
+      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>{kind==="svs"?"Future phase dates remain estimates. Verify each local cycle.":"Future legion battle times remain unconfirmed. Verify each local cycle."}</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].ends_at?calendarEndLabel(rows[rows.length-1].ends_at,rows[rows.length-1].precision):rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
       <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!repeatError} checked={review===fingerprint} onChange={e=>setReview(e.target.checked?fingerprint:"")}/>I reviewed all phases and their local dates</label>
     </div>}
     {error&&<p role="alert">{error}</p>}

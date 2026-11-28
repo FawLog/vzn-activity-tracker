@@ -18,7 +18,7 @@ import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { navigate } from "../lib/router";
 
 import { api } from "../lib/api";
-import { calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
+import { calendarEndLabel, calendarRange, calendarTime, moveCalendar, occursOn, utcDay, addDays, type CalendarOccurrence, type CalendarView } from "../lib/calendar";
 import { eventLabel, formatDate } from "../lib/format";
 import { useGroupContext } from "../lib/group-context";
 
@@ -111,7 +111,7 @@ export function CalendarPage(){
     {selected&&<section className="data-panel calendar-detail" aria-label="Schedule details">
       <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{selected.cycle_id&&selected.event_type.startsWith("svs_")?"State of Power (SvS)":(selected.event_type.startsWith("game:")?reference?.name??eventLabel(selected.event_type):eventLabel(selected.event_type))}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Close details</button></div>
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
-      <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
+      <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+calendarEndLabel(selected.ends_at,selected.precision):""}</p>
       {selected.follow_rule_id?<FollowScheduleDetails key={selected.id} groupId={groupId} row={selected} writable={writable&&!workspaceBlocked} onStopped={()=>saved()}/>:writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected});setDetail(null);}}>Edit schedule</button></div>}
       {selected.cycle_id&&<CycleDetails key={selected.id} groupId={groupId} cycleId={selected.cycle_id} writable={writable&&!workspaceBlocked} onChanged={saved} onSelect={row=>{if(row.id!==selected.id&&!workspaceBlocked&&allowNavigation()){closeWorkspace();setDetail({groupId,row});}}}/>}
       <CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} workspaceBlocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRevision={revision=>{setDetail(current=>current?.groupId===groupId&&current.row.id===selected.id?{groupId,row:{...current.row,revision}}:current);setRetry(n=>n+1);}}/>

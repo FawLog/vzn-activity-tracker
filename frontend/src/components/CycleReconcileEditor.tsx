@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from "react";
 import {api} from "../lib/api";
-import {addDays} from "../lib/calendar";
+import {addDays,calendarEndLabel} from "../lib/calendar";
 import {useNavigationGuard} from "../lib/navigation-guard";
 import type {CycleReconcilePlan,CycleSeries,CycleReconcilePayload,CycleCadencePlan} from "../lib/calendar-cycles";
 
@@ -67,7 +67,7 @@ export function CycleReconcileEditor({groupId,cycleId,series,onChanged}:{groupId
       <label>Move by days (UTC)<input type="number" min={-366} max={366} disabled={busy} value={days} onChange={e=>{setDays(Number(e.target.value));setReview(false);}}/></label>
       {plan&&<><p>{new Set(plan.items.map(r=>r.cycle_id)).size} movable cycles · {plan.protected_cycles} protected cycles.</p>
       {validDays&&<ul>{plan.items.map(r=><li key={r.id}>{r.phase}: {r.starts_at} → {addDays(r.starts_at.slice(0,10),days)+r.starts_at.slice(10)}</li>)}</ul>}
-      {!following&&days===0&&plan.can_confirm&&<ul>{plan.confirm_items.map(r=><li key={r.id}>{r.phase}: {r.starts_at}{r.ends_at?" – "+r.ends_at:""}</li>)}</ul>}
+      {!following&&days===0&&plan.can_confirm&&<ul>{plan.confirm_items.map(r=><li key={r.id}>{r.phase}: {r.starts_at}{r.ends_at?" – "+calendarEndLabel(r.ends_at,r.precision):""}</li>)}</ul>}
       <label className="calendar-checkbox"><input type="checkbox" disabled={busy} checked={review} onChange={e=>setReview(e.target.checked)}/>I reviewed the dates and selected operation</label>
       <div className="calendar-controls">
         <button type="button" className="button button--quiet" disabled={busy||!review||!plan.can_confirm||following||days!==0} onClick={()=>void apply("confirm")}>Confirm cycle dates</button>

@@ -4,7 +4,7 @@ import {allowNavigation,useNavigationGuard} from "../lib/navigation-guard";
 import {creationEventOptions} from "../lib/calendar-event-options";
 import {gameEventForCalendar} from "../lib/game-event-catalog";
 import type {Alliance} from "../lib/types";
-import type {CalendarOccurrence} from "../lib/calendar";
+import {calendarEndLabel,type CalendarOccurrence} from "../lib/calendar";
 
 type Props={eventType:string;groupId:string;alliances:Alliance[];preferred?:string;day:string;onEvent:(type:string)=>void;onManual:()=>void;onClose:()=>void;onSaved:(day:string)=>void};
 type Plan={active_rule_id:string|null;active_from:string|null;items:CalendarOccurrence[]};
@@ -55,7 +55,7 @@ export function FollowScheduleEditor({eventType,groupId,alliances,preferred,day,
     {plan?<div className="calendar-series-preview">
       {plan.active_rule_id&&<p role="status">Already following since {plan.active_from}.</p>}
       <h3>Next 60 days</h3>
-      {plan.items.length?<ul>{plan.items.map(r=><li key={r.id}>{r.starts_at} — {r.ends_at} (exclusive) · {r.schedule_status==="cancelled"?"Cancelled":"Estimated"}</li>)}</ul>:<p>No matching state-level parent schedule in this period. Events appear automatically when the parent is scheduled.</p>}
+      {plan.items.length?<ul>{plan.items.map(r=><li key={r.id}>{r.starts_at} — {calendarEndLabel(r.ends_at,r.precision)} · {r.schedule_status==="cancelled"?"Cancelled":"Estimated"}</li>)}</ul>:<p>No matching state-level parent schedule in this period. Events appear automatically when the parent is scheduled.</p>}
       {plan.active_rule_id?<button type="button" className="button button--quiet" disabled={busy} onClick={()=>void stop()}>Stop following</button>:<button type="button" className="button button--primary" disabled={busy||!start||!stateId} onClick={()=>void save()}>Save schedule</button>}
     </div>:!error&&<p>Loading matching parent dates…</p>}
     {error&&<p role="alert">{error}</p>}

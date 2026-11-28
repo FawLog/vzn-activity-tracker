@@ -406,7 +406,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   const originalVoting=await votingGroup.getByLabel("Starts (UTC)",{exact:true}).inputValue();
   const previousDate=new Date(Date.parse(originalVoting+"T00:00Z")-86400000).toISOString().slice(0,10);
   await votingGroup.getByLabel("Starts (UTC)",{exact:true}).fill(previousDate);
-  await expect(votingGroup.getByLabel("Ends (optional, exclusive)")).toHaveValue(new Date(Date.parse(previousDate+"T00:00Z")+2*86400000).toISOString().slice(0,10));
+  await expect(votingGroup.getByLabel("Last day (UTC, optional)")).toHaveValue(new Date(Date.parse(previousDate+"T00:00Z")+86400000).toISOString().slice(0,10));
   await expect(cycleEditor.getByText("Game repeat rule: every 14 days.",{exact:false})).toBeVisible();
   page.once("dialog", dialog=>dialog.accept());
   await cycleEditor.getByRole("button",{name:"Advanced: schedule battle only",exact:true}).click();
@@ -486,7 +486,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2091-02-10T15:00");
     await scheduleEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
     await scheduleEditor.getByLabel("Phase (optional)").fill(verificationPhase);
-    await scheduleEditor.getByLabel("Ends (UTC, optional, exclusive)").fill("2091-02-10T16:00");
+    await scheduleEditor.getByLabel("Ends (UTC, optional)").fill("2091-02-10 16:00");
     await scheduleEditor.getByRole("checkbox",{name:"I reviewed these dates and confirmed the local repeat pattern"}).check();
     const seriesCreated=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar"));
     await scheduleEditor.getByRole("button",{name:"Save schedule"}).click();
@@ -578,7 +578,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
     await cycleEditor.getByLabel("I reviewed all phases and their local dates").check();
     await expect(cycleEditor.getByRole("group",{name:"Matchmaking",exact:true}).getByLabel("Starts (UTC)",{exact:true})).toHaveValue("2091-08-04T00:00");
-    await expect(cycleEditor.getByRole("group",{name:"Field Triage",exact:true}).getByLabel("Ends (optional, exclusive)")).toHaveValue("2091-08-14T00:00");
+    await expect(cycleEditor.getByRole("group",{name:"Field Triage",exact:true}).getByLabel("Ends (UTC, optional)")).toHaveValue("2091-08-13 24:00");
     const svsSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/cycles"));
     await cycleEditor.getByRole("button",{name:"Save cycle",exact:true}).click();
     const svsResult=await svsSaved;
@@ -588,7 +588,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("game:flame-and-fang");
     await expect(scheduleEditor.getByText("Follow SvS preparation automatically",{exact:true})).toBeVisible();
-    await expect(scheduleEditor.getByText("2091-08-06 — 2091-08-09 (exclusive) · Estimated",{exact:true})).toBeVisible();
+    await expect(scheduleEditor.getByText("2091-08-06 — 2091-08-08 24:00 UTC · Estimated",{exact:true})).toBeVisible();
     const followSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/follow"));
     await scheduleEditor.getByRole("button",{name:"Save schedule",exact:true}).click();
     expect((await followSaved).status()).toBe(200);

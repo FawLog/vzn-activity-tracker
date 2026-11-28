@@ -26,3 +26,6 @@ Follow rules are explicitly enabled per group/state. They project read-only cale
 
 ## SvS full cycle
 The upstream structured runs omit Matchmaking and Field Triage. The reviewed supplement adds Saturday/Sunday matchmaking (official FAQ), Preparation Monday 00:00 through Saturday 10:00, Battle Saturday 10:00–22:00, and an estimated Field Triage end on Tuesday 00:00 UTC (approximately 50 hours, community guide). The editor anchors on the Preparation Monday; all four phases are linked, projected at the same 28-day cadence, and can be reviewed and moved together. Flame and Fang follows Preparation specifically, not the earlier Matchmaking. Existing two-phase schedules are preserved and not silently rewritten; new cycles use all four phases. No additional event-picker choices or activity metrics are introduced.
+
+## Game-style end dates
+Calendar cards, stage details, recurring previews and editors display an exclusive midnight as the previous day at 24:00 UTC. Date-only editors select the last occupied day; timed editors accept YYYY-MM-DD HH:mm including 24:00. Conversion is frontend-only and retains canonical exclusive UTC API values. Starts, duration arithmetic, recurrence and day membership are unchanged. Invalid end dates cannot be submitted.

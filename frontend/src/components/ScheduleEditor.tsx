@@ -3,7 +3,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type StateCalendarProfile } from "../lib/api";
 import { eventTypeOptions, eventLabel } from "../lib/format";
 import type { Alliance } from "../lib/types";
-import type { CalendarOccurrence } from "../lib/calendar";
+import { calendarEndLabel,validCalendarEnd,type CalendarOccurrence } from "../lib/calendar";
+import {CalendarEndField} from "./CalendarEndField";
 import { gameEventForCalendar, eventRepeatLabel, followType } from "../lib/game-event-catalog";
 import { FollowScheduleEditor } from "./FollowScheduleEditor";
 import { fixedGameInterval, forecastRows, advancedPlan, sourceRunWarning, referenceDuration, referenceEnd, referenceRepeat, stateAge, type RepeatMode } from "../lib/game-forecast";
@@ -173,6 +174,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
     lock.current=true;setBusy(true);setError("");
     try{
       if(!fields.state_id||!fields.starts_at)throw new Error("Choose a scope and start date");
+      if(!validCalendarEnd(fields.ends_at,fields.precision))throw new Error("Enter a valid UTC end date and time");
       if(fields.ends_at&&fields.ends_at<=fields.starts_at)throw new Error("End must follow start");
       if(row){
         const schedule={...fields,revision:row.revision,schedule_status:status};
@@ -225,10 +227,10 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
         {!row&&reference?.id==="frostfire-mine"&&<label>Game time slot (UTC)<select value={fields.precision==="minute"?fields.starts_at.slice(11,16):""} onChange={e=>{const time=e.target.value;if(!time)return;setAutoEnd(true);setFields(old=>{const next={...old,precision:"minute" as const,starts_at:(old.starts_at.slice(0,10)||day)+"T"+time+"Z"};return {...next,ends_at:referenceEnd(reference,next)};});}}><option value="">Choose time slot</option>{reference.schedule?.runs?.map(r=>r.startTimeUtc&&<option key={r.startTimeUtc} value={r.startTimeUtc}>{r.startTimeUtc}</option>)}</select></label>}
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>{const start=e.target.value?serializeTime(e.target.value,fields.precision):"";setFields(old=>{const next=row?moveScheduleStart(old,start):{...old,starts_at:start};return autoEnd?{...next,ends_at:referenceEnd(gameEventForCalendar(next.event_type),next)}:next;});}}/></label>
-        {!row&&referenceDuration(reference,fields.event_type,fields.phase)!==null&&<div className="calendar-repeat-summary"><strong>{fields.ends_at?"Ends (exclusive): "+fields.ends_at:"End time not set"}</strong><small>{autoEnd?(fields.precision==="date"&&referenceDuration(reference,fields.event_type,fields.phase)!%1440?"Game duration; date-only covers occupied dates. Choose UTC time for the exact end.":"From game reference; verify local timing."):"Manual end override."}</small>{!autoEnd&&<button type="button" className="button button--quiet" onClick={()=>{setAutoEnd(true);setFields(old=>({...old,ends_at:referenceEnd(reference,old)}));}}>Use game duration</button>}</div>}
+        {!row&&referenceDuration(reference,fields.event_type,fields.phase)!==null&&<div className="calendar-repeat-summary"><strong>{fields.ends_at?"Ends: "+calendarEndLabel(fields.ends_at,fields.precision):"End time not set"}</strong><small>{autoEnd?(fields.precision==="date"&&referenceDuration(reference,fields.event_type,fields.phase)!%1440?"Game duration; date-only covers occupied dates. Choose UTC time for the exact end.":"From game reference; verify local timing."):"Manual end override."}</small>{!autoEnd&&<button type="button" className="button button--quiet" onClick={()=>{setAutoEnd(true);setFields(old=>({...old,ends_at:referenceEnd(reference,old)}));}}>Use game duration</button>}</div>}
         {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Every "+months+" calendar month"+(months===1?"":"s"):"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{(suggested!==null||referencePlan.count>1)&&<button type="button" className="button button--quiet" onClick={useReference}>{referencePlan.mode==="months"?"Use monthly estimate":"Use game repeat rule"}</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);setGroupBear(false);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
         <button type="button" className="button button--quiet calendar-advanced-toggle" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide advanced settings":"Advanced settings"}</button>
-        {advanced&&<><label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>{setAutoEnd(false);patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null});}}/></label>
+        {advanced&&<><CalendarEndField value={fields.ends_at} precision={fields.precision} onChange={ends_at=>{setAutoEnd(false);patch({ends_at});}}/>
         {(!!row||reference?.id!=="hall-of-chief")&&<label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>}
         <label>Confidence<select aria-label="Confidence" value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
@@ -253,7 +255,7 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
           <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}</>}
         {!advanced&&<>{reference&&<p>Game reference: {eventRepeatLabel(reference)} · {reference.duration??"Duration not specified"}</p>}{warnings.map(w=><p key={w}>{w}</p>)}</>}
         {count>1&&<div className="calendar-series-preview"><h3>Proposed schedule</h3><p>Future occurrences are estimated. Maximum horizon: 366 days.</p>
-          {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map((r,i)=><li key={r.start}>{r.start}{r.end?" — "+r.end:""} · {r.confidence}{cycleDates[i]?" · Cycle "+cycleDates[i]+" · "+bearKey.replaceAll("_"," "):""}</li>)}</ul>}
+          {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map((r,i)=><li key={r.start}>{r.start}{r.end?" — "+calendarEndLabel(r.end,fields.precision):""} · {r.confidence}{cycleDates[i]?" · Cycle "+cycleDates[i]+" · "+bearKey.replaceAll("_"," "):""}</li>)}</ul>}
           <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!previewError} checked={reviewed===fingerprint} onChange={e=>setReviewed(e.target.checked?fingerprint:null)}/>I reviewed these dates and confirmed the local repeat pattern</label>
         </div>}
       </>}
@@ -266,11 +268,11 @@ function GeneralScheduleEditor({forecast,groupId,alliances,preferred,day,row,onC
         </fieldset>
         {editScope==="future"&&<><p>{decision.items.length} scheduled occurrences affected. Past events, linked records, cancelled dates and other manual exceptions are protected. {status==="cancelled"?"Automatic renewal will stop.":"Automatic renewal uses the updated time and interval."}</p>
           {row?.event_type==="bear_trap"&&row.entry_cycle_date&&<p>Shared Bear cycle identities are retained for time changes. Cadence changes are rejected if other traps share the cycle or exceptions require review.</p>}
-          {editError?<p role="alert">{editError}</p>:<ul>{decision.items.map((r,i)=><li key={r.id}>{r.starts_at}{status==="cancelled"?" · Cancelled":" → "+editedDates[i]?.start+(editedDates[i]?.end?" — "+editedDates[i].end:"")}</li>)}</ul>}</>}
+          {editError?<p role="alert">{editError}</p>:<ul>{decision.items.map((r,i)=><li key={r.id}>{r.starts_at}{status==="cancelled"?" · Cancelled":" → "+editedDates[i]?.start+(editedDates[i]?.end?" — "+calendarEndLabel(editedDates[i].end,fields.precision):"")}</li>)}</ul>}</>}
         <button type="button" className="button button--quiet" disabled={busy} onClick={()=>{setDecision(null);setError("");}}>Back to editing</button>
       </section>}
       {error&&<p role="alert">{error}</p>}
-      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||!!editError||(!row&&(!!previewError||(count>1&&reviewed!==fingerprint)))} type="submit">{busy?"Saving…":decision?"Save changes":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
+      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||!fields.starts_at||!validCalendarEnd(fields.ends_at,fields.precision)||!!editError||(!row&&(!!previewError||(count>1&&reviewed!==fingerprint)))} type="submit">{busy?"Saving…":decision?"Save changes":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={()=>{if(allowNavigation())onClose();}}>Close editor</button></div>
     </form>
   </section>;
 }

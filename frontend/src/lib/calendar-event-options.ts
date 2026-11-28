@@ -8,5 +8,5 @@ export const creationEventOptions:[string,string][]=[
  ...extraCalendarEvents.map(e=>["game:"+e.id,e.name] as [string,string])
 ];
 export function creationType(type:string):string{
- return ({bear_trap:"bear:batch",foundry:"cycle:foundry",canyon:"cycle:canyon",svs_preparation:"cycle:svs",svs_battle:"cycle:svs"} as Record<string,string>)[type]??type;
+ return ({bear_trap:"bear:batch",foundry:"cycle:foundry",canyon:"cycle:canyon",svs_preparation:"cycle:svs",svs_battle:"cycle:svs",svs_matchmaking:"cycle:svs",svs_triage:"cycle:svs"} as Record<string,string>)[type]??type;
 }

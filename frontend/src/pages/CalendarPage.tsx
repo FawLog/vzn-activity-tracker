@@ -109,7 +109,7 @@ export function CalendarPage(){
       })}</div>
     </section>}
     {selected&&<section className="data-panel calendar-detail" aria-label="Schedule details">
-      <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{(selected.event_type.startsWith("game:")?reference?.name??eventLabel(selected.event_type):eventLabel(selected.event_type))}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Close details</button></div>
+      <div className="calendar-controls"><EventIcon eventType={selected.event_type}/><h2>{selected.cycle_id&&selected.event_type.startsWith("svs_")?"State of Power (SvS)":(selected.event_type.startsWith("game:")?reference?.name??eventLabel(selected.event_type):eventLabel(selected.event_type))}</h2><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(allowNavigation())setDetail(null);}}>Close details</button></div>
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
       {selected.follow_rule_id?<FollowScheduleDetails key={selected.id} groupId={groupId} row={selected} writable={writable&&!workspaceBlocked} onStopped={()=>saved()}/>:writable&&<div className="calendar-controls"><button className="button button--quiet" disabled={workspaceBlocked} onClick={()=>{if(!allowNavigation())return;setCycleEditor(null);setEditor({groupId,row:selected});setDetail(null);}}>Edit schedule</button></div>}

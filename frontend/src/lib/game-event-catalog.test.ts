@@ -58,3 +58,11 @@ it("classifies every source event and only supplements the reviewed Flame cadenc
  for(const id of groups.once)expect(gameEvents.find(e=>e.id===id)?.schedule?.repeat).toEqual({kind:"none"});
  for(const id of [...groups.linked.filter(id=>id!=="flame-and-fang"),...groups.irregular,...groups.conditions,...groups.persistent,...groups.unknown])expect(gameEvents.find(e=>e.id===id)?.schedule?.repeat).toBeUndefined();
 });
+
+it("adds all four SvS runs to the same catalog reference",()=>{
+ const svs=gameEventForCalendar("svs_preparation")!;
+ expect(gameEventForCalendar("svs_matchmaking")).toBe(svs);
+ expect(gameEventForCalendar("svs_triage")).toBe(svs);
+ expect(svs.schedule?.runs?.map(r=>r.label)).toEqual(["Matchmaking","Preparation","Battle","Field Triage"]);
+ expect(svs.scheduleOverride?.note).toContain("estimated");
+});

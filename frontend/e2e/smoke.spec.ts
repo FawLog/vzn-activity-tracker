@@ -396,6 +396,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await expect(templateSelect.locator("option").filter({hasText:verificationPhase})).toHaveCount(1);
     page.once("dialog", dialog=>dialog.accept());
     await templateSelect.selectOption({label:verificationPhase});
+    await expect(scheduleEditor.getByRole("status")).toContainText("Template loaded.");
     await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveValue("2091-02-03");
     await expect(scheduleEditor.getByLabel("Confidence",{exact:true})).toHaveValue("estimated");
     await scheduleEditor.getByLabel("Confidence",{exact:true}).selectOption("confirmed");

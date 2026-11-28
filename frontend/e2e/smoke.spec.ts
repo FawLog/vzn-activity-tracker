@@ -455,13 +455,14 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await page.getByLabel("Find record").fill("2026-11-24");
   await expect(page.getByRole("button",{name:"Foundry Battle",exact:true}).first()).toBeVisible();
   await page.getByLabel("Find record").fill("nonexistent-history-record");
-  await expect(page.getByRole("heading",{name:"No matching records"})).toBeVisible();
+  await expect(page.locator("main .empty-state").getByText("No matching records",{exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"Foundry Battle",exact:true})).toHaveCount(0);
   await page.getByRole("button",{name:"Clear filters",exact:true}).click();
   await expect(page.getByRole("button",{name:"Foundry Battle",exact:true}).first()).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   await page.getByRole("button",{name:"Open calendar",exact:true}).click();
   await expect(page).toHaveURL(/\/calendar$/);
-  await page.getByRole("button",{name:"Event history",exact:true}).last().click();
+  await page.locator("main").getByRole("button",{name:"Event history",exact:true}).click();
   await expect(page).toHaveURL(/\/events$/);
   const foundryEvent = page.getByRole("button", {name:"Foundry Battle",exact:true}).first();
   await expect.poll(() => foundryEvent.locator(".event-icon img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);

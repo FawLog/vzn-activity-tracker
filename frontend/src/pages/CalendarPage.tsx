@@ -28,6 +28,7 @@ export function CalendarPage(){
   const [view,setView]=useState<CalendarView>(()=>window.matchMedia("(max-width: 700px)").matches?"Agenda":"Week");
   const [scope,setScope]=useState("all");
   const [showCancelled,setShowCancelled]=useState(false);
+  const [recordFilter,setRecordFilter]=useState("all");
   const [loaded,setLoaded]=useState<{key:string;items:CalendarOccurrence[]}|null>(null);
   const [failure,setFailure]=useState<{key:string;message:string}|null>(null);
   const [retry,setRetry]=useState(0);
@@ -50,7 +51,8 @@ export function CalendarPage(){
   useEffect(()=>{const row=items?.find(r=>r.id===pendingOccurrence);if(row&&groupId){setDetail({groupId,row});setPendingOccurrence(null);}},[items,groupId,pendingOccurrence]);
   const error=failure?.key===key?failure.message:"";
   const visible=(items??[]).filter(row=>(showCancelled||row.schedule_status!=="cancelled") &&
-    (scope==="all"||(scope==="state"?row.scope==="state":row.scope==="alliance"&&row.alliance_id===selectedAlliance?.id)));
+    (scope==="all"||(scope==="state"?row.scope==="state":row.scope==="alliance"&&row.alliance_id===selectedAlliance?.id)) &&
+    (recordFilter==="all"||(recordFilter==="unlinked"?!row.review:row.review?.publication===recordFilter)));
   const owner=(row:CalendarOccurrence)=>row.scope==="state"?"State #"+row.state_id:(alliances.find(a=>a.id===row.alliance_id)?.tag??"Alliance")+" · #"+row.state_id;
   const status=(row:CalendarOccurrence)=>row.schedule_status==="cancelled"?"Cancelled":row.confidence==="confirmed"?"Confirmed":"Estimated";
   const changeDay=(next:string)=>{setDay(next);setDetail(null);};
@@ -69,6 +71,7 @@ export function CalendarPage(){
       <div className="calendar-controls" aria-label="Calendar view">{views.map(mode=><button key={mode} className={"button "+(view===mode?"button--primary":"button--quiet")} aria-pressed={view===mode} onClick={()=>{setView(mode);setDetail(null);}}>{mode}</button>)}</div>
       <div className="calendar-controls"><button className="icon-button" aria-label="Previous period" onClick={()=>changeDay(moveCalendar(day,view,-1))}><ChevronLeft/></button><button className="button button--quiet" onClick={()=>changeDay(utcDay())}>Today</button><button className="icon-button" aria-label="Next period" onClick={()=>changeDay(moveCalendar(day,view,1))}><ChevronRight/></button></div>
       <label className="select-control">Scope<select value={scope} onChange={e=>{setScope(e.target.value);setDetail(null);}}><option value="all">All events</option><option value="alliance">Current alliance</option><option value="state">State events</option></select></label>
+      <label className="select-control">Actual record<select value={recordFilter} onChange={e=>{setRecordFilter(e.target.value);setDetail(null);}}><option value="all">All record statuses</option><option value="unlinked">No linked record</option><option value="draft">Draft records</option><option value="published">Published records</option></select></label>
       <label className="calendar-checkbox"><input type="checkbox" checked={showCancelled} onChange={e=>{setShowCancelled(e.target.checked);setDetail(null);}}/>Show cancelled</label>
     </div>
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
@@ -83,7 +86,7 @@ export function CalendarPage(){
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>
           <h3>{view==="Month"?Number(date.slice(8)):weekday(date)+" "+formatDate(date)}</h3>
           {events.map(row=><button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} onClick={()=>setDetail({groupId,row})}>
-            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}{row.cycle_id?" · Linked":""}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small></span>
+            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}{row.cycle_id?" · Linked":""}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small>{row.review&&<small>Record: {row.review.publication} · {row.review.scope}</small>}</span>
           </button>)}
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
         </section>;

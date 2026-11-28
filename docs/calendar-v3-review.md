@@ -1,0 +1,3 @@
+# Calendar v3.4 — read-only evidence review
+
+Calendar list and linked-record detail expose saved review flags, publication and scope. No evidence inference or participant mutation. Session links show that session only; event-level legion coverage requires both legions. Flags without player rows cannot be reviewed. Final attendance review is explicitly whole-event and requires published completion review; not inferred from publication. Championship attendance/results are not applicable; Bear/Mobilization registration not applicable. Filter by actual record status, independent of schedule confidence/cancellation. Unlinked entries have no review field. No schema or CI changes.

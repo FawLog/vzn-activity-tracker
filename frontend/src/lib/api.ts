@@ -1,6 +1,6 @@
 import type { AnalyticsReport } from "./analytics";
 import type { CycleCreate } from "./calendar-cycles";
-import type { CalendarOccurrence } from "./calendar";
+import type { CalendarOccurrence, CalendarReview } from "./calendar";
 import type { ScheduleCreate, ScheduleUpdate, FutureChange } from "./schedule-editor";
 import type { Alliance, AllianceGroup, AlliancePreview, AuditRecord, EventRecord, ManualEvent, ManualSessionSave, OverviewData, Player, SyncStatus } from "./types";
 
@@ -41,7 +41,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
 
 export interface CalendarSessionCandidate {id:string;event_id:string;session_key:string;started_at:string;host_alliance_id:string;status:"draft"|"published";occurred_on:string}
-export interface CalendarEventLinkState {linked:(Pick<EventRecord,"id"|"event_type"|"occurred_on"|"status"|"alliance_id">&{session_id?:string|null;session_key?:string|null;started_at?:string|null})|null;sessions:CalendarSessionCandidate[];items:Pick<EventRecord,"id"|"event_type"|"occurred_on"|"status"|"alliance_id">[];eligible:boolean;truncated:boolean;revision:number}
+export interface CalendarEventLinkState {linked:(Pick<EventRecord,"id"|"event_type"|"occurred_on"|"status"|"alliance_id">&{session_id?:string|null;session_key?:string|null;started_at?:string|null})|null;sessions:CalendarSessionCandidate[];items:Pick<EventRecord,"id"|"event_type"|"occurred_on"|"status"|"alliance_id">[];eligible:boolean;truncated:boolean;revision:number;review?:CalendarReview|null}
 export interface CalendarDraftPayload {revision:number;confirmed:true;event_id?:string;cycle_date?:string;session_key?:string}
 export const api = {
   createCalendarDraft:(groupId:string,id:string,payload:CalendarDraftPayload)=>request<CalendarEventLinkState>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/draft`,{method:"POST",body:JSON.stringify(payload)}),

@@ -159,7 +159,8 @@ def list_occurrences(path, group_id, start: date, end: date):
           (group_id,end.isoformat(),start.isoformat(),start.isoformat(),start.isoformat()+"T00:00Z")).fetchall()
         if len(rows)>2000:
             raise ValueError("Too many calendar entries; select a shorter range")
-        return {"items":[dict(row) for row in rows]}
+        progress=review_status(db,group_id,[row["id"] for row in rows])
+        return {"items":[{**dict(row),**({"review":progress[row["id"]]} if row["id"] in progress else {})} for row in rows]}
 
 
 def create(path, group_id, payload: CalendarCreate):
@@ -451,7 +452,7 @@ def event_link(path,group_id,occurrence_id):
         candidates=link_candidates(db,row)
         sessions=session_candidates(db,row,linked["id"] if linked else None)
         return {"linked":dict(linked) if linked else None,"items":candidates[:100],"sessions":sessions[:100],"truncated":len(candidates)>100 or len(sessions)>100,
-                "eligible":link_eligible(row),"revision":row["revision"]}
+                "eligible":link_eligible(row),"revision":row["revision"],"review":review_status(db,group_id,[occurrence_id]).get(occurrence_id)}
 
 
 def set_event_link(path,group_id,occurrence_id,payload):
@@ -595,3 +596,59 @@ def draft_bear_cycles(path,group_id,occurrence_id,cycle_date):
         return {"items":[dict(r) for r in db.execute("""SELECT e.id,e.status,e.occurred_on FROM events e
             JOIN alliances a ON a.id=e.alliance_id WHERE a.group_id=? AND e.event_type='bear_trap' AND e.occurred_on=?
             ORDER BY e.id""",(group_id,cycle_date.isoformat())).fetchall()]}
+
+def review_status(db,group_id,occurrence_ids):
+    """Read-only evidence flags, scoped to linked records. No absence inference."""
+    if not occurrence_ids:
+        return {}
+    output={}
+    # Chunk to remain within SQLite variable limits on older installations.
+    for offset in range(0,len(occurrence_ids),400):
+        ids=occurrence_ids[offset:offset+400]
+        marks=",".join("?" for _ in ids)
+        links=db.execute(f"""SELECT l.occurrence_id,l.event_id,l.session_id,e.event_type,e.status,
+            EXISTS(SELECT 1 FROM event_completion_reviews r WHERE r.event_id=e.id) AS final_review
+            FROM calendar_event_links l JOIN calendar_occurrences c ON c.id=l.occurrence_id
+            JOIN events e ON e.id=l.event_id JOIN alliances a ON a.id=e.alliance_id
+            WHERE c.group_id=? AND a.group_id=? AND l.occurrence_id IN ({marks})""",
+            (group_id,group_id,*ids)).fetchall()
+        event_ids=list({l["event_id"] for l in links})
+        if not event_ids:
+            continue
+        emarks=",".join("?" for _ in event_ids)
+        sessions={}
+        for s in db.execute(f"""SELECT s.id,s.event_id,s.session_key,s.roster_complete,s.registration_complete,
+            s.attendance_complete,s.results_complete,
+            EXISTS(SELECT 1 FROM event_session_roster r WHERE r.session_id=s.id) AS has_rows
+            FROM event_sessions s WHERE s.event_id IN ({emarks})""",event_ids):
+            sessions.setdefault(s["event_id"],[]).append(s)
+        for link in links:
+            kind=link["event_type"]
+            all_sessions=sessions.get(link["event_id"],[])
+            relevant=[s for s in all_sessions if not link["session_id"] or s["id"]==link["session_id"]]
+            legion=kind in {"foundry","canyon"}
+            expected=(1 if link["session_id"] or not legion else 2)
+            coverage=len(relevant)>=expected and bool(relevant)
+            if legion and not link["session_id"]:
+                coverage={s["session_key"] for s in relevant}=={"legion_1","legion_2"}
+            def flag(key,applicable=True):
+                if not applicable:
+                    return "not_applicable"
+                if not relevant:
+                    return "not_recorded"
+                if coverage and all(s["has_rows"] and s[key] for s in relevant):
+                    return "reviewed"
+                if any(s["has_rows"] or s[key] for s in relevant):
+                    return "partial"
+                return "not_recorded"
+            output[link["occurrence_id"]]={
+                "publication":link["status"],
+                "scope":"session" if link["session_id"] else "event",
+                "session_count":len(relevant),
+                "roster":flag("roster_complete"),
+                "registration":flag("registration_complete",legion or kind=="alliance_championship"),
+                "attendance":flag("attendance_complete",legion or kind=="bear_trap"),
+                "results":flag("results_complete",kind!="alliance_championship"),
+                "final_attendance_review":bool(link["final_review"] and link["status"]=="published") if legion or kind=="bear_trap" else None,
+            }
+    return output

@@ -149,3 +149,23 @@ def test_avatar_hostname_migration_is_exact_and_idempotent(
             "SELECT avatar_url FROM player_whiteoutstats_profiles ORDER BY player_fid"
         )]
     assert urls == [canonical, canonical, unrelated]
+
+
+def test_foundry_migration_preserves_existing_cycle_links(tmp_path,monkeypatch):
+    migration_directory=copy_migrations(tmp_path)
+    (migration_directory/"0021_foundry_cycles.sql").unlink()
+    monkeypatch.setattr(database,"MIGRATIONS_DIR",migration_directory)
+    path=str(tmp_path/"cycle-migration.sqlite3")
+    assert database.migrate(path)==20
+    # Use a minimal valid existing group and state-scope cycle; exact original IDs survive.
+    with sqlite3.connect(path) as db:
+        db.execute("INSERT INTO alliance_groups(id,name,status) VALUES ('old-group','Old','active')")
+        db.execute("INSERT INTO calendar_cycles(id,group_id,kind) VALUES ('old-cycle','old-group','svs')")
+        db.execute("""INSERT INTO calendar_occurrences(id,group_id,cycle_id,event_type,scope,state_id,starts_at,precision,confidence,phase)
+            VALUES ('old-phase','old-group','old-cycle','svs_preparation','state','1001','2026-01-01','date','confirmed','Preparation')""")
+    monkeypatch.setattr(database,"MIGRATIONS_DIR",Path(__file__).resolve().parents[1]/"migrations")
+    assert database.migrate(path)==21
+    with database.connection(path) as db:
+        assert db.execute("SELECT cycle_id FROM calendar_occurrences WHERE id='old-phase'").fetchone()[0]=="old-cycle"
+        assert db.execute("SELECT kind FROM calendar_cycles WHERE id='old-cycle'").fetchone()[0]=="svs"
+        assert db.execute("PRAGMA foreign_key_check").fetchall()==[]

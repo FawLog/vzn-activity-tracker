@@ -390,9 +390,10 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await scheduleEditor.getByLabel("Precision").selectOption("date");
   await scheduleEditor.getByLabel("Starts (UTC)",{exact:true}).fill("2090-06-02");
   await scheduleEditor.getByRole("button",{name:"Hide advanced settings",exact:true}).click();
+  page.once("dialog", dialog=>dialog.accept());
   await scheduleEditor.getByLabel("Event type").selectOption("cycle:foundry");
   const cycleEditor=calendar.getByRole("region",{name:"Cycle editor"});
-  await expect(cycleEditor.getByLabel("Cycle type")).toHaveValue("foundry");
+  await expect(cycleEditor.getByLabel("Event type")).toHaveValue("cycle:foundry");
   await cycleEditor.getByLabel("Schedule Legion 2").check();
   await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
   await expect(cycleEditor.getByRole("group",{name:"Legion 2",exact:true})).toBeVisible();

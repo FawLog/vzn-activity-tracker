@@ -300,3 +300,12 @@ def test_foundry_linked_legions_share_one_result_identity(authenticated_client,s
         assert result.status_code==200,result.text
     with connection(settings.database_path) as db:
         assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0
+    assert c.post(root+"/calendar/"+rows[0]["id"]+"/start-entry",json={"revision":1,"confirmed":True}).status_code==409
+    first=c.post(root+"/calendar/"+rows[3]["id"]+"/start-entry",json={"revision":2,"confirmed":True})
+    second=c.post(root+"/calendar/"+rows[4]["id"]+"/start-entry",json={"revision":2,"confirmed":True})
+    assert first.status_code==second.status_code==200,(first.text,second.text)
+    assert first.json()["linked"]["id"]==second.json()["linked"]["id"]
+    assert first.json()["linked"]["session_id"]!=second.json()["linked"]["session_id"]
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==1
+        assert db.execute("SELECT COUNT(*) FROM event_sessions").fetchone()[0]==2

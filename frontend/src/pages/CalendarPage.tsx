@@ -7,6 +7,7 @@ import type { RotationForecast } from "../lib/state-rotation";
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
 import type {CycleKind} from "../lib/calendar-cycles";
+import {cycleTypes} from "../lib/calendar-event-options";
 import { CycleEditor, CycleDetails } from "../components/CycleEditor";
 import { CalendarEventLink } from "../components/CalendarEventLink";
 import { EventStageTimeline } from "../components/EventStageTimeline";
@@ -90,7 +91,7 @@ export function CalendarPage(){
     </div>
     {showForecast&&<StateForecastPanel key={groupId} groupId={groupId} preferredState={selectedAlliance?.state_id} writable={writable} onClose={()=>setShowForecast(false)} onReview={forecast=>{if(!allowNavigation())return;closeWorkspace();setEditor({groupId,row:null,forecast});}}/>}
     {showCatalog&&<GameEventCatalog onClose={()=>setShowCatalog(false)}/>}
-    {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onAdvanced={type=>{closeWorkspace();setEditor({groupId,row:null,manualType:type});}} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
+    {cycleEditor&&writable&&<CycleEditor key={groupId+cycleEditor} initialKind={cycleEditor} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} onEvent={type=>{if(!allowNavigation())return;closeWorkspace();if(cycleTypes[type])setCycleEditor(cycleTypes[type]);else setEditor({groupId,row:null,manualType:type});}} onAdvanced={type=>{closeWorkspace();setEditor({groupId,row:null,manualType:type});}} onClose={()=>setCycleEditor(null)} onSaved={saved}/>}
     {editing&&writable&&<ScheduleEditor key={groupId+(editing.row?.id??"new")} groupId={groupId} alliances={alliances} preferred={selectedAlliance?.id} day={day} row={editing.row} forecast={editing.forecast} manualType={editing.manualType} onCycle={kind=>{if(!allowNavigation())return;closeWorkspace();setCycleEditor(kind);}} onClose={()=>setEditor(null)} onSaved={saved}/>} 
     {error?<ErrorState message={error} action={<button className="button button--quiet" onClick={()=>setRetry(n=>n+1)}>Retry</button>}/>:!items?<LoadingState label="Loading schedule"/>:
     <section className={"data-panel calendar-schedule calendar-schedule--"+view.toLowerCase()} aria-label={view+" schedule"}>

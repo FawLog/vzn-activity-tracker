@@ -672,6 +672,10 @@ def create_cycle(path,group_id,payload:CalendarCycleCreate):
         for p in (p for phases in cycles for p in phases):
             validate_scope(db,group_id,p)
             if p.phase in {"Legion 1","Legion 2"}:
+                if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=?
+                    AND substr(starts_at,1,10)=? AND (lower(phase) IN ('battle','') OR replace(lower(phase),'_',' ')=?)""",
+                    (group_id,p.alliance_id,p.event_type,p.starts_at[:10],p.phase.lower())).fetchone():
+                    raise ValueError("A matching battle or legion schedule already exists; review the calendar")
                 require_open_cycle_for_grouping(db,group_id,p.event_type,p.starts_at[:10],p.alliance_id)
                 if db.execute("""SELECT 1 FROM calendar_occurrences WHERE group_id=? AND alliance_id=? AND event_type=? AND entry_cycle_date=? AND entry_session_key=?""",(group_id,p.alliance_id,p.event_type,p.starts_at[:10],"legion_"+p.phase[-1])).fetchone():
                     raise ValueError("Legion already assigned in this cycle")

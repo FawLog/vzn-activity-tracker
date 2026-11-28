@@ -29,7 +29,7 @@ def test_backup_verify_and_restore_preserve_a_consistent_snapshot(tmp_path: Path
 
     backup.restore(backup_path, database_path)
 
-    assert database.migrate(str(database_path)) == 18
+    assert database.migrate(str(database_path)) == 19
     assert player_count(database_path) == 1
     with sqlite3.connect(database_path) as connection:
         restored_player = connection.execute("SELECT fid, nickname FROM players").fetchone()

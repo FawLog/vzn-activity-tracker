@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigationGuard } from "../lib/navigation-guard";
 import { Plus, Trash2, X } from "lucide-react";
 import { api } from "../lib/api";
 import type { ReviewRow } from "../lib/ocrReview";
@@ -72,12 +73,7 @@ export function ManualEventEditor({groupId,record,onPublished,initialSessionId,o
     api.eventEditor(groupId,record.id).then(v=>{if(active){if(initialSessionId&&!v.sessions.some(s=>s.id===initialSessionId)){setError("Linked session no longer exists. Reload the calendar.");return;}apply(v,initialSessionId)}}).catch(e=>{if(active)setError(String(e.message))});
     return ()=>{active=false};
   },[groupId,record.id,initialSessionId]);
-  useEffect(()=>{
-    if(!dirty)return;
-    const handler=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue=""};
-    window.addEventListener("beforeunload",handler);
-    return ()=>window.removeEventListener("beforeunload",handler);
-  },[dirty]);
+  useNavigationGuard(dirty||!!paste.trim(),busy);
   useEffect(()=>{onEditingChange?.(dirty||busy);return ()=>onEditingChange?.(false);},[dirty,busy,onEditingChange]);
   const run=async(action:()=>Promise<void>)=>{
     setBusy(true);setError("");setMessage("");

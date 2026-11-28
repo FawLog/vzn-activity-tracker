@@ -17,6 +17,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { useAuth } from "../lib/auth";
 import { useGroupContext } from "../lib/group-context";
 import { navigate } from "../lib/router";
+import { allowNavigation } from "../lib/navigation-guard";
 import { Brand } from "./Brand";
 import { ProductionVersion } from "./ProductionVersion";
 
@@ -60,6 +61,7 @@ export function AppShell({ path, children }: { path: string; children: ReactNode
   };
 
   const signOut = async () => {
+    if (!allowNavigation()) return;
     await logout();
     navigate("/login");
   };
@@ -121,7 +123,7 @@ export function AppShell({ path, children }: { path: string; children: ReactNode
             )}
           </div>
         </header>
-        <main className="main-content">{children}</main>
+        <main className="main-content" key={(selectedGroup?.id??"")+":"+(selectedAlliance?.id??"")}>{children}</main>
         <footer className="statusbar">
           <span><i />System operational</span>
           {authenticated && <ProductionVersion />}

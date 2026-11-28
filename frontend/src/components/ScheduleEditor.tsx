@@ -3,7 +3,9 @@ import { api } from "../lib/api";
 import { eventTypeOptions, eventLabel } from "../lib/format";
 import type { Alliance } from "../lib/types";
 import type { CalendarOccurrence } from "../lib/calendar";
-import { futureChange, recurrence, scheduleFields, serializeTime, utcInput, type ScheduleFields } from "../lib/schedule-editor";
+import { gameEventForCalendar, repeatLabel } from "../lib/game-event-catalog";
+import { fixedGameInterval, forecastRows, intervalPayload, sourceRunWarning, stateAge } from "../lib/game-forecast";
+import { futureChange, scheduleFields, serializeTime, utcInput, type ScheduleFields } from "../lib/schedule-editor";
 
 type Props={groupId:string;alliances:Alliance[];preferred?:string;day:string;row:CalendarOccurrence|null;onClose:()=>void;onSaved:(day:string)=>void};
 const message=(e:unknown)=>e instanceof Error?e.message:"Unable to save schedule";
@@ -13,6 +15,9 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
   const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
   const [count,setCount]=useState(1);
   const [days,setDays]=useState(2);
+  const [intervalUnit,setIntervalUnit]=useState<"days"|"hours"|"minutes">("days");
+  const [stateStart,setStateStart]=useState("");
+  const [reviewed,setReviewed]=useState<string|null>(null);
   const [status,setStatus]=useState(row?.schedule_status??"scheduled");
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState("");
@@ -26,6 +31,24 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
     else patch({scope:"state",alliance_id:null,state_id:value.slice(6)});
   };
   const changePrecision=(precision:ScheduleFields["precision"])=>setFields(old=>({...old,precision,starts_at:precision==="date"?old.starts_at.slice(0,10):old.starts_at.slice(0,10)+"T00:00Z",ends_at:null}));
+  const reference=gameEventForCalendar(fields.event_type);
+  const suggested=fixedGameInterval(reference);
+  const minutes=days*({days:1440,hours:60,minutes:1}[intervalUnit]);
+  const warnings=sourceRunWarning(reference,fields.event_type,fields);
+  let preview:ReturnType<typeof forecastRows>=[],previewError="",age:number|null=null;
+  if(!row){
+    try{
+      preview=forecastRows(fields,count,minutes);
+      if(stateStart)age=stateAge(stateStart,fields.starts_at);
+      if(age!==null&&reference?.unlockDay!==undefined&&age<reference.unlockDay)warnings.push("Anchor is earlier than the reference unlock day "+reference.unlockDay+". Verify availability in game.");
+    }catch(e){previewError=message(e);}
+  }
+  const fingerprint=JSON.stringify({fields,count,minutes,stateStart});
+  function useReference(){
+    if(suggested===null)return;
+    const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
+    setIntervalUnit(unit);setDays(suggested/({days:1440,hours:60,minutes:1}[unit]));setCount(4);setReviewed(null);
+  }
   async function save(e:FormEvent){
     e.preventDefault();if(lock.current)return;
     lock.current=true;setBusy(true);setError("");
@@ -36,7 +59,9 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         const result=await api.updateSchedule(groupId,row.id,{...fields,revision:row.revision,schedule_status:status});
         onSaved(result.starts_at.slice(0,10));
       }else{
-        const payload={...fields,...recurrence(count,days)};
+        if(previewError)throw Error(previewError);
+        if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
+        const payload={...fields,...intervalPayload(count,minutes,fields.precision),...(count>1?{reject_existing:true}:{})};
         const fingerprint=JSON.stringify(payload);
         if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,key:crypto.randomUUID()};
         const result=await api.createSchedule(groupId,{...payload,request_key:request.current.key});
@@ -59,12 +84,22 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onClose,onSa
         <label>Confidence<select value={fields.confidence} onChange={e=>patch({confidence:e.target.value as ScheduleFields["confidence"]})}><option value="confirmed">Confirmed</option><option value="estimated">Estimated</option></select></label>
         {row?<label>Schedule status<select value={status} onChange={e=>setStatus(e.target.value as CalendarOccurrence["schedule_status"])}><option value="scheduled">Scheduled</option><option value="cancelled">Cancelled</option></select></label>:<>
         <label>Occurrences (including first)<input type="number" min={1} max={180} required value={count} onChange={e=>setCount(Number(e.target.value))}/></label>
-        {count>1&&<label>Repeat every (days)<input type="number" min={1} max={366} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label>}
+        {count>1&&<><label>Repeat every ({intervalUnit})<input type="number" min={1} step={intervalUnit==="hours"?"any":1} required value={days} onChange={e=>setDays(Number(e.target.value))}/></label><label>Repeat unit<select value={intervalUnit} onChange={e=>setIntervalUnit(e.target.value as typeof intervalUnit)}><option value="days">Days</option><option value="hours">Hours</option><option value="minutes">Minutes</option></select></label></>}
+        <label>State start date (optional, reference only)<input type="date" value={stateStart} onChange={e=>setStateStart(e.target.value)}/></label>
         </>}
       </fieldset>
-      {!row&&count>1&&<p>Future occurrences are estimated. Maximum horizon: 366 days.</p>}
+      {!row&&<>
+        {reference&&<div className="game-catalog-summary"><strong>Game reference</strong><p>{repeatLabel(reference.schedule?.repeat)} · {reference.duration??"Duration unavailable"}</p>{reference.unlockDay!==undefined&&<p>Reference unlock: state day {reference.unlockDay}{age!==null?" · Anchor age: "+age+" days":""}</p>}
+          {suggested!==null&&<button type="button" className="button button--quiet" disabled={busy} onClick={useReference}>Use game repeat rule</button>}
+          {warnings.map(w=><p key={w}>{w}</p>)}
+          <small>Verify the anchor, local rotation and end time. Game reference does not confirm actual dates.</small></div>}
+        {count>1&&<div className="calendar-series-preview"><h3>Proposed schedule</h3><p>Future occurrences are estimated. Maximum horizon: 366 days.</p>
+          {previewError?<p role="alert">{previewError}</p>:<ul>{preview.map(r=><li key={r.start}>{r.start}{r.end?" — "+r.end:""} · {r.confidence}</li>)}</ul>}
+          <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!previewError} checked={reviewed===fingerprint} onChange={e=>setReviewed(e.target.checked?fingerprint:null)}/>I reviewed these dates and confirmed the local repeat pattern</label>
+        </div>}
+      </>}
       {error&&<p role="alert">{error}</p>}
-      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={onClose}>Close editor</button></div>
+      <div className="calendar-controls"><button className="button button--primary" disabled={busy||!active.length||(!row&&count>1&&(!!previewError||reviewed!==fingerprint))} type="submit">{busy?"Saving…":"Save schedule"}</button><button type="button" className="button button--quiet" disabled={busy} onClick={onClose}>Close editor</button></div>
     </form>
   </section>;
 }

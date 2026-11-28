@@ -47,6 +47,7 @@ class CalendarCreate(CalendarInput):
     request_key: str | None = Field(default=None, min_length=16, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
     interval_minutes: int | None = Field(default=None, ge=60, le=525600)
     occurrence_count: int = Field(default=1, ge=1, le=180)
+    reject_existing: bool = False
 
     @model_validator(mode="after")
     def validate_series(self):
@@ -120,7 +121,9 @@ def list_occurrences(path, group_id, start: date, end: date):
 
 
 def create(path, group_id, payload: CalendarCreate):
-    fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude={"request_key"}), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    # Preserve the v1 request hash when the new opt-in field is false.
+    excluded = {"request_key"} if payload.reject_existing else {"request_key", "reject_existing"}
+    fingerprint = hashlib.sha256(json.dumps(payload.model_dump(mode="json", exclude=excluded), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     with transaction(path) as db:
         require_group(db, group_id, True)
         if payload.request_key:
@@ -130,6 +133,20 @@ def create(path, group_id, payload: CalendarCreate):
                     raise ValueError("Request key already used for a different schedule")
                 return {"items": [dict(db.execute("SELECT * FROM calendar_occurrences WHERE group_id=? AND id=?", (group_id, oid)).fetchone()) for oid in json.loads(previous["occurrence_ids"])]}
         validate_scope(db, group_id, payload)
+        if payload.reject_existing:
+            # Date-only entries are ambiguous with any timed entry on the same UTC day.
+            # Include cancelled entries so a new forecast cannot silently resurrect them.
+            existing = db.execute("""SELECT starts_at,precision FROM calendar_occurrences
+                WHERE group_id=? AND event_type=? AND scope=? AND alliance_id IS ? AND state_id=? AND phase=?
+                AND starts_at>=? AND starts_at<?""",
+                (group_id,payload.event_type,payload.scope,payload.alliance_id,payload.state_id,payload.phase,
+                 payload.starts_at[:10],(parse(shift(payload.starts_at,(payload.occurrence_count-1)*(payload.interval_minutes or 0))).date()+timedelta(days=1)).isoformat())).fetchall()
+            for sequence in range(payload.occurrence_count):
+                start = shift(payload.starts_at, sequence*(payload.interval_minutes or 0))
+                if any(row["starts_at"]==start or
+                       (row["starts_at"][:10]==start[:10] and (row["precision"]=="date" or payload.precision=="date"))
+                       for row in existing):
+                    raise ValueError("A matching scheduled or cancelled occurrence already exists; review the calendar")
         series_id = uuid.uuid4().hex if payload.interval_minutes is not None else None
         if series_id:
             db.execute("INSERT INTO calendar_series(id,group_id,interval_minutes,occurrence_count,anchor) VALUES (?,?,?,?,?)",

@@ -96,3 +96,21 @@ def test_calendar_future_changes_preserve_exceptions(authenticated_client):
     assert all_rows[0]==rows[0]
     assert all_rows[2]["starts_at"]=="2090-03-04T18:00Z"
     assert all_rows[2]["schedule_status"]=="scheduled"
+
+
+def test_forecast_does_not_duplicate_existing_or_cancelled_entries(authenticated_client,settings):
+    c=authenticated_client
+    root,aid=setup(c)
+    url=root+"/calendar"
+    payload={"event_type":"foundry","scope":"alliance","alliance_id":aid,"state_id":"1001","starts_at":"2090-03-01","precision":"date","interval_minutes":20160,"occurrence_count":3,"reject_existing":True,"request_key":"forecast-request-0001"}
+    first=c.post(url,json=payload)
+    assert first.status_code==201,first.text
+    assert c.post(url,json=payload).json()==first.json()
+    assert c.post(url,json={**payload,"request_key":"forecast-request-0002"}).status_code==409
+    row=first.json()["items"][1]
+    edit={k:v for k,v in payload.items() if k not in ("interval_minutes","occurrence_count","reject_existing","request_key")}
+    assert c.put(url+"/"+row["id"],json={**edit,"starts_at":row["starts_at"],"revision":1,"schedule_status":"cancelled"}).status_code==200
+    assert c.post(url,json={**payload,"starts_at":"2090-03-15","request_key":"forecast-request-0003"}).status_code==409
+    with connection(settings.database_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM calendar_occurrences").fetchone()[0]==3
+        assert db.execute("SELECT COUNT(*) FROM events").fetchone()[0]==0

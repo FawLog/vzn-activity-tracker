@@ -310,7 +310,14 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Add scheduled event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});
   await expect(scheduleEditor).toBeVisible();
+  await scheduleEditor.getByLabel("Event type").selectOption("foundry");
+  await scheduleEditor.getByRole("button",{name:"Use game repeat rule"}).click();
+  await expect(scheduleEditor.getByLabel("Repeat every (days)")).toHaveValue("14");
+  await expect(scheduleEditor.getByRole("button",{name:"Save schedule"})).toBeDisabled();
+  await scheduleEditor.getByRole("checkbox",{name:"I reviewed these dates and confirmed the local repeat pattern"}).check();
+  await expect(scheduleEditor.getByRole("button",{name:"Save schedule"})).toBeEnabled();
   await scheduleEditor.getByLabel("Occurrences (including first)").fill("3");
+  await expect(scheduleEditor.getByRole("button",{name:"Save schedule"})).toBeDisabled();
   await expect(scheduleEditor.getByLabel("Repeat every (days)")).toBeVisible();
   await scheduleEditor.getByLabel("Precision").selectOption("minute");
   await expect(scheduleEditor.getByLabel("Starts (UTC)",{exact:true})).toHaveAttribute("type","datetime-local");

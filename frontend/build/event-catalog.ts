@@ -85,6 +85,7 @@ export function eventCatalogPlugin(): Plugin {
       const root = join(directory, "../..");
       const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
       if (manifest.version !== version) throw new Error("Review event catalog before upgrading whiteout-survival-data");
+      const timeline = JSON.parse(readFileSync(join(root, "data/server-timeline.json"), "utf8")) as {day:number;eventIds:string[]}[];
       const imports: string[] = [];
       const rows = files.map((file, index) => {
         const event = JSON.parse(readFileSync(join(directory, file), "utf8"));
@@ -101,6 +102,7 @@ export function eventCatalogPlugin(): Plugin {
         }
         const {id, name, category, description, frequency, duration, schedule, requirements, phases} = event;
         const summary = {id, name, category, description, frequency, duration, schedule, requirements, phases,
+          unlockDay: timeline.find(m=>m.eventIds?.includes(id))?.day,
           dayCount: Array.isArray(event.days) ? event.days.length : 0,
           missionCount: Array.isArray(event.missions) ? event.missions.length : 0,
           hasVariants: Array.isArray(event.versions) && event.versions.length > 0};

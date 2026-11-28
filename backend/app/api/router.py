@@ -436,6 +436,32 @@ def create_api_router(settings: Settings) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @router.get("/groups/{group_id}/calendar/{occurrence_id}/event-link")
+    async def get_calendar_event_link(request: Request,group_id: str,occurrence_id: str):
+        require_admin(request,settings)
+        try:
+            return calendar.event_link(settings.database_path,group_id,occurrence_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
+    @router.put("/groups/{group_id}/calendar/{occurrence_id}/event-link")
+    async def put_calendar_event_link(request: Request,group_id: str,occurrence_id: str,payload: calendar.CalendarEventLink):
+        require_csrf(request,require_admin(request,settings))
+        try:
+            return calendar.set_event_link(settings.database_path,group_id,occurrence_id,payload)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409,detail=str(error)) from error
+
+    @router.get("/groups/{group_id}/events/{event_id}/calendar")
+    async def get_event_calendar(request: Request,group_id: str,event_id: str):
+        require_admin(request,settings)
+        try:
+            return calendar.event_schedules(settings.database_path,group_id,event_id)
+        except LookupError as error:
+            raise _not_found(str(error)) from error
+
     @router.get("/groups/{group_id}/calendar/{occurrence_id}/future")
     async def get_calendar_future(request: Request, group_id: str, occurrence_id: str) -> dict[str, object]:
         require_admin(request, settings)

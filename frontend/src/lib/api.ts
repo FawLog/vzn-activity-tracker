@@ -40,7 +40,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export interface OcrPreview { provider: string; text: string; tokens: { text: string; vertices: { x: number; y: number }[] }[]; warnings: string[] }
 
+export interface CalendarEventLinkState {linked:Pick<EventRecord,"id"|"event_type"|"occurred_on"|"status"|"alliance_id">|null;items:Pick<EventRecord,"id"|"event_type"|"occurred_on"|"status"|"alliance_id">[];eligible:boolean;truncated:boolean;revision:number}
 export const api = {
+  calendarEventLink:(groupId:string,id:string,signal?:AbortSignal)=>request<CalendarEventLinkState>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/event-link`,{signal}),
+  setCalendarEventLink:(groupId:string,id:string,event_id:string|null,revision:number)=>request<CalendarEventLinkState>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/event-link`,{method:"PUT",body:JSON.stringify({event_id,revision})}),
+  eventSchedules:(groupId:string,id:string,signal?:AbortSignal)=>request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(id)}/calendar`,{signal}),
   createCycle: (groupId:string,payload:CycleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles`,{method:"POST",body:JSON.stringify(payload)}),
   calendarCycle: (groupId:string,cycleId:string,signal?:AbortSignal) => request<{kind:string;items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/cycles/${encodeURIComponent(cycleId)}`,{signal}),
   createSchedule: (groupId:string,payload:ScheduleCreate) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar`,{method:"POST",body:JSON.stringify(payload)}),

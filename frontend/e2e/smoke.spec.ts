@@ -292,6 +292,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
       {...common,id:"calendar-state",event_type:"svs_preparation",scope:"state",alliance_id:null,starts_at:fixtureDay,precision:"date",phase:"Day 1",confidence:"estimated",schedule_status:"scheduled"},
       {...common,id:"calendar-cancelled",event_type:"foundry",scope:"alliance",alliance_id:currentAllianceId,starts_at:fixtureDay+"T20:00Z",precision:"minute",phase:"Legion 1",confidence:"confirmed",schedule_status:"cancelled"},
       ...(isAgenda?[
+        {...common,id:"agenda-today-trap",event_type:"bear_trap",scope:"alliance",alliance_id:currentAllianceId,starts_at:day(0)+"T00:30Z",ends_at:day(0)+"T01:00Z",precision:"minute",phase:"Trap 2",confidence:"confirmed",schedule_status:"scheduled"},
         {...common,id:"agenda-ended",event_type:"canyon",scope:"alliance",alliance_id:currentAllianceId,starts_at:day(-2)+"T00:00Z",ends_at:day(-2)+"T00:30Z",precision:"minute",phase:"Past test",confidence:"confirmed",schedule_status:"scheduled"},
         {...common,id:"agenda-ongoing",event_type:"alliance_championship",scope:"alliance",alliance_id:currentAllianceId,starts_at:day(-2),ends_at:day(3),precision:"date",phase:"",confidence:"confirmed",schedule_status:"scheduled"},
         {...common,id:"agenda-later",event_type:"game:lucky-wheel",scope:"state",alliance_id:null,starts_at:day(20),ends_at:day(23),precision:"date",phase:"",confidence:"confirmed",schedule_status:"scheduled"}
@@ -323,7 +324,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await expect(calendar.getByRole("button",{name:/SvS Preparation/})).toBeVisible();
   if(defaultCalendarView==="Agenda")await expect(calendar.getByRole("region",{name:"Agenda schedule"})).not.toContainText("Time not set");
   await expect(calendar.getByRole("button",{name:/Foundry Battle/})).toHaveCount(0);
-  await expect.poll(()=>calendar.getByRole("button",{name:/Bear Trap/}).locator("img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
+  await expect.poll(()=>calendar.getByRole("button",{name:/Bear Trap.*Trap 1/}).locator("img").evaluate((img:HTMLImageElement)=>img.complete&&img.naturalWidth>0)).toBe(true);
   await calendar.getByRole("button",{name:"Filters",exact:true}).click();
   await calendar.getByLabel("Scope").selectOption("state");
   await expect(calendar.getByRole("button",{name:/Bear Trap/})).toHaveCount(0);
@@ -332,16 +333,23 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByLabel("Show cancelled").check();
   await calendar.getByRole("button",{name:"Filters",exact:true}).click();
   await expect(calendar.getByRole("button",{name:/Foundry Battle.*Cancelled/})).toBeVisible();
-  await calendar.getByRole("button",{name:/Bear Trap/}).click();
+  await calendar.getByRole("button",{name:/Bear Trap.*Trap 1/}).click();
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toContainText("Manual schedule");
   await calendar.getByRole("button",{name:"Close details"}).click();
   for(const mode of ["Agenda","Week","Month"]){
     await calendar.getByRole("button",{name:mode,exact:true}).click();
     await expect(calendar.getByRole("region",{name:mode+" schedule",exact:true})).toBeVisible();
-    await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+    await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1/})).toBeVisible();
     if(mode==="Agenda"){
       const agenda=calendar.getByRole("region",{name:"Agenda schedule",exact:true});
-      await expect(agenda.getByRole("region",{name:"Ongoing",exact:true}).getByRole("button",{name:/Alliance Championship/})).toHaveCount(1);
+      const today=agenda.getByRole("region",{name:"Today",exact:true});
+      await expect(today.getByRole("button",{name:/Alliance Championship/})).toHaveCount(1);
+      await expect(today.getByRole("button",{name:/Bear Trap.*Trap 2.*00:30 UTC/})).toBeVisible();
+      await expect(agenda.getByRole("region",{name:"Ongoing",exact:true})).toHaveCount(0);
+      await expect(today.getByRole("button").first()).toContainText("Alliance Championship");
+      await today.getByRole("button",{name:/Bear Trap.*Trap 2/}).click();
+      await expect(calendar.getByRole("region",{name:"Schedule details"})).toContainText("00:30 UTC");
+      await calendar.getByRole("button",{name:"Close details",exact:true}).click();
       await expect(agenda.getByRole("button",{name:/Alliance Championship/})).toHaveCount(1);
       await expect(agenda.getByRole("button",{name:/Lucky Wheel/})).toHaveCount(1);
       await expect(agenda.getByRole("button",{name:/Past test/})).toHaveCount(0);
@@ -357,9 +365,9 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     await page.screenshot({path:testInfo.outputPath("calendar-"+mode.toLowerCase()+".png"),fullPage:true});
   }
   await calendar.getByRole("button",{name:"Next period"}).click();
-  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+  await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1/})).toBeVisible();
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
-  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+  await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1/})).toBeVisible();
   // A calendar workspace is exclusive, and cancelling a transition preserves its fields.
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const transitionEditor=calendar.getByRole("region",{name:"Schedule editor"});
@@ -381,11 +389,11 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await transitionEditor.getByRole("button",{name:"Advanced settings",exact:true}).click();
   await transitionEditor.getByLabel("Phase (optional)").fill("Unsaved transition check");
   page.once("dialog", dialog=>dialog.dismiss());
-  await calendar.getByRole("button",{name:/Bear Trap/}).click();
+  await calendar.getByRole("button",{name:/Bear Trap.*Trap 1/}).click();
   await expect(transitionEditor.getByLabel("Phase (optional)")).toHaveValue("Unsaved transition check");
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toHaveCount(0);
   page.once("dialog", dialog=>dialog.accept());
-  await calendar.getByRole("button",{name:/Bear Trap/}).click();
+  await calendar.getByRole("button",{name:/Bear Trap.*Trap 1/}).click();
   await expect(transitionEditor).toHaveCount(0);
   await expect(calendar.getByRole("region",{name:"Schedule details"})).toBeVisible();
   await calendar.getByRole("button",{name:"Close details"}).click();
@@ -397,7 +405,7 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
   await calendar.getByRole("button",{name:"Next period"}).click();
   await expect(transitionEditor).toHaveCount(0);
   await calendar.getByRole("button",{name:"Today",exact:true}).click();
-  await expect(calendar.getByRole("button",{name:/Bear Trap/})).toBeVisible();
+  await expect(calendar.getByRole("button",{name:/Bear Trap.*Trap 1/})).toBeVisible();
   await page.unroute("**/api/v1/groups/*/calendar?*");
   await calendar.getByRole("button",{name:"Add event",exact:true}).click();
   const scheduleEditor=calendar.getByRole("region",{name:"Schedule editor"});

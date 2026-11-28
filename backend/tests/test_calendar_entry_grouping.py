@@ -52,3 +52,46 @@ def test_legions_group_across_midnight_and_protect_schedule(authenticated_client
     two=c.post(t2+"/start-entry",json={"revision":2,"confirmed":True})
     assert one.status_code==two.status_code==200,(one.text,two.text)
     assert one.json()["linked"]["id"]==two.json()["linked"]["id"]
+
+def test_grouped_bear_finalization_requires_all_planned_sessions(authenticated_client,settings):
+    from app.services.analytics import report
+    from datetime import date
+    c=authenticated_client
+    root,aid=setup(c)
+    for fid in ("present","absent"):
+        assert c.post(root+"/players",json={"fid":fid,"nickname":fid}).status_code==201
+    urls=[]
+    for n in range(1,4):
+        row=c.post(root+"/calendar",json={"event_type":"bear_trap","scope":"alliance",
+            "alliance_id":aid,"state_id":"1001","starts_at":f"2090-06-01T1{n}:00Z",
+            "precision":"minute","phase":f"Trap {n}"}).json()["items"][0]
+        urls.append(root+"/calendar/"+row["id"])
+    for n in (1,2):
+        assert c.put(urls[n-1]+"/entry-group",json={"revision":1,"cycle_date":"2090-06-01","session_key":f"trap_{n}"}).status_code==200
+    first=c.post(urls[0]+"/start-entry",json={"revision":2,"confirmed":True}).json()["linked"]
+    event=root+"/events/"+first["id"]
+    def save(link):
+        response=c.put(event+"/sessions/"+link["session_id"],json={"revision":0,"rows":[{"fid":"present","nickname":"present","attendance":"confirmed_present","metrics":{"damage":100}}]})
+        assert response.status_code==200,response.text
+    save(first)
+    review={"roster":["present","absent"],"home_alliances":{"present":aid,"absent":aid},"expected_sessions":1,"revisions":{first["session_id"]:1}}
+    response=c.post(event+"/publish",json=review)
+    assert response.status_code==409,response.text
+    assert "planned cycle sessions" in response.text
+    assert c.post(event+"/publish?bear_cycle_complete=true").status_code==409
+    assert c.post(event+"/publish").status_code==200
+    gid=root.rsplit("/",1)[1]
+    result=report(settings.database_path,gid,None,date(2090,6,1),date(2090,6,1))
+    assert result["events"][0]["activity_cells"]=={"present":"positive"}
+    assert c.post(event+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
+    second=c.post(urls[1]+"/start-entry",json={"revision":2,"confirmed":True}).json()["linked"]
+    save(second)
+    review.update(expected_sessions=2,revisions={first["session_id"]:2,second["session_id"]:1})
+    response=c.post(event+"/publish",json=review)
+    assert response.status_code==200,response.text
+    assert c.put(urls[2]+"/entry-group",json={"revision":1,"cycle_date":"2090-06-01","session_key":"trap_3"}).status_code==409
+    assert c.put(urls[0]+"/event-link",json={"revision":3,"event_id":None}).status_code==409
+    assert c.post(event+"/manage",json={"action":"reopen","confirmed":True}).status_code==200
+    assert c.put(urls[2]+"/entry-group",json={"revision":1,"cycle_date":"2090-06-01","session_key":"trap_3"}).status_code==200
+    assert c.post(event+"/manage",json={"action":"delete_session","confirmed":True,"session_id":second["session_id"]}).status_code==200
+    assert c.get(urls[1]+"/event-link").json()["revision"]==4

@@ -1439,6 +1439,97 @@ def start_entry_locked(db,group_id,occurrence_id,payload):
         audit(db,"data_entry_started",occurrence_id)
 
 
+class OccurrenceWorkspaceStart(BaseModel):
+    model_config=ConfigDict(extra="forbid")
+    member_id: str
+    revision: int=Field(ge=1)
+    confirmed: Literal[True]
+
+
+def occurrence_workspace_state(db,group_id,occurrence_id):
+    row=link_occurrence(db,group_id,occurrence_id)
+    kind=row["event_type"]
+    if row["scope"]!="alliance" or kind not in {"bear_trap","alliance_mobilization","alliance_championship"}:
+        raise ValueError("This schedule has no shared data workspace")
+    if kind=="bear_trap":
+        day=row["entry_cycle_date"]
+        if not day:
+            raise ValueError("This advanced single trap needs a reviewed cycle identity")
+        primary=db.execute("SELECT id FROM alliances WHERE group_id=? AND alliance_type='primary' AND status='active'",(group_id,)).fetchone()
+        if not primary:
+            raise ValueError("An active primary alliance is required")
+        owner=primary["id"]
+        members=db.execute("""SELECT c.*,a.tag FROM calendar_occurrences c JOIN alliances a ON a.id=c.alliance_id
+            WHERE c.group_id=? AND c.event_type='bear_trap' AND c.entry_cycle_date=? ORDER BY c.starts_at,c.id""",(group_id,day)).fetchall()
+        candidates=db.execute("""SELECT e.id,e.status,e.alliance_id FROM events e JOIN alliances a ON a.id=e.alliance_id
+            WHERE a.group_id=? AND e.event_type='bear_trap' AND e.occurred_on=?""",(group_id,day)).fetchall()
+        if any(e["alliance_id"]!=owner for e in candidates):
+            raise ValueError("Existing Bear cycle owner requires review")
+    else:
+        day=row["starts_at"][:10]
+        owner=row["alliance_id"]
+        members=[db.execute("SELECT c.*,a.tag FROM calendar_occurrences c JOIN alliances a ON a.id=c.alliance_id WHERE c.id=?",(occurrence_id,)).fetchone()]
+        candidates=db.execute("SELECT id,status,alliance_id FROM events WHERE alliance_id=? AND event_type=? AND occurred_on=?",(owner,kind,day)).fetchall()
+    if len(candidates)>1:
+        raise ValueError("Multiple matching events; review Event History before entering data")
+    event=candidates[0] if candidates else None
+    sessions={}
+    if event:
+        sessions={s["session_key"]:s for s in db.execute("SELECT * FROM event_sessions WHERE event_id=?",(event["id"],))}
+    slots=[]
+    for member in members:
+        key=member["entry_session_key"] if kind=="bear_trap" else "main"
+        session=sessions.get(key)
+        link=db.execute("SELECT event_id,session_id FROM calendar_event_links WHERE occurrence_id=?",(member["id"],)).fetchone()
+        if link and (not event or link["event_id"]!=event["id"] or link["session_id"] and (not session or link["session_id"]!=session["id"])):
+            raise ValueError("Existing calendar link requires review")
+        if session and (session["host_alliance_id"]!=member["alliance_id"] or kind=="bear_trap" and session["started_at"][:16]!=member["starts_at"][:16]):
+            raise ValueError("Existing session differs from the planned trap; review its time or host")
+        slots.append({"key":key,"id":member["id"],"tag":member["tag"],"starts_at":member["starts_at"],
+            "precision":member["precision"],"revision":member["revision"],"confidence":member["confidence"],
+            "cancelled":member["schedule_status"]=="cancelled","linked":bool(link and (link["session_id"] or kind!="bear_trap" and session)),
+            "session_id":session["id"] if session else None})
+    return {"kind":kind,"cycle_date":day,"event_id":event["id"] if event and sessions else None,
+        "event_status":event["status"] if event else None,"slots":slots}
+
+
+def get_occurrence_workspace(path,group_id,occurrence_id):
+    with connection(path) as db:
+        return occurrence_workspace_state(db,group_id,occurrence_id)
+
+
+def start_occurrence_workspace(path,group_id,occurrence_id,payload):
+    with transaction(path) as db:
+        require_group(db,group_id,True)
+        state=occurrence_workspace_state(db,group_id,occurrence_id)
+        slot=next((s for s in state["slots"] if s["id"]==payload.member_id),None)
+        if not slot:
+            raise ValueError("Choose a session from this event")
+        if slot["linked"]:
+            return state
+        if slot["revision"]!=payload.revision:
+            raise ValueError("Schedule changed; reopen the event card")
+        if slot["cancelled"]:
+            raise ValueError("This schedule is cancelled")
+        row=link_occurrence(db,group_id,slot["id"])
+        if state["kind"]=="bear_trap" and row["precision"]!="minute":
+            raise ValueError("Set the actual trap time in schedule settings")
+        if row["confidence"]!="confirmed":
+            fields={k:row[k] for k in CalendarInput.model_fields}
+            fields["confidence"]="confirmed"
+            row=update_locked(db,group_id,row["id"],CalendarUpdate(**fields,revision=row["revision"],schedule_status="scheduled"))
+        start_entry_locked(db,group_id,row["id"],CalendarEntryStart(revision=row["revision"],confirmed=True))
+        if state["kind"]!="bear_trap":
+            # A pre-existing empty draft (e.g. entered through Event History) still needs its main session.
+            event=db.execute("""SELECT e.id,e.status FROM events e JOIN calendar_event_links l ON l.event_id=e.id
+                WHERE l.occurrence_id=?""",(row["id"],)).fetchone()
+            if event["status"]=="draft" and not db.execute("SELECT 1 FROM event_sessions WHERE event_id=?",(event["id"],)).fetchone():
+                db.execute("INSERT INTO event_sessions(id,event_id,session_key,started_at,host_alliance_id) VALUES (?,?,?,?,?)",
+                    (uuid.uuid4().hex,event["id"],"main",state["cycle_date"]+"T00:00:00+00:00",row["alliance_id"]))
+                db.execute("INSERT INTO audit_log(action,entity_type,entity_id,actor) VALUES ('session_created','event',?,'admin')",(event["id"],))
+        return occurrence_workspace_state(db,group_id,occurrence_id)
+
+
 class CycleWorkspaceStart(BaseModel):
     model_config=ConfigDict(extra="forbid")
     legion: Literal["legion_1","legion_2"]

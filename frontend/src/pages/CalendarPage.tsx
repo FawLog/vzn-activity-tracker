@@ -3,6 +3,8 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ScheduleEditor, FutureScheduleEditor } from "../components/ScheduleEditor";
 import { GameEventCatalog, EventCatalogSummary } from "../components/GameEventCatalog";
 import { gameEventForCalendar } from "../lib/game-event-catalog";
+import { EventStageTimeline } from "../components/EventStageTimeline";
+import { eventDay, stagesOn } from "../lib/calendar-stages";
 import { EventIcon } from "../components/EventIcon";
 import { EmptyState, ErrorState, LoadingState } from "../components/Feedback";
 import { PageHeader } from "../components/Page";
@@ -74,7 +76,7 @@ export function CalendarPage(){
         return <section key={date} className={"calendar-day"+(view==="Month"&&date.slice(0,7)!==day.slice(0,7)?" calendar-day--outside":"")+(date===utcDay()?" calendar-day--today":"")} aria-label={formatDate(date)}>
           <h3>{view==="Month"?Number(date.slice(8)):weekday(date)+" "+formatDate(date)}</h3>
           {events.map(row=><button key={row.id} className={"calendar-entry calendar-entry--"+(row.schedule_status==="cancelled"?"cancelled":row.confidence)} onClick={()=>setDetail({groupId,row})}>
-            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}</span>}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small></span>
+            <EventIcon eventType={row.event_type}/><span className="calendar-entry-copy"><strong>{(gameEventForCalendar(row.event_type)?.name&&row.event_type.startsWith("game:")?gameEventForCalendar(row.event_type)?.name:eventLabel(row.event_type))}</strong>{row.phase&&<span>{row.phase}</span>}{eventDay(row,date)&&<small className="calendar-day-number">{eventDay(row,date)}</small>}{stagesOn(row,date).map(stage=><small className="calendar-stage-label" key={stage.id}>{stage.name} · Est.</small>)}<small>{calendarTime(row,date)}</small><small>{owner(row)} · {status(row)}</small></span>
           </button>)}
           {!events.length&&view!=="Month"&&<small className="calendar-empty">No scheduled events</small>}
         </section>;
@@ -85,6 +87,7 @@ export function CalendarPage(){
       <p>{owner(selected)} · {status(selected)}{selected.phase?" · "+selected.phase:""}</p>
       <p>{formatDate(selected.starts_at)} · {calendarTime(selected,selected.starts_at.slice(0,10))}{selected.ends_at?" — until "+formatDate(selected.ends_at)+(selected.precision==="minute"?" "+selected.ends_at.slice(11,16)+" UTC":" (exclusive)"):""}</p>
       {writable&&<div className="calendar-controls"><button className="button button--quiet" onClick={()=>{setEditor({groupId,row:selected,future:false});setDetail(null);}}>Edit schedule</button>{selected.series_id&&selected.schedule_status==="scheduled"&&selected.starts_at.slice(0,10)>=utcDay()&&<button className="button button--quiet" onClick={()=>{setEditor({groupId,row:selected,future:true});setDetail(null);}}>Change future series</button>}</div>}
+      <EventStageTimeline key={selected.id} row={selected}/>
       {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}
       <p>Source: {selected.source==="manual"?"Manual schedule":"Recurring forecast"}{selected.series_id?" · Recurring series":""}</p>
     </section>}

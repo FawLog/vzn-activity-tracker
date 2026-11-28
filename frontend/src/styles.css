@@ -960,3 +960,10 @@ td strong { color: var(--text); font-weight: 650; }
 .game-catalog-summary ul{padding-left:20px}
 .game-catalog-summary li{margin:5px 0}
 .game-catalog-summary summary,.calendar-detail summary{cursor:pointer;color:var(--cyan);margin:8px 0}
+
+/* Calendar v2.3: reference stage projection */
+.calendar-stage-timeline{display:grid;gap:.65rem;margin-block:1rem;padding-block:1rem;border-top:1px solid var(--border, #536477);min-width:0;overflow-wrap:anywhere}
+.calendar-stage-tabs{display:flex;flex-wrap:wrap;gap:.4rem}
+.calendar-stage-tabs button[aria-pressed=true]{border-color:currentColor;font-weight:600}
+.calendar-stage-detail{padding:.75rem;border:1px solid var(--border, #536477);border-radius:.5rem;min-width:0}
+.calendar-stage-label,.calendar-day-number{font-weight:500;overflow-wrap:anywhere}

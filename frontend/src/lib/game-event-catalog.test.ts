@@ -17,6 +17,8 @@ describe("pinned game catalog",()=>{
     const svs=gameEventForCalendar("svs_preparation")!;
     expect(svs).toBe(gameEventForCalendar("svs_battle"));
     expect(svs.dayCount).toBe(6);
+    expect(svs.stages.map(s=>s.id)).toEqual(["1","2","3","4","5","Battle"]);
+    expect(svs.stages[4].name).toBe("Power Boost");
     expect(svs.schedule?.runs).toContainEqual({label:"Battle",length:12,unit:"hours",startWeekday:"saturday",startTimeUtc:"10:00"});
     expect(gameEventForCalendar("unknown")).toBeUndefined();
   });

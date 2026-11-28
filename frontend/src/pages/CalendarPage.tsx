@@ -110,6 +110,7 @@ export function CalendarPage(){
       <CalendarEventLink key={selected.id} groupId={groupId} row={selected} writable={writable} workspaceBlocked={workspaceBlocked} onEditingChange={setWorkspaceBlocked} onRevision={revision=>{setDetail(current=>current?.groupId===groupId&&current.row.id===selected.id?{groupId,row:{...current.row,revision}}:current);setRetry(n=>n+1);}}/>
       <EventStageTimeline key={selected.id} row={selected}/>
       {reference&&<details><summary>Game reference</summary><EventCatalogSummary event={reference}/></details>}
+      {selected.rolling_status&&<p role="status">{selected.rolling_status==="active"?"Automatic renewal · 60-day forecast":selected.rolling_status==="conflict"?"Automatic renewal paused: a matching scheduled or cancelled date already exists. Review the calendar before creating a replacement series.":"Automatic renewal stopped"}</p>}
       <p>Source: {selected.source==="manual"?"Manual schedule":"Recurring forecast"}{selected.series_id?" · Recurring series":""}</p>
     </section>}
   </div>;

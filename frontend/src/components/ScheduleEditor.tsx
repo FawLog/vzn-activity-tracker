@@ -15,6 +15,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const defaultAlliance=active.find(a=>a.id===preferred)??active[0];
   const [fields,setFields]=useState<ScheduleFields>(()=>row?scheduleFields(row):{event_type:"bear_trap",scope:"alliance",alliance_id:defaultAlliance?.id??null,state_id:defaultAlliance?.state_id??"",starts_at:day,ends_at:null,precision:"date",phase:"",confidence:"confirmed"});
   const [count,setCount]=useState(1);
+  const [renew,setRenew]=useState(true);
   const [advanced,setAdvanced]=useState(!!row);
   const [repeatMode,setRepeatMode]=useState<RepeatMode>("fixed");
   const [months,setMonths]=useState(1);
@@ -58,6 +59,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
   const suggested=fixedGameInterval(reference);
   const rule=reference?.schedule?.repeat;
   const minutes=days*({days:1440,hours:60,minutes:1}[intervalUnit]);
+  const rolling=!row&&renew&&count>1&&count<=60&&repeatMode==="fixed"&&minutes>=1440;
   const warnings=sourceRunWarning(reference,fields.event_type,fields);
   let preview:ReturnType<typeof forecastRows>=[],previewError="",age:number|null=null;
   if(!row){
@@ -67,9 +69,9 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
       if(age!==null&&reference?.unlockDay!==undefined&&age<reference.unlockDay)warnings.push("Anchor is earlier than the reference unlock day "+reference.unlockDay+". Verify availability in game.");
     }catch(e){previewError=message(e);}
   }
-  const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays});
-  const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status}));
-  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status})||manualDate!==null,busy);
+  const fingerprint=JSON.stringify({fields,count,minutes,stateStart,repeatMode,months,weekdays,renew});
+  const initial=useRef(JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew}));
+  useNavigationGuard(initial.current!==JSON.stringify({fields,count,minutes,repeatMode,months,weekdays,status,renew})||manualDate!==null,busy);
   function useReference(){
     if(suggested===null)return;
     const unit=suggested%1440===0?"days":suggested%60===0?"hours":"minutes";
@@ -97,7 +99,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
       }else{
         if(previewError)throw Error(previewError);
         if(count>1&&reviewed!==fingerprint)throw Error("Review and confirm the proposed dates first");
-        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1?{reject_existing:true}:{})};
+        const payload={...fields,...advancedPlan(fields,count,minutes,repeatMode,months,weekdays).payload,...(count>1?{reject_existing:true}:{}) ,...(rolling?{rolling:true}:{})};
         const requestFingerprint=JSON.stringify(payload);
         if(request.current?.fingerprint!==requestFingerprint)request.current={fingerprint:requestFingerprint,key:crypto.randomUUID()};
         const result=await api.createSchedule(groupId,{...payload,request_key:request.current.key});
@@ -115,7 +117,7 @@ export function ScheduleEditor({groupId,alliances,preferred,day,row,onCycle,onCl
         <label>Schedule owner<select disabled={!!row?.cycle_id} required value={fields.scope==="alliance"?fields.alliance_id??"":"state:"+fields.state_id} onChange={e=>changeOwner(e.target.value)}><option value="" disabled>Choose owner</option>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}{states.map(s=><option key={s} value={"state:"+s}>State #{s}</option>)}</select></label>
         <label>Precision<select value={fields.precision} onChange={e=>changePrecision(e.target.value as ScheduleFields["precision"])}><option value="date">Date only (time not set)</option><option value="minute">Date and UTC time</option></select></label>
         <label>Starts (UTC)<input required type={timeType} value={utcInput(fields.starts_at,fields.precision)} onChange={e=>patch({starts_at:e.target.value?serializeTime(e.target.value,fields.precision):""})}/></label>
-        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);}}>One-time event</button></div><small>Future dates are estimates. This version creates a finite series.</small></div>}
+        {!row&&<div className="calendar-repeat-summary"><strong>{count>1?count+" occurrences · "+(repeatMode==="fixed"?"Every "+days+" "+intervalUnit:repeatMode==="months"?"Calendar months":"Selected weekdays"):"One-time event"}</strong><div className="calendar-controls">{suggested!==null&&<button type="button" className="button button--quiet" onClick={useReference}>Use game repeat rule</button>}<button type="button" className="button button--quiet" onClick={()=>{setCount(1);setReviewed(null);}}>One-time event</button></div>{count>1&&repeatMode==="fixed"&&minutes>=1440&&count<=60&&<label className="calendar-checkbox"><input type="checkbox" checked={renew} onChange={e=>setRenew(e.target.checked)}/>Keep schedule up to date automatically</label>}<small>{rolling?"Automatically extends the estimated schedule 60 days ahead.":"Finite series. Future dates are estimates."}</small></div>}
         <button type="button" className="button button--quiet calendar-advanced-toggle" aria-expanded={advanced} onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide advanced settings":"Advanced settings"}</button>
         {advanced&&<><label>Ends (UTC, optional, exclusive)<input type={timeType} value={utcInput(fields.ends_at??"",fields.precision)} onChange={e=>patch({ends_at:e.target.value?serializeTime(e.target.value,fields.precision):null})}/></label>
         <label>Phase (optional)<input disabled={!!row?.cycle_id} maxLength={80} value={fields.phase} onChange={e=>patch({phase:e.target.value})}/></label>
@@ -167,7 +169,7 @@ export function FutureScheduleEditor({groupId,row,onClose,onSaved}:{groupId:stri
   }
   return <section className="data-panel calendar-editor" aria-label="Future series editor">
     <h2>Change this and future occurrences</h2>
-    <p>Past occurrences, cancelled entries and other manual overrides are preserved.</p>
+    <p>Past occurrences, cancelled entries and other manual overrides are preserved.</p>{row.rolling_status==="active"&&<p>Shifting also changes future renewal dates. Cancelling future occurrences stops automatic renewal.</p>}
     <fieldset className="calendar-editor-fields" disabled={busy}>
       <label>Series action<select value={action} onChange={e=>{setAction(e.target.value as "shift"|"cancel");setPreview(null);}}><option value="shift">Shift schedule</option><option value="cancel">Cancel occurrences</option></select></label>
       {action==="shift"&&<label>Shift (signed minutes)<input type="number" min={-527040} max={527040} step={row.precision==="date"?1440:1} value={minutes} onChange={e=>{setMinutes(Number(e.target.value));setPreview(null);}}/></label>}

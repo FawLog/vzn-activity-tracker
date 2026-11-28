@@ -1,5 +1,5 @@
 import type { EventDetailsData } from "./event-rewards";
-import { catalog, catalogVersion } from "virtual:wos-event-catalog";
+import { catalog, catalogVersion, stateTimeline } from "virtual:wos-event-catalog";
 
 export type RepeatRule =
   | {kind:"none"}
@@ -31,7 +31,8 @@ export interface GameEventSummary {
   missionCount:number;
   hasVariants:boolean;
 }
-export { catalogVersion };
+export interface StateMilestone {day:number;eventIds:string[];heroIds:string[];petIds:string[];expertIds:string[];fireCrystalLevelIds:string[];unlocks:{name:string;requirement?:string}[]}
+export { catalogVersion, stateTimeline };
 export const gameEvents:readonly GameEventSummary[] = [...catalog].sort((a,b)=>a.name.localeCompare(b.name));
 const byId = new Map(gameEvents.map(e=>[e.id,e]));
 const calendarIds:Readonly<Record<string,string>> = {

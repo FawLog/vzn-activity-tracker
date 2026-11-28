@@ -27,7 +27,7 @@ const choices = {
   attendance: ["unknown","confirmed_present","confirmed_absent","excused","no_duty"],
 } as const;
 
-export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;record:EventRecord;onPublished:()=>void}) {
+export function ManualEventEditor({groupId,record,onPublished,initialSessionId,onSaved,onEditingChange,calendarMode=false}:{groupId:string;record:EventRecord;onPublished:()=>void;initialSessionId?:string;onSaved?:()=>void;onEditingChange?:(blocked:boolean)=>void;calendarMode?:boolean}) {
   const definition=definitions[record.event_type];
   const single=definition.keys.length===1;
   const bear=record.event_type==="bear_trap";
@@ -69,15 +69,16 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
   };
   useEffect(()=>{
     let active=true;
-    api.eventEditor(groupId,record.id).then(v=>{if(active)apply(v)}).catch(e=>{if(active)setError(String(e.message))});
+    api.eventEditor(groupId,record.id).then(v=>{if(active){if(initialSessionId&&!v.sessions.some(s=>s.id===initialSessionId)){setError("Linked session no longer exists. Reload the calendar.");return;}apply(v,initialSessionId)}}).catch(e=>{if(active)setError(String(e.message))});
     return ()=>{active=false};
-  },[groupId,record.id]);
+  },[groupId,record.id,initialSessionId]);
   useEffect(()=>{
     if(!dirty)return;
     const handler=(event:BeforeUnloadEvent)=>{event.preventDefault();event.returnValue=""};
     window.addEventListener("beforeunload",handler);
     return ()=>window.removeEventListener("beforeunload",handler);
   },[dirty]);
+  useEffect(()=>{onEditingChange?.(dirty||busy);return ()=>onEditingChange?.(false);},[dirty,busy,onEditingChange]);
   const run=async(action:()=>Promise<void>)=>{
     setBusy(true);setError("");setMessage("");
     try{await action()}catch(e){setError(e instanceof Error?e.message:"Request failed")}finally{setBusy(false)}
@@ -168,7 +169,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     if(!draft)return;
     const rows=championship?championshipRows(visibleRows,!!draft.roster_complete&&!!draft.registration_complete):visibleRows.map(r=>({...r,registration:definition.registration&&draft.roster_complete&&draft.registration_complete&&r.eligibility==="confirmed"&&r.registration==="unknown"?"not_registered" as const:r.registration,attendance:r.attendance}));
     const v=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:!!draft.roster_complete,registration_complete:!!draft.registration_complete,attendance_complete:!!draft.attendance_complete,results_complete:!!draft.results_complete,rows,...(legionBattle?{foundry_details:draft.foundry_details??{}}:{})});
-    apply(v,draft.id);setMessage("Draft saved.");
+    apply(v,draft.id);onSaved?.();setMessage("Draft saved.");
   };
   const importOcr=async(imported:ReviewRow[],info?:FoundryImportInfo,stage?:"registration"|"results")=>{
     if(!draft||!editable||!loaded||busy)throw new Error("Wait for the roster and draft to finish loading.");
@@ -222,7 +223,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     setBusy(true);setError("");setMessage("");
     try{
       const result=await api.saveEventSession(groupId,record.id,draft.id,{revision:draft.revision,roster_complete:added||championship?false:draft.roster_complete,registration_complete:registrationImport?verified:championship?false:draft.registration_complete,attendance_complete:legionBattle?false:draft.attendance_complete,results_complete:legionBattle?false:draft.results_complete,rows:savedRows,...(legionBattle?{foundry_details:mergedDetails}:{})});
-      apply(result,draft.id);setConfirmPublish(false);if(championship)setReview(true);setMessage("Imported "+seen.size+" players and saved draft. "+(registrationImport?(verified?"Registration complete for this legion.":"Registration partial: check both game counts and confirm the full list."):"Review before publishing."));
+      apply(result,draft.id);onSaved?.();setConfirmPublish(false);if(championship)setReview(true);setMessage("Imported "+seen.size+" players and saved draft. "+(registrationImport?(verified?"Registration complete for this legion.":"Registration partial: check both game counts and confirm the full list."):"Review before publishing."));
     }finally{setBusy(false)}
   };
   const available=(record.event_type==="bear_trap"?Array.from({length:30},(_,i)=>"trap_"+(i+1)):definition.keys).filter(k=>!editor?.sessions.some(s=>s.session_key===k));
@@ -236,16 +237,16 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
     patchVisible(row.fid,patch);
   }}>{choices[field].map(v=><option key={v} value={v}>{v?title(v):"—"}</option>)}</select>;
   return <section className="data-panel data-panel--page manual-editor">
-    <div className="section-header"><div><h2>Manual results</h2><p>Session records, reviewed by an officer. Missing data remains unknown.</p></div></div>
+    <div className="section-header"><div><h2>{calendarMode?"Event data workspace":"Manual results"}</h2><p>Session records, reviewed by an officer. Missing data remains unknown.</p></div></div>
     {error&&<div className="notice notice--error" role="alert">{error}</div>}{message&&<div className="notice notice--success" role="status">{message}</div>}
     {!editor&&!error&&<p className="manual-help">Loading editor…</p>}
     {editor&&<>
     <div className="manual-session-section">
       {!single&&<div className="manual-session-nav"><h3>{bear?"Trap sessions":"Battle legions"}</h3><div className="manual-session-tabs" role="group" aria-label="Existing sessions">
         {editor.sessions.map(s=><button key={s.id} type="button" className="button button--quiet manual-session-tab" disabled={busy||dirty} aria-pressed={selected===s.id} onClick={()=>{setSelected(s.id);setDraft(s);setConfirmPublish(false);setReview(false);setPaste("");setAddingSession(false)}}>{title(s.session_key)}{legionBattle&&" · "+(s.registration_complete?"Registration verified":"Registration pending")}{bear&&" · "+(hosts.find(a=>a.id===s.host_alliance_id)?.tag??"—")}</button>)}
-        {editable&&available.length>0&&editor.sessions.length>0&&<button type="button" className="button button--secondary manual-add-session" disabled={busy||dirty} aria-expanded={addingSession} onClick={()=>setAddingSession(v=>!v)}><Plus size={16}/>Add {sessionNoun}</button>}
+        {editable&&!calendarMode&&available.length>0&&editor.sessions.length>0&&<button type="button" className="button button--secondary manual-add-session" disabled={busy||dirty} aria-expanded={addingSession} onClick={()=>setAddingSession(v=>!v)}><Plus size={16}/>Add {sessionNoun}</button>}
       </div></div>}
-      {editable&&available.length>0&&(addingSession||!editor.sessions.length)&&<div className="manual-create-session">
+      {editable&&!calendarMode&&available.length>0&&(addingSession||!editor.sessions.length)&&<div className="manual-create-session">
         <div className="manual-create-heading"><div><h3>{single?"Initialize results":"New "+sessionNoun}</h3><p>Set the details for the new session.</p></div>{editor.sessions.length>0&&<button type="button" className="button button--quiet" aria-label="Cancel new session" disabled={busy} onClick={()=>setAddingSession(false)}><X size={16}/>Cancel</button>}</div>
         <div className="manual-session-fields">
           {!single&&<label>{bear?"Trap number":"Legion number"}<select aria-label={bear?"Trap number":"Legion number"} value={available.includes(sessionKey)?sessionKey:available[0]} onChange={e=>setSessionKey(e.target.value)} disabled={busy||dirty}>{available.map(k=><option key={k} value={k}>{title(k)}</option>)}</select></label>}
@@ -255,7 +256,7 @@ export function ManualEventEditor({groupId,record,onPublished}:{groupId:string;r
         <button type="button" className="button button--primary" disabled={busy||dirty||!time||(bear&&!hosts.some(a=>a.id===host))} onClick={()=>void run(async()=>{const k=available.includes(sessionKey)?sessionKey:available[0];const v=await api.createEventSession(groupId,record.id,k,time+":00Z",bear?host:undefined);apply(v,v.sessions.find(s=>s.session_key===k)?.id)})}>{single?"Initialize results":"Add "+title(available.includes(sessionKey)?sessionKey:available[0])}</button>
       </div>}
       {draft&&<div className="manual-selected-session"><div><h3>{single?"Selected results":title(draft.session_key)}{bear&&" · "+(hosts.find(a=>a.id===draft.host_alliance_id)?.tag??"—")}</h3><p>{draft.started_at.slice(0,16).replace("T"," ")} UTC · {visibleRows.length} players{!loaded&&editable?" · Loading roster…":""}</p></div>
-        {editable&&!single&&<button type="button" className="button button--quiet manual-delete-session" disabled={busy||dirty} onClick={()=>{if(window.confirm("Delete this "+title(draft.session_key)+" and all its results?"))void run(async()=>{await api.manageEvent(groupId,record.id,{action:"delete_session",confirmed:true,session_id:draft.id});apply(await api.eventEditor(groupId,record.id))})}}><Trash2 size={15}/>Delete {title(draft.session_key)}</button>}
+        {editable&&!calendarMode&&!single&&<button type="button" className="button button--quiet manual-delete-session" disabled={busy||dirty} onClick={()=>{if(window.confirm("Delete this "+title(draft.session_key)+" and all its results?"))void run(async()=>{await api.manageEvent(groupId,record.id,{action:"delete_session",confirmed:true,session_id:draft.id});apply(await api.eventEditor(groupId,record.id))})}}><Trash2 size={15}/>Delete {title(draft.session_key)}</button>}
       </div>}
     </div>
     {draft&&<>{championship&&<div className="manual-review"><h3>Registration summary</h3><p role="status">{champSummary.registered} registered · {champSummary.notRegistered} not registered · {champSummary.unknown} unknown · {champSummary.excused} excused / no duty</p><p>{draft.roster_complete&&draft.registration_complete?"Complete registration list and event roster confirmed.":"Partial registration list — unlisted players remain unknown."}</p>{editable&&<><div className="manual-controls"><label>Registration list<select aria-label="Registration list completeness" value={draft.registration_complete&&draft.roster_complete?"complete":"partial"} disabled={busy||!loaded} onChange={e=>{if(e.target.value==="complete"){setReview(true);setMessage("Enter the game registration count and confirm the event roster below.");}else change(draft)}}><option value="partial">Partial / not yet verified</option><option value="complete">Complete registration list</option></select></label><button type="button" className="button button--secondary" disabled={busy||!loaded} onClick={()=>setReview(true)}>Confirm full registration list</button></div>{review&&<div className="manual-review"><p>Use the total registered shown in the game (not the battle capacity). Verify the roster belongs to the event date, not just today. Mark ineligible players in the table below before confirming.</p><div className="manual-controls"><label>Registered in game<input type="number" min={0} max={500} step={1} value={expectedRegistered} disabled={busy} onChange={e=>{setExpectedRegistered(e.target.value);if(draft.registration_complete)change(draft)}}/></label><label>Players in reviewed roster<input type="number" min={1} max={500} step={1} value={expectedRoster} disabled={busy} onChange={e=>{setExpectedRoster(e.target.value);if(draft.registration_complete)change(draft)}}/></label></div><label><input type="checkbox" disabled={busy} checked={rosterAttested} onChange={e=>setRosterAttested(e.target.checked)}/>I verified this is the complete event-date roster and the full registration list, including any roster exceptions.</label><p>Preview if confirmed: {championshipSummary(visibleRows,true).registered} registered · {championshipSummary(visibleRows,true).notRegistered} not registered · {championshipSummary(visibleRows,true).unknown} unknown · {championshipSummary(visibleRows,true).excused} excused / no duty.</p><button type="button" className="button button--primary" disabled={busy||!loaded||!rosterAttested||expectedRegistered.trim()===""||expectedRoster.trim()===""||!/^\d+$/.test(expectedRegistered)||!/^\d+$/.test(expectedRoster)||Number(expectedRegistered)!==champSummary.registered||Number(expectedRoster)!==visibleRows.length||!visibleRows.length} onClick={()=>{setDraft({...draft,roster_complete:true,registration_complete:true,rows:championshipRows(visibleRows,true)});setDirty(true);setConfirmPublish(false);setRosterAttested(false);setMessage("Full list confirmed. Save draft before publishing.");}}>Confirm and mark unregistered</button></div>}</>}</div>}

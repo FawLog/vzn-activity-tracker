@@ -41,7 +41,7 @@ const calendarIds:Readonly<Record<string,string>> = {
   bear_trap:"bear-hunt", foundry:"foundry-battle", canyon:"canyon-clash",
   alliance_championship:"alliance-championship", alliance_mobilization:"alliance-mobilization",
   alliance_showdown:"alliance-showdown", svs_preparation:"svs-state-of-power",
-  svs_battle:"svs-state-of-power", castle_battle:"sunfire-castle",
+  svs_battle:"svs-state-of-power", svs_matchmaking:"svs-state-of-power", svs_triage:"svs-state-of-power", castle_battle:"sunfire-castle",
 };
 export function gameEventForCalendar(type:string):GameEventSummary|undefined {
   const id=type.startsWith("game:")?type.slice(5):calendarIds[type];

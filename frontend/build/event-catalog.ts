@@ -107,7 +107,8 @@ export function eventCatalogPlugin(): Plugin {
         }
         const {id, name, category, description, frequency, duration, requirements} = event;
         const patch=overrides[id];
-        const supplement=patch?.runs&&!event.schedule?.runs?.some((run:{label?:string})=>run.label==="Voting")?patch:undefined;
+        const requiredLabels:string[]=patch?.requiredRunLabels??["Voting"];
+        const supplement=patch?.runs&&requiredLabels.some(label=>!event.schedule?.runs?.some((run:{label?:string})=>run.label===label))?patch:undefined;
         const repeatSupplement=patch?.repeat&&!event.schedule?.repeat?patch.repeat:undefined;
         const schedule=supplement||repeatSupplement?{...event.schedule,...(supplement?{runs:supplement.runs}:{}),...(repeatSupplement?{repeat:repeatSupplement}:{})}:event.schedule;
         const phases=event.phases??supplement?.phases;

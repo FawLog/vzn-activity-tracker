@@ -572,14 +572,18 @@ test("administrator onboards and manages a linked academy", async ({ page }, tes
     // Add a state SvS cycle, then follow it from Flame and Fang without duplicate dates.
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("cycle:svs");
-    await cycleEditor.getByLabel("Event starts (Monday, 00:00 UTC)").fill("2091-08-06");
+    await cycleEditor.getByLabel("Preparation starts (Monday, 00:00 UTC)").fill("2091-08-06");
     await cycleEditor.getByLabel("Automatically maintain full cycles").uncheck();
     await cycleEditor.getByLabel("Cycles to schedule (including first)").fill("1");
     await cycleEditor.getByRole("button",{name:"Preview cycle",exact:true}).click();
     await cycleEditor.getByLabel("I reviewed all phases and their local dates").check();
+    await expect(cycleEditor.getByRole("group",{name:"Matchmaking",exact:true}).getByLabel("Starts (UTC)",{exact:true})).toHaveValue("2091-08-04T00:00");
+    await expect(cycleEditor.getByRole("group",{name:"Field Triage",exact:true}).getByLabel("Ends (optional, exclusive)")).toHaveValue("2091-08-14T00:00");
     const svsSaved=page.waitForResponse(r=>r.request().method()==="POST"&&r.url().endsWith("/calendar/cycles"));
     await cycleEditor.getByRole("button",{name:"Save cycle",exact:true}).click();
-    expect((await svsSaved).status()).toBe(201);
+    const svsResult=await svsSaved;
+    expect(svsResult.status()).toBe(201);
+    expect((await svsResult.json()).items.map((r:{phase:string})=>r.phase)).toEqual(["Matchmaking","Preparation","Battle","Field Triage"]);
     await expect(cycleEditor).toHaveCount(0);
     await calendar.getByRole("button",{name:"Add event",exact:true}).click();
     await scheduleEditor.getByLabel("Event type").selectOption("game:flame-and-fang");

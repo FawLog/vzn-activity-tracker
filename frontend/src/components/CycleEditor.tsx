@@ -49,7 +49,7 @@ export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,all
     try{
       if(request.current?.fingerprint!==fingerprint)request.current={fingerprint,key:crypto.randomUUID()};
       const result=await api.createCycle(groupId,{kind,phases,request_key:request.current.key,...(effectiveCount>1&&interval!==null?{occurrence_count:effectiveCount,interval_days:interval,rolling:autoRenew}:{})});
-      onSaved(result.items[0].starts_at.slice(0,10));
+      onSaved((kind==="svs"?result.items.find(p=>p.phase==="Preparation")??result.items[0]:result.items[0]).starts_at.slice(0,10));
     }catch(e){setError(e instanceof Error?e.message:"Unable to save cycle");}
     finally{lock.current=false;setBusy(false);}
   }
@@ -58,7 +58,7 @@ export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,all
     <fieldset disabled={busy} className="calendar-editor-fields">
       <label>Event type<select value={"cycle:"+kind} onChange={e=>{const type=e.target.value;if(onEvent){onEvent(type);return;}if(cycleTypes[type]){setKind(cycleTypes[type]);invalidate();}}}>{creationEventOptions.filter(([type])=>onEvent||cycleTypes[type]).map(([type,label])=><option key={type} value={type}>{label}</option>)}</select></label>
       <label>{kind==="svs"?"State (via active alliance)":"Alliance"}<select value={owner} onChange={e=>{setOwner(e.target.value);invalidate();}}>{active.map(a=><option key={a.id} value={a.id}>{a.tag} · #{a.state_id}</option>)}</select></label>
-      <label>Event starts (Monday, 00:00 UTC)<input type="date" value={anchor} onChange={e=>{setAnchor(e.target.value);invalidate();}}/></label>
+      <label>{kind==="svs"?"Preparation starts (Monday, 00:00 UTC)":"Event starts (Monday, 00:00 UTC)"}<input type="date" value={anchor} onChange={e=>{setAnchor(e.target.value);invalidate();}}/></label>
       {canRoll&&<label className="calendar-checkbox"><input type="checkbox" checked={autoRenew} onChange={e=>{setRolling(e.target.checked);setReview("");}}/>Automatically maintain full cycles</label>}
       {!autoRenew&&<label>Cycles to schedule (including first)<input type="number" min={1} max={interval?Math.min(14,1+Math.floor(366/interval)):1} value={count} onChange={e=>{setCount(Number(e.target.value));setReview("");}}/></label>}
       <small>{interval?"Game repeat rule: every "+interval+" days. Future cycles are estimates. "+(autoRenew?"Initial 60-day preview; renewed automatically.":"Finite preview.")+"":"No fixed repeat rule; schedule one cycle."}</small>
@@ -67,15 +67,15 @@ export function CycleEditor({initialKind="canyon",onAdvanced,onEvent,groupId,all
       {kind!=="svs"&&onAdvanced&&<button type="button" className="button button--quiet" onClick={()=>{if(allowNavigation())onAdvanced(kind);}}>Advanced: schedule battle only</button>}
     </fieldset>
     {!!phases.length&&<div className="calendar-series-preview calendar-cycle-preview">
-      <p>All suggested dates are estimated. {kind==="svs"?"Review the extended preparation day.":"Set confirmed legion times when known."}</p>
-      {cycleReference(kind)?.scheduleOverride&&<p><a href={cycleReference(kind)?.scheduleOverride?.source} target="_blank" rel="noreferrer">Official schedule supplement</a> · {cycleReference(kind)?.scheduleOverride?.note}</p>}
+      <p>All suggested dates are estimated. {kind==="svs"?"Matchmaking starts two days before preparation. Check the estimated Field Triage end against the game timer.":"Set confirmed legion times when known."}</p>
+      {cycleReference(kind)?.scheduleOverride&&<p><a href={cycleReference(kind)?.scheduleOverride?.source} target="_blank" rel="noreferrer">Schedule supplement</a> · {cycleReference(kind)?.scheduleOverride?.note}</p>}
       {phases.map((p,i)=><fieldset key={p.phase} disabled={busy} className="calendar-editor-fields"><legend>{p.phase}</legend>
         <label>Precision<select value={p.precision} onChange={e=>{const precision=e.target.value as ScheduleFields["precision"];patch(i,moveCyclePhaseStart({...p,precision,starts_at:"",ends_at:null},precision==="date"?p.starts_at.slice(0,10):""));}}><option value="date">Date only</option><option value="minute">UTC time</option></select></label>
         <label>Starts (UTC)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.starts_at,p.precision)} onChange={e=>{const starts_at=e.target.value?serializeTime(e.target.value,p.precision):"";patch(i,moveCyclePhaseStart(p,starts_at));}}/></label>
         <label>Ends (optional, exclusive)<input type={p.precision==="date"?"date":"datetime-local"} value={utcInput(p.ends_at??"",p.precision)} onChange={e=>patch(i,{ends_at:e.target.value?serializeTime(e.target.value,p.precision):null})}/></label>
         <label>Confidence<select value={p.confidence} onChange={e=>patch(i,{confidence:e.target.value as ScheduleFields["confidence"]})}><option value="estimated">Estimated</option><option value="confirmed">Confirmed</option></select></label>
       </fieldset>)}
-      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>Future legion battle times remain unconfirmed. Verify each local cycle.</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
+      {repeatError?<p role="alert">{repeatError}</p>:cycles.length>1&&<div><h3>Future cycles</h3><p>{kind==="svs"?"Future phase dates remain estimates. Verify each local cycle.":"Future legion battle times remain unconfirmed. Verify each local cycle."}</p><ul>{cycles.slice(1).map((rows,i)=><li key={i}>{rows[0].starts_at} — {rows[rows.length-1].starts_at} · Estimated</li>)}</ul></div>}
       <label className="calendar-checkbox"><input type="checkbox" disabled={busy||!!repeatError} checked={review===fingerprint} onChange={e=>setReview(e.target.checked?fingerprint:"")}/>I reviewed all phases and their local dates</label>
     </div>}
     {error&&<p role="alert">{error}</p>}

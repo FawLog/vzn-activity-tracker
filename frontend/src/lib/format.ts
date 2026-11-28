@@ -15,7 +15,7 @@ export const eventTypeLabels: Record<string, string> = {
 export const eventTypeOptions = Object.entries(eventTypeLabels);
 
 export function eventLabel(value: string): string {
-  return eventTypeLabels[value] ?? value.replaceAll("_", " ");
+  return value==="svs_matchmaking"?"SvS Matchmaking":value==="svs_triage"?"SvS Field Triage":eventTypeLabels[value] ?? value.replaceAll("_", " ");
 }
 
 export function formatDate(value: string): string {

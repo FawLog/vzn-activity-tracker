@@ -22,7 +22,7 @@ describe("reference stage projection",()=>{
   });
   it("keeps Canyon battle separate from reference phases",()=>{
     expect(stagePlan({...row,event_type:"canyon"}).stages).toEqual([]);
-    expect(stagePlan({...row,event_type:"svs_battle"}).stages).toEqual([]);
+    for(const event_type of ["svs_battle","svs_matchmaking","svs_triage"])expect(stagePlan({...row,event_type}).stages).toEqual([]);
   });
   it("requires explicit Hall of Chief season",()=>{
     const hoc={...row,event_type:"game:hall-of-chief",precision:"date" as const,starts_at:"2028-01-03",ends_at:"2028-01-10"};

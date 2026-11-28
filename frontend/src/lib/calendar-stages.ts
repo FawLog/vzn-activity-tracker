@@ -19,7 +19,7 @@ export function stagePlan(row:CalendarOccurrence):StagePlan{
   const reference=gameEventForCalendar(row.event_type);
   const none:StagePlan={stages:[]};
   if(!reference||row.schedule_status==="cancelled")return none;
-  if(row.event_type==="svs_battle")return none;
+  if(["svs_battle","svs_matchmaking","svs_triage"].includes(row.event_type))return none;
   if(row.event_type==="canyon")return none; // Battle is a separate occurrence, never assume a whole Canyon cycle.
   if(!row.ends_at)return {stages:[],warning:reference.stages.length?"Set an explicit event end to project daily stages.":undefined};
   if(row.precision==="minute"&&!row.starts_at.endsWith("T00:00Z"))return {stages:[],warning:reference.stages.length?"Daily stages require a verified UTC reset anchor (00:00).":undefined};

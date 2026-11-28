@@ -41,6 +41,8 @@ export function forecastRows(fields:ScheduleFields,count:number,minutes:number){
 }
 export function runForType(event:GameEventSummary|undefined,type:string,phase=""):GameRun|undefined{
   const runs=event?.schedule?.runs??[];
+  if(type==="svs_matchmaking")return runs.find(r=>r.label==="Matchmaking");
+  if(type==="svs_triage")return runs.find(r=>r.label==="Field Triage");
   if(type==="svs_preparation")return runs.find(r=>r.label==="Preparation");
   if(type==="svs_battle"||type==="canyon"||type==="foundry")return runs.find(r=>r.label==="Battle");
   if(event?.id==="hall-of-chief")return runs.find(r=>r.label?.toLowerCase()===phase.trim().toLowerCase());
@@ -83,7 +85,8 @@ export function sourceRunWarning(event:GameEventSummary|undefined,type:string,fi
     if(weekday!==run.startWeekday.toLowerCase())result.push("Anchor weekday differs from the game reference ("+run.startWeekday+").");
   }
   if(run?.startTimeUtc&&fields.precision==="minute"&&fields.starts_at.slice(11,16)!==run.startTimeUtc)result.push("Anchor time differs from the game reference ("+run.startTimeUtc+" UTC).");
-  if(type==="svs_preparation")result.push("SvS source duration is inconsistent; confirm the end manually, including the extended fifth stage.");
+  if(type==="svs_preparation")result.push("Preparation includes the extended fifth stage; verify the in-game end.");
+  if(type==="svs_triage")result.push("Field Triage end is a community estimate; verify the in-game timer.");
   if(type==="alliance_showdown")result.push("The last stage can extend into Sunday. Confirm the end manually.");
   if(type==="castle_battle")result.push("Castle weeks can overlap SvS; verify the local rotation.");
   if(type==="canyon"||type==="foundry")result.push("This schedules a battle only; use the full event editor for a complete cycle.");

@@ -28,7 +28,7 @@ class CalendarInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_times(self):
-        if self.event_type not in CATALOG_IDS and self.event_type not in {e.value for e in EventType}:
+        if self.event_type not in CATALOG_IDS and self.event_type not in {"svs_matchmaking","svs_triage"} and self.event_type not in {e.value for e in EventType}:
             raise ValueError("Unknown calendar event type")
         pattern = r"\d{4}-\d{2}-\d{2}" if self.precision == "date" else r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}Z"
         for value in (self.starts_at, self.ends_at):
@@ -42,6 +42,8 @@ class CalendarInput(BaseModel):
             raise ValueError("End must follow start")
         if self.ends_at and parse(self.ends_at) - parse(self.starts_at) > timedelta(days=31):
             raise ValueError("Maximum event duration is 31 days")
+        if self.event_type in {"svs_matchmaking","svs_triage"} and self.scope!="state":
+            raise ValueError("SvS phases require state scope")
         if (self.scope == "alliance") != bool(self.alliance_id):
             raise ValueError("Alliance scope requires an alliance; state scope does not")
         return self
@@ -732,7 +734,9 @@ class CalendarCycleCreate(BaseModel):
     def validate_phases(self):
         actual=[(p.event_type,p.phase) for p in self.phases]
         if self.kind=="svs":
-            valid=[[("svs_preparation","Preparation"),("svs_battle","Battle")]]
+            # Preserve the shape of already persisted two-phase renewal templates.
+            valid=[[("svs_matchmaking","Matchmaking"),("svs_preparation","Preparation"),("svs_battle","Battle"),("svs_triage","Field Triage")],
+                   [("svs_preparation","Preparation"),("svs_battle","Battle")]]
         else:
             prep=[(self.kind,p) for p in ("Voting","Registration","Matchmaking")]
             valid=[prep+[(self.kind,"Battle")],prep+[(self.kind,"Legion 1")],prep+[(self.kind,"Legion 1"),(self.kind,"Legion 2")]]

@@ -112,5 +112,46 @@
       "label": "Fire Crystal generation",
       "follow": false
     }
+  },
+  "svs-state-of-power": {
+    "source": "https://centurygames.helpshift.com/hc/en/64-whiteout-survival/faq/8588-when-will-the-matchmaking-take-place-for-state-of-power-svs/",
+    "checkedOn": "2026-11-28",
+    "note": "Official FAQ confirms two-day Saturday/Sunday matchmaking. Preparation ends Saturday 10:00 UTC; battle is 12 hours. Field Triage is estimated at 50 hours until Tuesday 00:00 UTC (community guide: https://outof.games/realms/whiteoutsurvival/guides/433-state-of-power-state-vs-state-in-whiteout-survival/). Verify the in-game timer.",
+    "requiredRunLabels": [
+      "Matchmaking",
+      "Preparation",
+      "Battle",
+      "Field Triage"
+    ],
+    "runs": [
+      {
+        "label": "Matchmaking",
+        "length": 2,
+        "unit": "days",
+        "startWeekday": "saturday",
+        "startTimeUtc": "00:00"
+      },
+      {
+        "label": "Preparation",
+        "length": 130,
+        "unit": "hours",
+        "startWeekday": "monday",
+        "startTimeUtc": "00:00"
+      },
+      {
+        "label": "Battle",
+        "length": 12,
+        "unit": "hours",
+        "startWeekday": "saturday",
+        "startTimeUtc": "10:00"
+      },
+      {
+        "label": "Field Triage",
+        "length": 50,
+        "unit": "hours",
+        "startWeekday": "saturday",
+        "startTimeUtc": "22:00"
+      }
+    ]
   }
 }

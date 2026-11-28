@@ -44,6 +44,8 @@ export const api = {
   updateSchedule: (groupId:string,id:string,payload:ScheduleUpdate) => request<CalendarOccurrence>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}`,{method:"PUT",body:JSON.stringify(payload)}),
   previewScheduleFuture: (groupId:string,id:string) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`),
   changeScheduleFuture: (groupId:string,id:string,payload:FutureChange) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar/${encodeURIComponent(id)}/future`,{method:"POST",body:JSON.stringify(payload)}),
+  stateCalendarProfiles: (groupId:string,signal?:AbortSignal) => request<{items:StateCalendarProfile[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/state-calendar-profiles`,{signal}),
+  updateStateCalendarProfile: (groupId:string,stateId:string,opened_on:string|null,revision:number) => request<StateCalendarProfile>(`/api/v1/groups/${encodeURIComponent(groupId)}/state-calendar-profiles/${encodeURIComponent(stateId)}`,{method:"PUT",body:JSON.stringify({opened_on,revision})}),
   calendar: (groupId:string,start:string,end:string,signal?:AbortSignal) => request<{items:CalendarOccurrence[]}>(`/api/v1/groups/${encodeURIComponent(groupId)}/calendar?`+new URLSearchParams({start,end}),{signal}),
   analytics: (groupId:string,allianceId:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/analytics?`+new URLSearchParams({start,end,...(allianceId?{alliance_id:allianceId}:{})})),
   playerActivity: (groupId:string,fid:string,start:string,end:string) => request<AnalyticsReport>(`/api/v1/groups/${encodeURIComponent(groupId)}/players/${encodeURIComponent(fid)}/activity?`+new URLSearchParams({start,end})),
@@ -112,3 +114,5 @@ export interface GroupPayload {
   whiteoutstats_preview_token?: string;
 }
 export interface GroupUpdatePayload { name: string; discord_server_id: string | null; combined_statistics: boolean; status: "active" | "archived"; confirm_archive: boolean; }
+
+export interface StateCalendarProfile {state_id:string;opened_on:string|null;provider_opened_on:string|null;manual_opened_on:string|null;source:"manual"|"whiteoutstats"|null;age_days:number|null;last_success_at:string|null;last_status:string|null;revision:number}
